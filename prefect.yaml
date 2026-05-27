@@ -1,0 +1,8 @@
+# Prefect 部署配置文件
+# 使用方式: prefect deploy --all
+
+deployments:
+  - name: tiktok-inventory-sync
+    entrypoint: flows/sync_inventory.py:sync_inventory_flow
+    schedule:
+      interval: 3600  # 每小时

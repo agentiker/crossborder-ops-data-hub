@@ -1,0 +1,28 @@
+[project]
+name = "crossborder-ops-data-hub"
+version = "0.1.0"
+description = "跨境电商运营数据中台与AI助手数据底座"
+requires-python = ">=3.10"
+dependencies = [
+    "sqlalchemy>=2.0.0",
+    "pymysql>=1.1.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.0",
+    "cryptography>=41.0.0",
+    "prefect>=3.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[project.scripts]
+sync = "main:run_direct"
+deploy = "main:deploy"
