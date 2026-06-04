@@ -12,12 +12,17 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "cryptography>=41.0.0",
     "prefect>=3.0.0",
+    "fastapi>=0.109.0",
+    "uvicorn>=0.27.0",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
 ]
+
+[tool.setuptools.packages.find]
+include = ["core*", "platforms*", "models*", "flows*", "web*", "services*", "analytics*", "ai_tools*", "plan*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

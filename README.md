@@ -81,6 +81,30 @@ TIKTOK__BASE_URL=https://open-api.tiktokglobalshop.com
 
 首次运行前，需要通过 OAuth 授权获取 Token，之后 Token 会自动持久化到数据库。
 
+有两种授权方式：
+
+#### 方式一：Web 回调（推荐，自动化）
+
+1. 启动 Web 服务：
+
+```bash
+python main.py --task web
+```
+
+服务默认监听 `0.0.0.0:8000`，可通过 `--host`、`--port` 参数自定义。
+
+2. 在 TikTok Shop 开发者中心，将应用的回调地址设置为：
+
+```
+http://你的公网域名或IP:8000/auth/callback/tiktok/html
+```
+
+> **本地调试**需要使用 ngrok 等工具将 localhost 暴露到公网，或直接部署到服务器。
+
+3. 在平台发起授权，商家同意后 TikTok 会自动回调此地址，系统自动完成 Token 交换并存入数据库。
+
+#### 方式二：CLI 手动授权
+
 从 TikTok Shop 卖家中心的开放平台页面完成 OAuth 授权，获取 `auth_code`，然后运行：
 
 ```bash

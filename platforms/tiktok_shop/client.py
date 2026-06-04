@@ -1,9 +1,12 @@
 """TikTok Shop API client."""
 
+import logging
 import time
 from typing import Optional
 
 from core.base_client import BaseAPIClient
+
+logger = logging.getLogger(__name__)
 
 PLATFORM = "tiktok_shop"
 
@@ -13,17 +16,22 @@ class TikTokShopClient(BaseAPIClient):
 
     def __init__(
         self,
-        app_key: str,
-        app_secret: str,
-        base_url: str,
+        app_key: Optional[str] = None,
+        app_secret: Optional[str] = None,
+        base_url: Optional[str] = None,
         *,
-        auth_base_url: str = "https://auth.tiktok-shops.com",
+        auth_base_url: Optional[str] = None,
         country: str = "GLOBAL",
         shop_id: Optional[str] = None,
         seller_id: Optional[str] = None,
         account_id: Optional[str] = None,
         auto_load_token: bool = True,
     ):
+        from core.config import settings
+        app_key = app_key or settings.tiktok.app_key
+        app_secret = app_secret or settings.tiktok.app_secret
+        base_url = base_url or settings.tiktok.base_url
+        auth_base_url = auth_base_url or settings.tiktok.auth_base_url
         super().__init__(
             app_key,
             app_secret,
@@ -35,12 +43,45 @@ class TikTokShopClient(BaseAPIClient):
             account_id=account_id,
         )
         self.auth_base_url = auth_base_url.rstrip("/")
+        self.shop_cipher: Optional[str] = None
         if auto_load_token:
             self.load_token()
 
+    def load_token(self, platform: Optional[str] = None, **kwargs) -> bool:
+        """从数据库加载Token，包含shop_cipher"""
+        from core.db import SessionLocal
+        from models.base_models import PlatformToken
+        from services.scoping import build_scope_key
+        from datetime import timezone
+
+        scope_key = build_scope_key(
+            platform=platform or self.platform,
+            country=kwargs.get("country") or self.country,
+            shop_id=kwargs.get("shop_id") if kwargs.get("shop_id") is not None else self.shop_id,
+            seller_id=kwargs.get("seller_id") if kwargs.get("seller_id") is not None else self.seller_id,
+            account_id=kwargs.get("account_id") if kwargs.get("account_id") is not None else self.account_id,
+        )
+        session = SessionLocal()
+        try:
+            record = session.query(PlatformToken).filter_by(scope_key=scope_key).first()
+            if record and record.refresh_token:
+                self.access_token = record.access_token
+                self.refresh_token = record.refresh_token
+                self.shop_cipher = record.shop_cipher
+                self.token_expire_at = record.token_expire_at.replace(
+                    tzinfo=timezone.utc
+                ).timestamp() if record.token_expire_at else 0
+                self.refresh_token_expire_at = record.refresh_token_expire_at.replace(
+                    tzinfo=timezone.utc
+                ).timestamp() if record.refresh_token_expire_at else 0
+                return True
+            return False
+        finally:
+            session.close()
+
     def _auth_get(self, path: str, params: dict) -> dict:
         """Call TikTok auth endpoints that do not use shop access tokens."""
-        request_params = {"app_key": self.app_key, **params}
+        request_params = {"app_key": self.app_key, "app_secret": self.app_secret, **params}
         request_params["sign"] = self._generate_sign(path, request_params)
         resp = self.session.get(
             f"{self.auth_base_url}{path}",
@@ -62,6 +103,7 @@ class TikTokShopClient(BaseAPIClient):
         Returns:
             Token响应数据
         """
+        logger.info(f"[authenticate] 开始用授权码换取Token, auth_code={auth_code[:20]}...")
         result = self._auth_get(
             "/api/v2/token/get",
             params={
@@ -70,8 +112,70 @@ class TikTokShopClient(BaseAPIClient):
             },
         )
         self._apply_token_payload(result)
+        logger.info(f"[authenticate] Token换取成功, shop_cipher={self.shop_cipher}")
         self.save_token(token_payload=result.get("data"))
         return result
+
+    def save_token(self, platform: Optional[str] = None, token_payload: Optional[dict] = None):
+        """保存token到数据库，包含shop_cipher"""
+        from core.db import SessionLocal
+        from models.base_models import PlatformToken
+        from services.scoping import build_scope_key
+        from datetime import datetime, timezone
+
+        target_platform = platform or self.platform
+        scope_key = build_scope_key(
+            platform=target_platform,
+            country=self.country,
+            shop_id=self.shop_id,
+            seller_id=self.seller_id,
+            account_id=self.account_id,
+        )
+        session = SessionLocal()
+        try:
+            record = session.query(PlatformToken).filter_by(scope_key=scope_key).first()
+            logger.info(f"[save_token] scope_key={scope_key}, 已存在记录={record is not None}")
+            expire_dt = (
+                datetime.fromtimestamp(self.token_expire_at, tz=timezone.utc)
+                if self.token_expire_at
+                else None
+            )
+            refresh_expire_dt = (
+                datetime.fromtimestamp(self.refresh_token_expire_at, tz=timezone.utc)
+                if self.refresh_token_expire_at
+                else None
+            )
+            if record:
+                record.access_token = self.access_token
+                record.refresh_token = self.refresh_token
+                record.token_expire_at = expire_dt
+                record.refresh_token_expire_at = refresh_expire_dt
+                record.shop_cipher = self.shop_cipher
+                record.token_payload = token_payload
+            else:
+                record = PlatformToken(
+                    platform=target_platform,
+                    country=self.country,
+                    shop_id=self.shop_id,
+                    seller_id=self.seller_id,
+                    account_id=self.account_id,
+                    scope_key=scope_key,
+                    access_token=self.access_token,
+                    refresh_token=self.refresh_token,
+                    token_expire_at=expire_dt,
+                    refresh_token_expire_at=refresh_expire_dt,
+                    shop_cipher=self.shop_cipher,
+                    token_payload=token_payload,
+                )
+                session.add(record)
+            session.commit()
+            logger.info(f"[save_token] Token已保存到数据库, scope_key={scope_key}")
+        except Exception as e:
+            logger.error(f"[save_token] 保存Token失败: {e}", exc_info=True)
+            session.rollback()
+            raise
+        finally:
+            session.close()
 
     def refresh_access_token(self) -> dict:
         """刷新access_token
@@ -94,6 +198,7 @@ class TikTokShopClient(BaseAPIClient):
         data = result.get("data", {})
         self.access_token = data["access_token"]
         self.refresh_token = data["refresh_token"]
+        self.shop_cipher = data.get("shop_cipher")
         now = time.time()
         self.token_expire_at = _coerce_expiry(data, "access_token_expire_in", now)
         if not self.token_expire_at:

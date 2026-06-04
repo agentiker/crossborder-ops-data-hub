@@ -62,6 +62,7 @@ class PlatformToken(Base):
     refresh_token = Column(Text)
     token_expire_at = Column(DateTime)
     refresh_token_expire_at = Column(DateTime)
+    shop_cipher = Column(String(128), index=True)
     token_payload = Column(JSON)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 

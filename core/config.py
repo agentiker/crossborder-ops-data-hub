@@ -21,6 +21,7 @@ class TikTokConfig(BaseModel):
     app_secret: str = ""
     base_url: str = "https://open-api.tiktokglobalshop.com"
     auth_base_url: str = "https://auth.tiktok-shops.com"
+    redirect_uri: str = ""
 
 
 class Settings(BaseSettings):

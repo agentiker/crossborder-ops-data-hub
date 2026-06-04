@@ -9,7 +9,6 @@ from platforms.tiktok_shop.client import PLATFORM as TIKTOK_PLATFORM
 from platforms.tiktok_shop.schemas import InventoryItem
 from models.base_models import Inventory
 from core.db import SessionLocal
-from core.config import settings
 from services.scoping import build_inventory_key
 from services.sync_state import record_raw_response, upsert_cursor
 
@@ -25,10 +24,6 @@ def fetch_inventory(
 ) -> list[dict[str, Any]]:
     """从TikTok API获取库存数据"""
     client = TikTokShopClient(
-        app_key=settings.tiktok.app_key,
-        app_secret=settings.tiktok.app_secret,
-        base_url=settings.tiktok.base_url,
-        auth_base_url=settings.tiktok.auth_base_url,
         country=country,
         shop_id=shop_id,
         seller_id=seller_id,

@@ -6,3 +6,8 @@ deployments:
     entrypoint: flows/sync_inventory.py:sync_inventory_flow
     schedule:
       interval: 3600  # 每小时
+
+  - name: refresh-tiktok-tokens
+    entrypoint: flows/refresh_tokens.py:refresh_tokens_flow
+    schedule:
+      interval: 21600  # 每 6 小时

@@ -8,7 +8,6 @@ TikTok Shop OAuth 授权脚本
 import argparse
 
 from core.db import init_db
-from core.config import settings
 from platforms.tiktok_shop.client import TikTokShopClient
 
 
@@ -25,10 +24,6 @@ def main():
     init_db()
 
     client = TikTokShopClient(
-        app_key=settings.tiktok.app_key,
-        app_secret=settings.tiktok.app_secret,
-        base_url=settings.tiktok.base_url,
-        auth_base_url=settings.tiktok.auth_base_url,
         country=args.country,
         shop_id=args.shop_id,
         seller_id=args.seller_id,
