@@ -93,10 +93,11 @@ owner: claude
 - `GET /api/data/orders/summary`：调 `get_gmv_summary`，返回 GMV/订单量/销量/客单价
 - `GET /api/data/orders/top-skus`：调 `get_top_skus`，返回单品销量榜
 
-### 8. openclaw skill（新建 `openclaw-skills/gmv-report/SKILL.md`）
+### 8. openclaw skill
 
-仿 `inventory-check/SKILL.md`：带 `X-Internal-Token` 头、platform/country/shop_id/日期参数，
-调 `/api/data/orders/summary` + `/api/data/orders/top-skus`，给出 GMV 概览 + Top SKU 表格。
+GMV/订单意图路由合并到统一 skill `openclaw-skills/crossborder-ops-data/SKILL.md`，
+包含 `/api/data/orders/summary` + `/api/data/orders/top-skus` 的意图路由、口径说明、
+数据来源声明。API 契约同步更新 `references/api-contract.md`。
 
 ### 9. Prefect 调度（`prefect.yaml`，追加）
 

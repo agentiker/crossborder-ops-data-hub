@@ -104,6 +104,73 @@ Response shape:
 
 `profit_margin` is returned by the API as a percentage value. The Skill may display it as `22.41%`.
 
+## GET /api/data/orders/summary
+
+Returns GMV, order count, units sold and average order value for paid orders within a date window.
+
+Additional query parameters:
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `start_date` | date string | no | 7 days before service date | Inclusive start date, `YYYY-MM-DD`. |
+| `end_date` | date string | no | service date | Inclusive end date, `YYYY-MM-DD`. |
+
+Response shape:
+
+```json
+{
+  "start_date": "2026-05-29",
+  "end_date": "2026-06-05",
+  "gmv": 1280000.0,
+  "order_count": 320,
+  "units_sold": 410,
+  "avg_order_value": 4000.0
+}
+```
+
+**Methodology (must be disclosed to users):**
+
+- Scope: **paid orders only** (`paid_time` is not null and falls within the date window). Orders with status `UNPAID` or `CANCELLED` are excluded.
+- GMV: sum of `payment.total_amount` across qualifying orders — the amount the buyer actually paid (including shipping, tax, after discounts). This is **not** the platform settlement amount.
+- `units_sold`: count of `line_item` rows under paid orders. In the TTS 202309 model each line_item represents one sold unit (no `quantity` field).
+- `avg_order_value`: `GMV / order_count` (computed server-side).
+- Source: TikTok Shop official API (`/order/202309/orders/search`).
+
+## GET /api/data/orders/top-skus
+
+Returns per-SKU sales ranking within paid orders, sorted by units sold descending.
+
+Additional query parameters:
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `start_date` | date string | no | 7 days before service date | Inclusive start date, `YYYY-MM-DD`. |
+| `end_date` | date string | no | service date | Inclusive end date, `YYYY-MM-DD`. |
+| `limit` | integer | no | `10` | Maximum number of SKUs to return. |
+
+Response shape:
+
+```json
+{
+  "items": [
+    {
+      "sku_id": "SKU001",
+      "product_name": "Product A",
+      "sku_name": "Black / M",
+      "units_sold": 120,
+      "gmv": 360000.0
+    }
+  ],
+  "total": 10
+}
+```
+
+**Methodology (must be disclosed to users):**
+
+- Same paid-order scope as `/orders/summary`.
+- Per-SKU GMV: sum of `line_item.sale_price` for that SKU (unit retail price, excluding shipping). This differs from the order-level total amount.
+- Ranking: by `units_sold` (line_item count) descending.
+
 ## GET /api/data/alerts
 
 Returns currently open business alerts.
