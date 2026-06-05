@@ -57,22 +57,24 @@ class BaseAPIClient(ABC):
         """刷新Token逻辑，子类必须实现"""
         pass
 
-    def _generate_sign(self, path: str, params: dict) -> str:
+    def _generate_sign(self, path: str, params: dict, body: str = "") -> str:
         """生成HMAC-SHA256签名
 
-        签名算法: app_secret + path + sorted_params + app_secret
+        签名算法: app_secret + path + sorted_params + body + app_secret
+        排除 sign 和 access_token 参数，path 保留前导 /
         """
+        excluded = {"sign", "access_token"}
         sign_params = {
             k: v for k, v in params.items()
-            if k != "sign" and v is not None
+            if k not in excluded and v is not None
         }
         sorted_params = "".join(f"{k}{v}" for k, v in sorted(sign_params.items()))
-        sign_str = f"{self.app_secret}{path}{sorted_params}{self.app_secret}"
+        sign_str = f"{self.app_secret}{path}{sorted_params}{body}{self.app_secret}"
         return hmac.new(
             self.app_secret.encode(),
             sign_str.encode(),
             hashlib.sha256
-        ).hexdigest().upper()
+        ).hexdigest()
 
     def _is_token_expired(self) -> bool:
         """检查Token是否过期（预留5分钟缓冲）"""

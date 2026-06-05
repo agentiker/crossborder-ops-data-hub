@@ -1,5 +1,6 @@
 """TikTok Shop API client."""
 
+import json
 import logging
 import time
 from typing import Optional
@@ -79,9 +80,9 @@ class TikTokShopClient(BaseAPIClient):
         finally:
             session.close()
 
-    def _auth_get(self, path: str, params: dict) -> dict:
+    def _auth_get(self, path: str, params: dict, version: str = "202309") -> dict:
         """Call TikTok auth endpoints that do not use shop access tokens."""
-        request_params = {"app_key": self.app_key, "app_secret": self.app_secret, **params}
+        request_params = {"app_key": self.app_key, "app_secret": self.app_secret, "version": version, **params}
         request_params["sign"] = self._generate_sign(path, request_params)
         resp = self.session.get(
             f"{self.auth_base_url}{path}",
@@ -243,8 +244,10 @@ class TikTokShopClient(BaseAPIClient):
         params.update({
             "app_key": self.app_key,
             "timestamp": str(int(time.time())),
+            "version": "202309",
         })
-        params["sign"] = self._generate_sign(path, params)
+        body_str = json.dumps(data, separators=(",", ":")) if data else ""
+        params["sign"] = self._generate_sign(path, params, body=body_str)
 
         for attempt in range(max_retries + 1):
             resp = self.session.request(
@@ -253,7 +256,7 @@ class TikTokShopClient(BaseAPIClient):
             if resp.status_code == 401 and attempt < max_retries:
                 self.refresh_access_token()
                 headers["x-tts-access-token"] = self.access_token or ""
-                params["sign"] = self._generate_sign(path, params)
+                params["sign"] = self._generate_sign(path, params, body=body_str)
                 continue
             resp.raise_for_status()
             result = resp.json()

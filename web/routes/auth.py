@@ -5,42 +5,11 @@ import logging
 from fastapi import APIRouter, Query, HTTPException
 from fastapi.responses import HTMLResponse
 
-from core.config import settings
 from core.db import init_db
 from platforms.tiktok_shop.client import TikTokShopClient
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-
-@router.get("/url")
-async def get_auth_url(
-    state: str = Query(default="default", description="状态参数，用于防止CSRF攻击"),
-):
-    """生成TikTok Shop OAuth授权URL
-
-    商家访问此URL进行授权，授权后会被重定向到回调地址。
-    """
-    if not settings.tiktok.app_key:
-        raise HTTPException(status_code=500, detail="TIKTOK__APP_KEY 未配置")
-
-    if not settings.tiktok.redirect_uri:
-        raise HTTPException(status_code=500, detail="TIKTOK__REDIRECT_URI 未配置")
-
-    auth_url = (
-        f"{settings.tiktok.auth_base_url}/oauth/authorize"
-        f"?app_id={settings.tiktok.app_key}"
-        f"&redirect_uri={settings.tiktok.redirect_uri}"
-        f"&state={state}"
-        f"&response_type=code"
-    )
-
-    return {
-        "auth_url": auth_url,
-        "app_key": settings.tiktok.app_key,
-        "redirect_uri": settings.tiktok.redirect_uri,
-        "state": state,
-    }
 
 
 @router.get("/callback/tiktok")

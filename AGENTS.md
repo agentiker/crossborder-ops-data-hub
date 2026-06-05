@@ -1,30 +1,68 @@
-# Development Guide
+# 开发指南
 
-## Mission
+## 使命
 
-This repository is the data foundation for an AI ecommerce operations assistant. The pipeline should pull platform data through official APIs first, preserve raw payloads, normalize into trusted business tables, then expose stable read-only metrics for AI analysis.
+本仓库是 AI 电商运营助手的数据基础。数据管道应优先通过官方 API 拉取平台数据，保留原始负载，规范化为可信的业务表，然后对外暴露稳定的只读指标供 AI 分析。
 
-## Implementation Rules
+本项目为指定跨境电商卖家定制，属**非公开应用**，具备对接多个跨境电商平台的能力，例如 TikTok Shop Partner Center、Amazon、Shopee、马帮、聚水潭等。以 TTS 为例，本应用类别为 **custom** 而非 public，应用数据需符合 TTS 的数据契约（如数据留存当地）。接口调用所需权限由项目负责人申请，没有权限的调用必然失败；因此不存在越权场景。
 
-- Prefer official platform APIs. Use RPA only as a fallback and keep RPA credentials isolated from API credentials.
-- Never let AI be the source of truth for core formulas such as profit, ROI, refund rate, or inventory coverage. Implement formulas in deterministic Python or SQL and let AI explain the results.
-- Every platform record must be scoped by `platform`, `country`, and the most specific available account identifier such as `shop_id`, `seller_id`, `ad_account_id`, or `warehouse_id`.
-- Preserve raw API responses before transformation so backfills and audits can replay the source data.
-- All sync tasks must be idempotent. Re-running the same window should update existing rows instead of creating duplicates.
-- Store sync cursors per platform/account/resource so incremental jobs can resume safely.
-- Add tests for data contracts, upsert behavior, sync cursor behavior, and financial formulas whenever those areas change.
+## 系统架构
 
-## Code Style
+整体链路：**定时拉取 → 本地数据库 → 只读接口 → AI 运营分析**。
 
-- Keep platform-specific API logic under `platforms/<platform>/`.
-- Keep cross-platform business logic under `services/`.
-- Keep AI-facing read helpers under `ai_tools/`; they should be read-only and narrow.
-- Use Pydantic models for external payload validation.
-- Use SQLAlchemy models for persisted tables.
-- Avoid broad refactors while adding a platform connector. Match the existing project shape unless a shared abstraction removes real duplication.
+1. **数据采集**：本程序通过已授权的官方 API 定时拉取各平台数据，落地到部署在**印尼地区**的数据库（满足数据留存当地的合规要求）。
+2. **数据存储**：原始负载 → 规范化业务表（详见"实现规则"）。
+3. **数据服务**：本程序通过 **HTTP 接口（FastAPI，仅监听 `127.0.0.1`）** 对外暴露只读指标。
+4. **AI 分析**：openclaw 经飞书渠道与客户对话，调用自研 skill，通过上述 HTTP 接口读取数据，给出运营分析与建议。
 
-## Verification
+### 公网暴露：仅 OAuth 回调
 
-- Run `uv run pytest` before handoff.
-- If a test requires real credentials or network access, mark it separately and keep the default test suite offline.
-- Update the relevant file in `plan/` from `status: active` to `status: completed` only after code and tests for that plan pass.
+接口分两类，暴露需求相反，由 nginx 反向代理隔离（配置见 `deploy/nginx.conf`）：
+
+| 接口 | 调用方 | 暴露 |
+|------|--------|------|
+| `/auth/callback/tiktok` | TTS 服务器（公网） | nginx 经 https 只转发这一条路径到本机 |
+| `/api/data/*` | 本机 openclaw skill | 仅 `127.0.0.1`，nginx 不转发，外网不可达 |
+
+- TTS 采用**平台发起授权**（商家在 TTS 后台点授权按钮），授权后 TTS 回调登记在平台的地址，因此回调端点必须公网可达，而 redirect_uri 以 **TTS 后台登记值**为准；本地无需配置 `TIKTOK__REDIRECT_URI`，也不使用 `/auth/url` 生成授权链接。
+- app 始终绑 `127.0.0.1`，公网入口只有 nginx；nginx 白名单只放行回调路径，其余（含 `/api/data`）一律 404。
+
+### 接口选型：为什么用 HTTP
+
+- 所有服务部署在同一台服务器，skill 走 `127.0.0.1` 调用，延迟可忽略。
+- 语言无关、易加鉴权/限流/日志、接口可版本化。
+- 相比 CLI（每次冷启动解释器、subprocess 耦合脆弱）和 MCP（需额外 server 进程、过度设计），HTTP 在"单机 + 自有 skill"场景下最合适。
+- 接口仅监听本机回环地址，不对公网开放，并通过内部 token 鉴权（skill 注入请求头）。
+- HTTP 层只做编排与校验，**核心公式仍在 `analytics`/`services` 中以确定性 Python/SQL 实现**，HTTP 与 skill 都不得成为公式的真相来源。
+
+### 部署
+
+- 单台 4C8G 服务器，部署全部服务：本程序、MySQL、openclaw。
+- openclaw 的 skill 维护在本仓库 `openclaw-skills/` 下，部署时同步/软链到 openclaw 的 skills 目录；skill 文档与 HTTP 数据契约强耦合，故同仓维护以避免版本漂移。
+
+## 实现规则
+
+- 优先使用平台官方 API。仅在不得已时将 RPA 作为兜底方案，并将 RPA 凭据与 API 凭据隔离存放。
+- 绝不让 AI 成为利润、ROI、退款率、库存覆盖等核心公式的真实来源。公式必须用确定性的 Python 或 SQL 实现，AI 只负责解释结果。
+- 每条平台记录都必须按 `platform`、`country` 以及可获得的最具体账户标识（如 `shop_id`、`seller_id`、`ad_account_id` 或 `warehouse_id`）进行归属。
+- 在转换之前保留原始 API 响应，以便回填和审计可以重放源数据。
+- 所有同步任务都必须是幂等的。重复运行同一时间窗口应更新已有行，而不是产生重复数据。
+- 按平台/账户/资源存储同步游标，使增量任务可以安全续跑。
+- 当涉及数据契约、upsert 行为、同步游标行为和财务公式等领域的变更时，都要为其补充测试。
+
+## 代码风格
+
+- 平台专属的 API 逻辑放在 `platforms/<platform>/` 下。
+- 跨平台的业务逻辑放在 `services/` 下。
+- 面向 AI 的只读读取辅助函数放在 `ai_tools/` 下；它们应当是只读且职责单一的，并被 HTTP 路由复用。
+- 对外 HTTP 接口放在 `web/` 下；路由只做编排与校验，不实现业务公式。
+- openclaw 的 skill 维护在 `openclaw-skills/` 下，与其调用的 HTTP 接口契约保持同步。
+- 使用 Pydantic 模型校验外部负载。
+- 使用 SQLAlchemy 模型表示持久化表。
+- 在新增平台连接器时避免大范围重构。除非共享抽象能消除真正的重复，否则保持现有项目结构。
+
+## 验证
+
+- 交付前运行 `uv run pytest`。
+- 如果某个测试需要真实凭据或网络访问，请将其单独标记，并保持默认测试套件离线运行。
+- 仅在对应计划的代码和测试通过后，才将 `plan/` 中相关文件的 `status: active` 改为 `status: completed`。

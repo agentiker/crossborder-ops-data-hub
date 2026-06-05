@@ -7,6 +7,7 @@ import sys
 
 from flows.sync_inventory import sync_inventory_flow
 from core.db import init_db
+from core.config import settings
 
 
 def run_direct():
@@ -16,10 +17,15 @@ def run_direct():
     return result
 
 
-def start_web(host: str = "0.0.0.0", port: int = 8000, reload: bool = True):
-    """启动 Web 服务"""
+def start_web(host: str | None = None, port: int | None = None, reload: bool = True):
+    """启动 Web 服务（默认仅监听 127.0.0.1，见 APIConfig）"""
     import uvicorn
-    uvicorn.run("web.app:app", host=host, port=port, reload=reload)
+    uvicorn.run(
+        "web.app:app",
+        host=host or settings.api.host,
+        port=port or settings.api.port,
+        reload=reload,
+    )
 
 
 if __name__ == "__main__":
@@ -32,14 +38,14 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--host",
-        default="0.0.0.0",
-        help="Web 服务监听地址 (默认: 0.0.0.0)"
+        default=None,
+        help="Web 服务监听地址 (默认取 API__HOST, 即 127.0.0.1)"
     )
     parser.add_argument(
         "--port",
         type=int,
-        default=8000,
-        help="Web 服务端口 (默认: 8000)"
+        default=None,
+        help="Web 服务端口 (默认取 API__PORT, 即 8000)"
     )
     parser.add_argument(
         "--no-reload",

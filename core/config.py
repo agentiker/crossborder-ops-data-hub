@@ -21,13 +21,20 @@ class TikTokConfig(BaseModel):
     app_secret: str = ""
     base_url: str = "https://open-api.tiktokglobalshop.com"
     auth_base_url: str = "https://auth.tiktok-shops.com"
-    redirect_uri: str = ""
+
+
+class APIConfig(BaseModel):
+    """对外 HTTP 接口配置（供 openclaw skill 本机调用）"""
+    host: str = "127.0.0.1"  # 默认仅监听回环地址，不对公网开放
+    port: int = 8000
+    internal_token: str = ""  # skill 调用 /api/data 时需在 X-Internal-Token 头携带
 
 
 class Settings(BaseSettings):
     """全局配置"""
     db: DatabaseConfig = DatabaseConfig()
     tiktok: TikTokConfig
+    api: APIConfig = APIConfig()
     scheduler_interval_minutes: int = 60
 
     class Config:
