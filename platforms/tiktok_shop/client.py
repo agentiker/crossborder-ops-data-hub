@@ -308,6 +308,83 @@ class TikTokShopClient(BaseAPIClient):
             items.extend(page.get("inventory_list", []))
         return items
 
+    # ── 订单（order/202309）────────────────────────────────────────────────
+
+    def search_orders_page(
+        self,
+        *,
+        create_time_ge: Optional[int] = None,
+        create_time_lt: Optional[int] = None,
+        update_time_ge: Optional[int] = None,
+        update_time_lt: Optional[int] = None,
+        order_status: Optional[str] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 50,
+        sort_field: str = "create_time",
+        sort_order: str = "ASC",
+    ) -> dict:
+        """调用 POST /order/202309/orders/search，返回 data 段。
+
+        时间窗口等过滤条件放在请求体；分页与 shop_cipher 放在 query（参与签名）。
+        """
+        params: dict = {
+            "page_size": page_size,
+            "sort_field": sort_field,
+            "sort_order": sort_order,
+        }
+        if self.shop_cipher:
+            params["shop_cipher"] = self.shop_cipher
+        if page_token:
+            params["page_token"] = page_token
+
+        body: dict = {}
+        if create_time_ge is not None:
+            body["create_time_ge"] = create_time_ge
+        if create_time_lt is not None:
+            body["create_time_lt"] = create_time_lt
+        if update_time_ge is not None:
+            body["update_time_ge"] = update_time_ge
+        if update_time_lt is not None:
+            body["update_time_lt"] = update_time_lt
+        if order_status:
+            body["order_status"] = order_status
+
+        result = self.request(
+            "POST", "/order/202309/orders/search", params=params, data=body
+        )
+        return result.get("data", {})
+
+    def iter_orders(
+        self,
+        *,
+        create_time_ge: Optional[int] = None,
+        create_time_lt: Optional[int] = None,
+        update_time_ge: Optional[int] = None,
+        update_time_lt: Optional[int] = None,
+        order_status: Optional[str] = None,
+        page_size: int = 50,
+        sort_field: str = "create_time",
+        sort_order: str = "ASC",
+    ):
+        """Yield order-search pages until the API returns no next page token."""
+        page_token = None
+        while True:
+            data = self.search_orders_page(
+                create_time_ge=create_time_ge,
+                create_time_lt=create_time_lt,
+                update_time_ge=update_time_ge,
+                update_time_lt=update_time_lt,
+                order_status=order_status,
+                page_token=page_token,
+                page_size=page_size,
+                sort_field=sort_field,
+                sort_order=sort_order,
+            )
+            yield data
+            page_token = data.get("next_page_token")
+            if not page_token:
+                break
+
 
 def _coerce_expiry(data: dict, key: str, now: float) -> float:
     value = data.get(key)

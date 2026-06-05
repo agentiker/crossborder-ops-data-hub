@@ -7,6 +7,11 @@ deployments:
     schedule:
       interval: 3600  # 每小时
 
+  - name: tiktok-order-sync
+    entrypoint: flows/sync_orders.py:sync_orders_flow
+    schedule:
+      interval: 3600  # 每小时
+
   - name: refresh-tiktok-tokens
     entrypoint: flows/refresh_tokens.py:refresh_tokens_flow
     schedule:

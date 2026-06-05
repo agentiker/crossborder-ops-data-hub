@@ -60,3 +60,43 @@ def build_inventory_key(
         warehouse_id=warehouse_id,
         resource=f"inventory_sku:{normalize_scope_value(sku_id)}",
     )
+
+
+def build_order_key(
+    *,
+    platform: str,
+    country: str = "GLOBAL",
+    shop_id: Optional[str] = None,
+    seller_id: Optional[str] = None,
+    account_id: Optional[str] = None,
+    order_id: str,
+) -> str:
+    """Build the idempotency key for an order header row."""
+    return build_scope_key(
+        platform=platform,
+        country=country,
+        shop_id=shop_id,
+        seller_id=seller_id,
+        account_id=account_id,
+        resource=f"order:{normalize_scope_value(order_id)}",
+    )
+
+
+def build_order_line_key(
+    *,
+    platform: str,
+    country: str = "GLOBAL",
+    shop_id: Optional[str] = None,
+    seller_id: Optional[str] = None,
+    account_id: Optional[str] = None,
+    line_item_id: str,
+) -> str:
+    """Build the idempotency key for an order line-item row."""
+    return build_scope_key(
+        platform=platform,
+        country=country,
+        shop_id=shop_id,
+        seller_id=seller_id,
+        account_id=account_id,
+        resource=f"order_line:{normalize_scope_value(line_item_id)}",
+    )

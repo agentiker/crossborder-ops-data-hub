@@ -66,3 +66,13 @@
 - 交付前运行 `uv run pytest`。
 - 如果某个测试需要真实凭据或网络访问，请将其单独标记，并保持默认测试套件离线运行。
 - 仅在对应计划的代码和测试通过后，才将 `plan/` 中相关文件的 `status: active` 改为 `status: completed`。
+
+## 🛠️ Skill 开发与编写规范 (Agent Skill Specifications)
+
+- 在本项目中，任何时候只要需要“新建、修改、审查或优化 Skill（技能）”，必须严格执行./openclaw-skills/README.md 中定义的《Skill 开发与编写规范》。
+
+## 开发材料
+- 接口文档在./material/目录下
+
+
+

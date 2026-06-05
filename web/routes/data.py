@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from ai_tools.operations_read import get_profit_summary, list_open_alerts
 from core.db import SessionLocal
 from models.base_models import Inventory, DailyProfit, Alert
+from services.order_metrics import get_gmv_summary, get_top_skus
 from sqlalchemy import func
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,28 @@ class AlertItem(BaseModel):
 
 class AlertResponse(BaseModel):
     alerts: list[AlertItem]
+    total: int
+
+
+class OrderSummary(BaseModel):
+    start_date: str
+    end_date: str
+    gmv: float
+    order_count: int
+    units_sold: int
+    avg_order_value: float
+
+
+class TopSkuItem(BaseModel):
+    sku_id: Optional[str] = None
+    product_name: Optional[str] = None
+    sku_name: Optional[str] = None
+    units_sold: int
+    gmv: float
+
+
+class TopSkuResponse(BaseModel):
+    items: list[TopSkuItem]
     total: int
 
 
@@ -229,3 +252,54 @@ async def get_overview(
             "items": alerts[:5],
         },
     }
+
+
+@router.get("/orders/summary", response_model=OrderSummary)
+async def get_orders_summary(
+    start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
+    platform: Optional[str] = Query(None, description="平台标识，如 tiktok_shop / shopee"),
+    country: Optional[str] = Query(None, description="国家/地区，如 ID / GLOBAL"),
+    shop_id: Optional[str] = Query(None, description="店铺ID"),
+):
+    """已付款订单 GMV/订单量/销量/客单价汇总，默认最近7天（按 paid_time 归日）。"""
+    today = date.today()
+    sd = date.fromisoformat(start_date) if start_date else today - timedelta(days=7)
+    ed = date.fromisoformat(end_date) if end_date else today
+
+    data = get_gmv_summary(
+        start_date=sd,
+        end_date=ed,
+        platform=platform,
+        country=country,
+        shop_id=shop_id,
+    )
+    return OrderSummary(**data)
+
+
+@router.get("/orders/top-skus", response_model=TopSkuResponse)
+async def get_orders_top_skus(
+    start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
+    platform: Optional[str] = Query(None, description="平台标识，如 tiktok_shop / shopee"),
+    country: Optional[str] = Query(None, description="国家/地区，如 ID / GLOBAL"),
+    shop_id: Optional[str] = Query(None, description="店铺ID"),
+    limit: int = Query(10, description="返回数量"),
+):
+    """已付款订单内按销量排序的单品榜，默认最近7天。"""
+    today = date.today()
+    sd = date.fromisoformat(start_date) if start_date else today - timedelta(days=7)
+    ed = date.fromisoformat(end_date) if end_date else today
+
+    items = get_top_skus(
+        start_date=sd,
+        end_date=ed,
+        platform=platform,
+        country=country,
+        shop_id=shop_id,
+        limit=limit,
+    )
+    return TopSkuResponse(
+        items=[TopSkuItem(**i) for i in items],
+        total=len(items),
+    )
