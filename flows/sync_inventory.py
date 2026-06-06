@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from prefect import flow, task
+from flows.network import log_egress_ip
 from platforms.tiktok_shop.client import TikTokShopClient
 from platforms.tiktok_shop.client import PLATFORM as TIKTOK_PLATFORM
 from platforms.tiktok_shop.schemas import InventoryItem
@@ -183,6 +184,7 @@ def sync_inventory_flow(
     warehouse_id: Optional[str] = None,
 ):
     """库存同步主流程（带任务依赖）"""
+    log_egress_ip()
     pages = fetch_inventory(
         country=country,
         shop_id=shop_id,
@@ -202,3 +204,6 @@ def sync_inventory_flow(
     )
     print(f"同步完成: {count}条记录")
     return count
+
+if __name__ == "__main__":
+    sync_inventory_flow()

@@ -11,7 +11,7 @@ from typing import Any, Optional
 from prefect import flow, task
 
 from core.db import SessionLocal
-from models.base_models import OrderHeader
+from flows.network import log_egress_ip
 from platforms.tiktok_shop.client import PLATFORM as TIKTOK_PLATFORM
 from platforms.tiktok_shop.client import TikTokShopClient
 from platforms.tiktok_shop.schemas import OrderSchema
@@ -26,23 +26,6 @@ DEFAULT_LOOKBACK = timedelta(days=7)
 PAGE_SIZE = 50
 SORT_FIELD = "create_time"
 SORT_ORDER = "ASC"
-
-
-def _log_egress_ip() -> None:
-    """打印当前出口 IP（与 TikTok 请求同一代理链路），方便核对 IP 白名单。
-
-    仅用于排查 36009033（IP not in allow list）。查询失败不影响同步主流程。
-    """
-    import requests
-
-    try:
-        # 与 TikTokShopClient 一致：直连、不走代理，确保打印的就是 TikTok 实际看到的出口 IP
-        ip = requests.get(
-            "https://ifconfig.co/ip", timeout=10, proxies={"http": None, "https": None}
-        ).text.strip()
-        print(f"出口 IP（需在 TikTok IP 白名单中）: {ip}")
-    except Exception as e:  # noqa: BLE001
-        print(f"出口 IP 查询失败（不影响同步）: {e}")
 
 
 def _resolve_window(
@@ -197,7 +180,7 @@ def sync_orders_flow(
     account_id: Optional[str] = None,
 ):
     """订单增量同步主流程。"""
-    _log_egress_ip()
+    log_egress_ip()
     session = SessionLocal()
     try:
         create_time_ge, create_time_lt = _resolve_window(

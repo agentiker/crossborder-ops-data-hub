@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from prefect import flow, task
 
 from core.db import SessionLocal, init_db
+from flows.network import log_egress_ip
 from models.base_models import PlatformToken
 from platforms.tiktok_shop.client import TikTokShopClient
 
@@ -49,6 +50,7 @@ def refresh_tokens_flow(hours_before_expiry: int = 24) -> dict:
     Returns:
         Summary of refresh results.
     """
+    log_egress_ip()
     init_db()
     session = SessionLocal()
 
