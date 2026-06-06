@@ -14,6 +14,7 @@ def upsert_inventory_items(
     shop_id: str | None = None,
     seller_id: str | None = None,
     account_id: str | None = None,
+    raw_response_id: int | None = None,
 ) -> int:
     """Upsert inventory rows by sku_id and warehouse_id."""
     for item in items:
@@ -37,6 +38,8 @@ def upsert_inventory_items(
             existing.sku_name = item.sku_name
             existing.available_stock = item.available_stock
             existing.reserved_stock = item.reserved_stock
+            existing.source_updated_at = item.updated_at
+            existing.raw_response_id = raw_response_id
         else:
             session.add(
                 Inventory(
@@ -53,7 +56,10 @@ def upsert_inventory_items(
                     available_stock=item.available_stock,
                     reserved_stock=item.reserved_stock,
                     warehouse_id=item.warehouse_id,
+                    source_updated_at=item.updated_at,
+                    raw_response_id=raw_response_id,
                 )
             )
     session.flush()
     return len(items)
+

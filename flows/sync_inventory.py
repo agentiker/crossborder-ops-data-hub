@@ -1,134 +1,98 @@
-"""Prefect inventory sync flow."""
+"""Prefect inventory sync flow.
+
+两步流程：先 products/search 枚举全店商品（拿 product_id 与 title），再分批
+inventory/search 查库存。inventory/search 必须按 product_id 查、本身无翻页，故依赖
+products 枚举。响应嵌套 inventory[].skus[].warehouse_inventory[]，展平为每个
+SKU×仓库一行后幂等 upsert。
+"""
 
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from prefect import flow, task
-from flows.network import log_egress_ip
-from platforms.tiktok_shop.client import TikTokShopClient
-from platforms.tiktok_shop.client import PLATFORM as TIKTOK_PLATFORM
-from platforms.tiktok_shop.schemas import InventoryItem
-from models.base_models import Inventory
+
 from core.db import SessionLocal
-from services.scoping import build_inventory_key
+from flows.network import log_egress_ip
+from platforms.tiktok_shop.client import PLATFORM as TIKTOK_PLATFORM
+from platforms.tiktok_shop.client import TikTokShopClient
+from platforms.tiktok_shop.schemas import InventoryItem, flatten_inventory
+from services.inventory_store import upsert_inventory_items
 from services.sync_state import record_raw_response, upsert_cursor
 
+RESOURCE = "inventory"
+PRODUCTS_PATH = "/product/202309/products/search"
+INVENTORY_PATH = "/product/202309/inventory/search"
 
-@task(name="fetch-tiktok-inventory", retries=3, retry_delay_seconds=60)
-def fetch_inventory(
+
+@task(name="fetch-tiktok-products", retries=3, retry_delay_seconds=60)
+def fetch_product_index(
     *,
     country: str = "GLOBAL",
     shop_id: Optional[str] = None,
     seller_id: Optional[str] = None,
     account_id: Optional[str] = None,
-    warehouse_id: Optional[str] = None,
-) -> list[dict[str, Any]]:
-    """从TikTok API获取库存数据"""
+) -> tuple[list[str], dict[str, str]]:
+    """枚举全店商品，返回 (product_ids, {product_id: title})。"""
     client = TikTokShopClient(
         country=country,
         shop_id=shop_id,
         seller_id=seller_id,
         account_id=account_id,
     )
-    pages = []
-    for page in client.iter_inventory(warehouse_id=warehouse_id):
-        pages.append(page)
-    return pages
+    products = client.list_products()
+    product_ids = [p["id"] for p in products if p.get("id")]
+    titles = {p["id"]: p.get("title") for p in products if p.get("id")}
+    return product_ids, titles
 
 
-@task(name="validate-inventory")
-def validate_inventory(raw_items: list[dict[str, Any]]) -> list[InventoryItem]:
-    """Pydantic校验清洗"""
-    valid_items = []
-    for raw in raw_items:
-        try:
-            item = InventoryItem.model_validate(raw)
-            valid_items.append(item)
-        except Exception as e:
-            print(f"数据校验失败: {e}")
-    return valid_items
-
-
-def flatten_inventory_pages(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Extract inventory items from paginated API payloads."""
-    items = []
-    for page in pages:
-        items.extend(page.get("inventory_list", []))
-    return items
-
-
-@task(name="flatten-inventory-pages")
-def flatten_inventory_pages_task(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return flatten_inventory_pages(pages)
-
-
-def upsert_inventory_items(
-    session,
-    items: list[InventoryItem],
+@task(name="fetch-tiktok-inventory", retries=3, retry_delay_seconds=60)
+def fetch_inventory(
+    product_ids: list[str],
     *,
-    platform: str = TIKTOK_PLATFORM,
     country: str = "GLOBAL",
     shop_id: Optional[str] = None,
     seller_id: Optional[str] = None,
     account_id: Optional[str] = None,
-    raw_response_id: Optional[int] = None,
-) -> int:
-    """Write inventory snapshots idempotently."""
-    for item in items:
-        idempotency_key = build_inventory_key(
-            platform=platform,
-            country=country,
-            shop_id=shop_id,
-            seller_id=seller_id,
-            account_id=account_id,
-            warehouse_id=item.warehouse_id,
-            sku_id=item.sku_id,
-        )
-        existing = session.query(Inventory).filter_by(
-            idempotency_key=idempotency_key
-        ).first()
+) -> list[dict[str, Any]]:
+    """按 product_id 分批查询库存，返回合并后的 inventory[]。"""
+    if not product_ids:
+        return []
+    client = TikTokShopClient(
+        country=country,
+        shop_id=shop_id,
+        seller_id=seller_id,
+        account_id=account_id,
+    )
+    return client.search_inventory(product_ids)
 
-        if existing:
-            existing.product_id = item.product_id
-            existing.product_name = item.product_name
-            existing.sku_name = item.sku_name
-            existing.available_stock = item.available_stock
-            existing.reserved_stock = item.reserved_stock
-            existing.source_updated_at = item.updated_at
-            existing.raw_response_id = raw_response_id
-        else:
-            session.add(Inventory(
-                platform=platform,
-                country=country,
-                shop_id=shop_id,
-                seller_id=seller_id,
-                account_id=account_id,
-                idempotency_key=idempotency_key,
-                sku_id=item.sku_id,
-                product_id=item.product_id,
-                product_name=item.product_name,
-                sku_name=item.sku_name,
-                available_stock=item.available_stock,
-                reserved_stock=item.reserved_stock,
-                warehouse_id=item.warehouse_id,
-                source_updated_at=item.updated_at,
-                raw_response_id=raw_response_id,
-            ))
-    session.flush()
-    return len(items)
+
+@task(name="validate-inventory")
+def validate_inventory(
+    inventory: list[dict[str, Any]],
+    product_titles: dict[str, str],
+) -> list[InventoryItem]:
+    """展平嵌套响应并 Pydantic 校验清洗。"""
+    valid_items = []
+    for row in flatten_inventory(inventory, product_titles):
+        try:
+            valid_items.append(InventoryItem.model_validate(row))
+        except Exception as e:  # noqa: BLE001
+            print(f"库存校验失败: {e}")
+    return valid_items
 
 
 @task(name="save-inventory-to-db", retries=2, retry_delay_seconds=30)
 def save_to_db(
-    pages: list[dict[str, Any]],
+    inventory: list[dict[str, Any]],
     items: list[InventoryItem],
     *,
+    product_ids: list[str],
     country: str = "GLOBAL",
     shop_id: Optional[str] = None,
     seller_id: Optional[str] = None,
     account_id: Optional[str] = None,
 ) -> int:
-    """写入MySQL（Upsert）并记录 raw payload 与 cursor."""
+    """写入 MySQL（幂等 upsert）并记录 raw payload 与 cursor。"""
     session = SessionLocal()
     try:
         raw_record = record_raw_response(
@@ -138,10 +102,11 @@ def save_to_db(
             shop_id=shop_id,
             seller_id=seller_id,
             account_id=account_id,
-            resource="inventory",
-            method="GET",
-            path="/api/inventory/get",
-            response_payload={"pages": pages},
+            resource=RESOURCE,
+            method="POST",
+            path=INVENTORY_PATH,
+            request_body={"product_id_count": len(product_ids)},
+            response_payload={"inventory": inventory},
             http_status=200,
             business_code="0",
         )
@@ -162,9 +127,9 @@ def save_to_db(
             shop_id=shop_id,
             seller_id=seller_id,
             account_id=account_id,
-            resource="inventory",
+            resource=RESOURCE,
             window_end=datetime.now(timezone.utc),
-            extra={"item_count": count, "page_count": len(pages)},
+            extra={"item_count": count, "product_count": len(product_ids)},
         )
         session.commit()
         return count
@@ -181,29 +146,36 @@ def sync_inventory_flow(
     shop_id: Optional[str] = None,
     seller_id: Optional[str] = None,
     account_id: Optional[str] = None,
-    warehouse_id: Optional[str] = None,
 ):
-    """库存同步主流程（带任务依赖）"""
+    """库存同步主流程：枚举商品 → 查库存 → 展平校验 → 入库。"""
     log_egress_ip()
-    pages = fetch_inventory(
+    product_ids, product_titles = fetch_product_index(
         country=country,
         shop_id=shop_id,
         seller_id=seller_id,
         account_id=account_id,
-        warehouse_id=warehouse_id,
     )
-    raw_items = flatten_inventory_pages_task(pages)
-    valid_data = validate_inventory(raw_items)
+    print(f"枚举到 {len(product_ids)} 个商品")
+    inventory = fetch_inventory(
+        product_ids,
+        country=country,
+        shop_id=shop_id,
+        seller_id=seller_id,
+        account_id=account_id,
+    )
+    items = validate_inventory(inventory, product_titles)
     count = save_to_db(
-        pages,
-        valid_data,
+        inventory,
+        items,
+        product_ids=product_ids,
         country=country,
         shop_id=shop_id,
         seller_id=seller_id,
         account_id=account_id,
     )
-    print(f"同步完成: {count}条记录")
+    print(f"库存同步完成: {count} 条记录")
     return count
+
 
 if __name__ == "__main__":
     sync_inventory_flow()

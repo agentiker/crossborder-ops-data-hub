@@ -250,7 +250,9 @@ class TikTokShopClient(BaseAPIClient):
             "timestamp": str(int(time.time())),
             "version": "202309",
         })
-        body_str = json.dumps(data, separators=(",", ":")) if data else ""
+        # data 为 {} 时也需序列化成 "{}" 并带 Content-Type（POST 空 body 合法，
+        # 否则 TikTok 对缺失 Content-Type 的 POST 返回 415）；GET 时 data=None 不带 body。
+        body_str = json.dumps(data, separators=(",", ":")) if data is not None else ""
         params["sign"] = self._generate_sign(path, params, body=body_str)
         if body_str:
             headers = {**headers, "Content-Type": "application/json"}
@@ -282,47 +284,61 @@ class TikTokShopClient(BaseAPIClient):
 
         raise RuntimeError("unreachable")
 
-    def get_inventory_page(
-        self,
-        warehouse_id: str = None,
-        page_token: str = None,
-        page_size: int = 100,
-    ) -> dict:
-        """获取库存列表
+    # ── 商品（product/202309）──────────────────────────────────────────────
 
-        Args:
-            warehouse_id: 仓库ID（可选）
+    def iter_products(self, page_size: int = 100):
+        """翻页拉取商品列表（POST /product/202309/products/search）。
 
-        Returns:
-            API response data
+        每页 yield data 段（含 products[]、next_page_token）。空 body 即枚举全店
+        （status 默认 ALL）。page_size / page_token / shop_cipher 放 query 参与签名。
         """
-        params = {"page_size": page_size}
-        if warehouse_id:
-            params["warehouse_id"] = warehouse_id
-        if page_token:
-            params["page_token"] = page_token
-        result = self.get("/api/inventory/get", params=params)
-        return result.get("data", {})
-
-    def iter_inventory(self, warehouse_id: str = None, page_size: int = 100):
-        """Yield inventory pages until the API returns no next page token."""
         page_token = None
         while True:
-            data = self.get_inventory_page(
-                warehouse_id=warehouse_id,
-                page_token=page_token,
-                page_size=page_size,
+            params: dict = {"page_size": page_size}
+            if self.shop_cipher:
+                params["shop_cipher"] = self.shop_cipher
+            if page_token:
+                params["page_token"] = page_token
+            result = self.request(
+                "POST", "/product/202309/products/search", params=params, data={}
             )
+            data = result.get("data", {})
             yield data
             page_token = data.get("next_page_token")
             if not page_token:
                 break
 
-    def get_inventory(self, warehouse_id: str = None) -> list:
-        items = []
-        for page in self.iter_inventory(warehouse_id=warehouse_id):
-            items.extend(page.get("inventory_list", []))
-        return items
+    def list_products(self, page_size: int = 100) -> list[dict]:
+        """枚举全店商品，返回 products[] 合并列表（每项含 id、title、skus）。"""
+        products: list[dict] = []
+        for data in self.iter_products(page_size=page_size):
+            products.extend(data.get("products", []))
+        return products
+
+    # ── 库存（product/202309）──────────────────────────────────────────────
+
+    def search_inventory_batch(self, product_ids: list[str]) -> list[dict]:
+        """单批查询库存（≤100 个 product_id），返回该批 inventory[]。"""
+        result = self.request(
+            "POST",
+            "/product/202309/inventory/search",
+            params={"shop_cipher": self.shop_cipher} if self.shop_cipher else {},
+            data={"product_ids": product_ids},
+        )
+        return result.get("data", {}).get("inventory", [])
+
+    def search_inventory(self, product_ids: list[str], batch_size: int = 100) -> list[dict]:
+        """按 product_id 查询库存（POST /product/202309/inventory/search，无翻页）。
+
+        接口单次最多 100 个 product_id，内部自动按 batch_size 切批并合并 inventory[]。
+        """
+        inventory: list[dict] = []
+        for start in range(0, len(product_ids), batch_size):
+            batch = product_ids[start:start + batch_size]
+            if not batch:
+                continue
+            inventory.extend(self.search_inventory_batch(batch))
+        return inventory
 
     # ── 订单（order/202309）────────────────────────────────────────────────
 
