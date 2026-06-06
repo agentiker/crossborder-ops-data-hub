@@ -239,8 +239,8 @@ class BaseAPIClient(ABC):
                 resp.raise_for_status()
                 result = resp.json()
 
-                # 检查业务错误码
-                if result.get("code") != 0:
+                # 检查业务错误码（兼容 int 0、字符串 "0"、缺省 None）
+                if result.get("code") not in (0, "0", None):
                     raise Exception(f"API错误: {result.get('message')}")
 
                 return result
