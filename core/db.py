@@ -46,4 +46,6 @@ def get_session():
 
 def init_db():
     """初始化数据库表"""
+    from models import base_models  # noqa: F401
+
     Base.metadata.create_all(bind=engine)
