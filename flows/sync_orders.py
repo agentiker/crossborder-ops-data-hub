@@ -22,6 +22,28 @@ RESOURCE = "orders"
 OVERLAP = timedelta(hours=1)
 DEFAULT_LOOKBACK = timedelta(days=7)
 
+# 订单 search 的分页/排序参数（fetch 与 raw 审计记录共用，保证一致）
+PAGE_SIZE = 50
+SORT_FIELD = "create_time"
+SORT_ORDER = "ASC"
+
+
+def _log_egress_ip() -> None:
+    """打印当前出口 IP（与 TikTok 请求同一代理链路），方便核对 IP 白名单。
+
+    仅用于排查 36009033（IP not in allow list）。查询失败不影响同步主流程。
+    """
+    import requests
+
+    try:
+        # 与 TikTokShopClient 一致：直连、不走代理，确保打印的就是 TikTok 实际看到的出口 IP
+        ip = requests.get(
+            "https://ifconfig.co/ip", timeout=10, proxies={"http": None, "https": None}
+        ).text.strip()
+        print(f"出口 IP（需在 TikTok IP 白名单中）: {ip}")
+    except Exception as e:  # noqa: BLE001
+        print(f"出口 IP 查询失败（不影响同步）: {e}")
+
 
 def _resolve_window(
     session,
@@ -70,6 +92,9 @@ def fetch_orders(
     for page in client.iter_orders(
         create_time_ge=create_time_ge,
         create_time_lt=create_time_lt,
+        page_size=PAGE_SIZE,
+        sort_field=SORT_FIELD,
+        sort_order=SORT_ORDER,
     ):
         pages.append(page)
     return pages
@@ -100,6 +125,7 @@ def save_orders_to_db(
     pages: list[dict[str, Any]],
     orders: list[OrderSchema],
     *,
+    create_time_ge: int,
     create_time_lt: int,
     country: str = "GLOBAL",
     shop_id: Optional[str] = None,
@@ -119,6 +145,15 @@ def save_orders_to_db(
             resource=RESOURCE,
             method="POST",
             path="/order/202309/orders/search",
+            request_params={
+                "page_size": PAGE_SIZE,
+                "sort_field": SORT_FIELD,
+                "sort_order": SORT_ORDER,
+            },
+            request_body={
+                "create_time_ge": create_time_ge,
+                "create_time_lt": create_time_lt,
+            },
             response_payload={"pages": pages},
             http_status=200,
             business_code="0",
@@ -162,6 +197,7 @@ def sync_orders_flow(
     account_id: Optional[str] = None,
 ):
     """订单增量同步主流程。"""
+    _log_egress_ip()
     session = SessionLocal()
     try:
         create_time_ge, create_time_lt = _resolve_window(
@@ -186,6 +222,7 @@ def sync_orders_flow(
     order_count, line_count = save_orders_to_db(
         pages,
         orders,
+        create_time_ge=create_time_ge,
         create_time_lt=create_time_lt,
         country=country,
         shop_id=shop_id,

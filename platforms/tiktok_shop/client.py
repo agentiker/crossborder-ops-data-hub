@@ -45,6 +45,10 @@ class TikTokShopClient(BaseAPIClient):
         )
         self.auth_base_url = auth_base_url.rstrip("/")
         self.shop_cipher: Optional[str] = None
+        # TikTok 域名国内直连可达，且 IP 白名单需稳定出口。强制直连，
+        # 不走本机代理（规则代理会按域名分流到不同出口，导致白名单 IP 对不上）。
+        self.session.trust_env = False
+        self.session.proxies = {"http": None, "https": None}
         if auto_load_token:
             self.load_token()
 
@@ -248,16 +252,28 @@ class TikTokShopClient(BaseAPIClient):
         })
         body_str = json.dumps(data, separators=(",", ":")) if data else ""
         params["sign"] = self._generate_sign(path, params, body=body_str)
+        if body_str:
+            headers = {**headers, "Content-Type": "application/json"}
 
         for attempt in range(max_retries + 1):
             resp = self.session.request(
-                method, url, params=params, json=data, headers=headers, timeout=30
+                method,
+                url,
+                params=params,
+                data=body_str.encode("utf-8") if body_str else None,
+                headers=headers,
+                timeout=30,
             )
             if resp.status_code == 401 and attempt < max_retries:
                 self.refresh_access_token()
                 headers["x-tts-access-token"] = self.access_token or ""
                 params["sign"] = self._generate_sign(path, params, body=body_str)
                 continue
+            if resp.status_code >= 400:
+                logger.error(
+                    "TikTok %s %s -> %s: %s",
+                    method, path, resp.status_code, resp.text,
+                )
             resp.raise_for_status()
             result = resp.json()
             if result.get("code") not in (0, "0", None):
