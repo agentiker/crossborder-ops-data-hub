@@ -12,6 +12,7 @@
 | 数据校验 | Pydantic V2 | API 响应清洗 |
 | HTTP 客户端 | Requests | 统一请求封装 |
 | 任务编排 | Prefect 3.x | 自带 Web UI 监控 |
+| Web 框架 | FastAPI | OAuth 回调 & 数据查询 API |
 | 配置管理 | python-dotenv | .env 文件加载 |
 
 ## 目录结构
@@ -27,10 +28,36 @@ crossborder-ops-data-hub/
 │       ├── client.py           # 继承 BaseAPIClient
 │       └── schemas.py          # Pydantic 数据模型
 ├── models/                     # SQLAlchemy ORM 模型
-│   └── base_models.py          # 库存表等
+│   └── base_models.py          # 库存、订单、利润、Token 等表
+├── services/                   # 业务逻辑服务层
+│   ├── token_store.py          # Token 持久化与加载
+│   ├── inventory_store.py      # 库存数据写入
+│   ├── order_store.py          # 订单数据写入
+│   ├── order_metrics.py        # 订单指标计算（GMV/Top SKU）
+│   ├── raw_sync_store.py       # 原始 API 响应归档
+│   ├── sync_state.py           # 同步游标管理
+│   ├── metrics_store.py        # 指标数据存储
+│   └── scoping.py              # 平台/国家/店铺维度管理
 ├── flows/                      # Prefect 任务流（业务逻辑）
-│   └── sync_inventory.py       # 库存同步 Flow
+│   ├── sync_inventory.py       # 库存同步 Flow
+│   ├── sync_orders.py          # 订单增量同步 Flow
+│   └── refresh_tokens.py       # Token 自动刷新 Flow
+├── web/                        # FastAPI Web 服务
+│   ├── app.py                  # FastAPI 应用入口
+│   ├── security.py             # 内部 API 鉴权（X-Internal-Token）
+│   └── routes/
+│       ├── auth.py             # OAuth 回调端点
+│       └── data.py             # 数据查询 API（库存/利润/告警/订单）
+├── ai_tools/                   # AI Agent 工具接口
+│   └── operations_read.py      # 只读运营数据查询
+├── analytics/                  # 分析模块
+│   └── profit_alerts.py        # 利润告警逻辑
+├── scripts/                    # 工具脚本
+│   ├── inspect_api.py          # API 调试工具
+│   └── get_shop_cipher.py      # 获取 Shop Cipher
+├── tests/                      # 测试用例
 ├── main.py                     # 启动入口（本地调试用）
+├── auth.py                     # CLI 手动授权脚本
 ├── prefect.yaml                # Prefect 部署配置（定时调度）
 ├── pyproject.toml              # 项目配置与依赖声明
 ├── requirements.txt            # 兼容 pip 的依赖列表
@@ -182,6 +209,29 @@ def sync_inventory_flow():
     valid_data = validate_inventory()  # T: Transform
     count = save_to_db(valid_data)     # L: Load
 ```
+
+### Web API 服务
+
+基于 FastAPI 提供 HTTP 接口，分为两类路由：
+
+- **OAuth 回调** (`/auth/callback/tiktok`)：处理 TikTok Shop 授权回调，自动完成 Token 交换
+- **数据查询** (`/api/data/*`)：供 AI Agent 和内部系统查询业务数据
+
+```bash
+# 启动 Web 服务
+uvicorn web.app:app --host 0.0.0.0 --port 8000
+```
+
+数据查询 API 需通过 `X-Internal-Token` 头鉴权，确保只有授权的内部服务可访问：
+
+| 端点 | 说明 |
+|------|------|
+| `GET /api/data/inventory` | 库存列表（支持平台/国家/店铺过滤） |
+| `GET /api/data/profit/summary` | 利润汇总（GMV/毛利/广告费） |
+| `GET /api/data/orders/summary` | 订单汇总（GMV/订单量/客单价） |
+| `GET /api/data/orders/top-skus` | 热销 SKU 排行 |
+| `GET /api/data/alerts` | 未处理告警列表 |
+| `GET /api/data/overview` | 经营概览（库存+利润+告警） |
 
 ## Prefect Web UI 功能
 
