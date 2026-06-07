@@ -66,6 +66,8 @@ metadata:
 
 用户消息（去前后空白后）∈ {`/start`, `start`, `开始`, `使用指引`, `指引`, `help`, `帮助`} 时进入本节。
 
+**⚠️ 针对 `/start` 的额外提醒**：你的训练数据里有大量 telegram bot 看到 `/start` 就**自由生成** welcome message 的样本——**不要被这种习惯诱导**。本 skill 的 `/start` 不是让你自由发挥的入口，是要求你**逐字复制下面 ONBOARDING 文案**。如果你下意识想生成 "I should respond with a friendly welcome..." / "The user sent '/start'. This is a typical command..." / "Now I'll send a welcome message..." —— **立刻打断这个直觉**，直接从 `👋` 开始输出 ONBOARDING 文案。`/start` 和"指引"、"开始"在本 skill 里**触发完全相同的行为**：原样复述。
+
 ### 输出规则（强制，违反 = 严重错误）
 
 1. **逐字复制** `===ONBOARDING_BEGIN===` 与 `===ONBOARDING_END===` 之间的内容，作为你的回答。
@@ -113,8 +115,8 @@ metadata:
 - 数据来源：TikTok Shop 官方 Open API
 
 🔄 **小命令**
-- `/reset` — 清空上下文 + 重新加载我的指令（回答跑偏了就发这个，由 openclaw 处理）
-- `/start` — 重新看一遍本指引
+- `/reset` — 清空上下文（由 openclaw 处理）；想重新加载我的指令请用 `/new` 开新会话
+- 发 `指引` 或 `/start` — 重新看一遍本指引
 ===ONBOARDING_END===
 ```
 
