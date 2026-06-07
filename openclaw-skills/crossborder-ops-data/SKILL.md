@@ -46,6 +46,12 @@ metadata:
 - ❌ 不要在不知道用户要看什么之前并行调 `overview + summary + inventory + alerts`。一次问题对应一个最小端点集；模糊时先问用户。
 - ❌ 不要凭用户消息里的"印尼"两字自己拼"查询范围：印尼"——首行 `scope` 文本**必须**取自 API 响应里的 `scope` 字段。
 - ❌ 不要调 SKILL.md / api-contract.md 中**没列出**的端点。所有可用端点见"意图路由"节和 `references/api-contract.md` 的 Endpoint Inventory 表。猜测一个 URL（如 `/api/data/scopes`、`/api/data/list`、`/api/data/menu`）会拿到 404。
+- ❌ **不要输出过程性独白**。下列内容**禁止**出现在面向用户的回答里（中英文都禁止）：
+  - "Let me analyze..." / "Let me format the response..." / "I have the data..." / "I'll call the API..." / "Now I'll..." / "Based on the data..."
+  - "我先调用 API" / "让我分析一下" / "我现在按 skill 格式回复" / "好的，我来查询" / "数据已获取"
+  - 任何在正式回答前的计划、思考、口语化承接句
+  - **首行必须直接是 `查询范围：...`**，前面不能有任何字符（含空行、emoji、寒暄、思考过程）。
+  - 用户只看最终结构化结果；过程在工具调用里完成，不要打到聊天框。
 
 ## 前置检查
 
@@ -163,6 +169,7 @@ metadata:
 - 时间窗口由本次查询的 `start_date` / `end_date` 拼出。
 - 口径标签（已付款/库存快照/商品目录）按端点决定。
 - 同一对话中后续追问，范围或窗口未变可简短重复"范围同上"。
+- **这一行必须是回答的物理第一行**——前面不能有"Let me analyze..."、"我先查一下"、"好的"、空行、emoji 或任何独白。直接以"查询范围"两字开始。
 
 ## 意图路由
 
