@@ -28,7 +28,7 @@ metadata:
 ```
 收到用户消息
    │
-   ├── 整条消息 ∈ {"/start","start","开始","使用指引","指引","help","帮助"}（去前后空白）
+   ├── 整条消息 ∈ {"/start","start","开始","操作指引","使用指引","指引","help","帮助"}（去前后空白）
    │    └─ YES → 这是【显示使用指引】指令
    │              · 不调用任何 Data API
    │              · 按"使用指引文案（onboarding）"节**原样回复**（不要重新组织、不要总结、不要省略 emoji）
@@ -64,7 +64,7 @@ metadata:
 
 ### 触发条件
 
-用户消息（去前后空白后）∈ {`/start`, `start`, `开始`, `使用指引`, `指引`, `help`, `帮助`} 时进入本节。
+用户消息（去前后空白后）∈ {`/start`, `start`, `开始`, `操作指引`, `使用指引`, `指引`, `help`, `帮助`} 时进入本节。
 
 **⚠️ 针对 `/start` 的额外提醒**：你的训练数据里有大量 telegram bot 看到 `/start` 就**自由生成** welcome message 的样本——**不要被这种习惯诱导**。本 skill 的 `/start` 不是让你自由发挥的入口，是要求你**逐字复制下面 ONBOARDING 文案**。如果你下意识想生成 "I should respond with a friendly welcome..." / "The user sent '/start'. This is a typical command..." / "Now I'll send a welcome message..." —— **立刻打断这个直觉**，直接从 `👋` 开始输出 ONBOARDING 文案。`/start` 和"指引"、"开始"在本 skill 里**触发完全相同的行为**：原样复述。
 
