@@ -32,12 +32,15 @@ def _paid_window(start_date: date, end_date: date):
     return start_dt, end_dt
 
 
-def _scope_filters(query, model, platform, country, shop_id):
+def _scope_filters(query, model, platform, country, shop_id, shop_ids=None):
     if platform:
         query = query.filter(model.platform == platform)
     if country:
         query = query.filter(model.country == country)
-    if shop_id:
+    # shop_ids（集合）优先于单值 shop_id；两者皆空则不按店过滤
+    if shop_ids:
+        query = query.filter(model.shop_id.in_(shop_ids))
+    elif shop_id:
         query = query.filter(model.shop_id == shop_id)
     return query
 
@@ -49,6 +52,7 @@ def get_gmv_summary(
     platform: Optional[str] = None,
     country: Optional[str] = None,
     shop_id: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
 ) -> dict:
     """Return paid-order GMV aggregates for AI explanation."""
     start_dt, end_dt = _paid_window(start_date, end_date)
@@ -62,7 +66,7 @@ def get_gmv_summary(
             OrderHeader.paid_time >= start_dt,
             OrderHeader.paid_time <= end_dt,
         )
-        header_q = _scope_filters(header_q, OrderHeader, platform, country, shop_id)
+        header_q = _scope_filters(header_q, OrderHeader, platform, country, shop_id, shop_ids)
         gmv, order_count = header_q.one()
 
         # 销量 = 已付款订单下的 line_item 条数
@@ -75,7 +79,7 @@ def get_gmv_summary(
                 OrderHeader.paid_time <= end_dt,
             )
         )
-        line_q = _scope_filters(line_q, OrderHeader, platform, country, shop_id)
+        line_q = _scope_filters(line_q, OrderHeader, platform, country, shop_id, shop_ids)
         units_sold = line_q.scalar() or 0
 
         order_count = int(order_count or 0)
@@ -101,6 +105,7 @@ def get_top_skus(
     platform: Optional[str] = None,
     country: Optional[str] = None,
     shop_id: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
     limit: int = 10,
 ) -> list[dict]:
     """Return top SKUs by units sold within paid orders."""
@@ -122,7 +127,7 @@ def get_top_skus(
                 OrderHeader.paid_time <= end_dt,
             )
         )
-        query = _scope_filters(query, OrderHeader, platform, country, shop_id)
+        query = _scope_filters(query, OrderHeader, platform, country, shop_id, shop_ids)
         query = (
             query.group_by(OrderLineItem.sku_id)
             .order_by(func.count(OrderLineItem.line_item_id).desc())
@@ -150,6 +155,7 @@ def get_gmv_trend(
     platform: Optional[str] = None,
     country: Optional[str] = None,
     shop_id: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
 ) -> list[dict]:
     """Return a per-day paid-order trend over [start_date, end_date].
 
@@ -178,6 +184,7 @@ def get_gmv_trend(
                 platform,
                 country,
                 shop_id,
+                shop_ids,
             )
             .group_by(day)
             .all()
@@ -200,6 +207,7 @@ def get_gmv_trend(
                 platform,
                 country,
                 shop_id,
+                shop_ids,
             )
             .group_by(day)
             .all()

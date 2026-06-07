@@ -90,6 +90,31 @@ class Product(Base):
         return f"<Product(product_id={self.product_id}, status={self.status})>"
 
 
+class BusinessScope(Base):
+    """A named set of shops used as a query view (业务范围/视图).
+
+    单客户、单租户阶段只切 平台/国家/店铺 三个维度，不引入 tenant_id（见 plan/09）。
+    本期只做显式列举型 scope（single_shop / shop_group）；规则型（country_platform
+    自动展开某平台某国全部店）依赖店铺主数据，放到 plan/08。
+    """
+
+    __tablename__ = "business_scopes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    scope_key = Column(String(64), nullable=False, unique=True, index=True)  # 稳定 slug，如 tts-id-all
+    scope_name = Column(String(200), nullable=False)  # 展示名，如 印尼TikTok全部店
+    scope_type = Column(String(32), nullable=False, default="shop_group")  # single_shop / shop_group
+    platform = Column(String(32))  # 集合跨平台时为空
+    country = Column(String(16))  # 集合跨国时为空
+    shop_ids = Column(JSON, nullable=False, default=list)  # 字符串数组
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<BusinessScope(scope_key={self.scope_key}, type={self.scope_type})>"
+
+
 class PlatformToken(Base):
     """Platform token persisted per platform account scope."""
 
