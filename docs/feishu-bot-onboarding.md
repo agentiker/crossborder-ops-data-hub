@@ -132,3 +132,13 @@
 - 用户发 `/help` 时回简化版（只列 5 类查询 + /reset）
 - 多语言（如果团队里有非中文用户）
 - 按 scope 自动切换问候语（默认范围已是印尼时，开场改"我现在默认看你的**印尼 TikTok 全部店**"）
+
+## 已知限制（2026-06-07）
+
+1. **`/start` 失败**：模型对 `/start` 有强烈的 telegram bot welcome 训练偏好，看到这个 trigger 会自由生成英文 welcome 模板，prompt 强化无效。主推入口用 `操作指引` / `指引`。
+2. **LLM verbatim 不稳定**：即使 SKILL.md 写明"逐字复制 + 多条硬约束 + 错误示范"，模型仍有概率不听话——把 8 行文案重新组织成 30 行自由发挥版，把不可用的"告警"等功能当能力宣传。**两次同样的输入可能得到不同结果**。模型上限问题，不可能 100% 修复。
+3. **要真正稳定**只能绕开 LLM：
+   - 短期：openclaw 加 "static reply per skill" 配置（trigger 字符串 → 直接发某段固定文本，跳过 LLM）
+   - 中期：独立飞书 SDK 长连接 client 订阅 `p2p_chat_create`，靠 IM API 发固定文本（但要先验证两个 SDK 不会互抢消息）
+4. **`/reset` 不重载 SKILL.md**——只清上下文。要拿到新 SKILL.md 必须 `/new` 开新会话。
+5. **openclaw 拒绝软链 skill**：log 关键字 `Skipping escaped skill path outside its configured root: reason=symlink-escape`。skill 必须是 workspace root 内的实文件副本，通过 `./scripts/sync-skill.sh` 同步。
