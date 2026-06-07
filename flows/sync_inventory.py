@@ -250,4 +250,8 @@ def sync_inventory_flow(
 
 
 if __name__ == "__main__":
-    sync_inventory_flow()
+    from flows._shop_discovery import discover_single_shop
+
+    scope = discover_single_shop()
+    print(f"Auto-discovered shop scope: {scope}")
+    sync_inventory_flow(**scope)
