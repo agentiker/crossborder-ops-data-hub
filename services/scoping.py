@@ -62,6 +62,26 @@ def build_inventory_key(
     )
 
 
+def build_product_key(
+    *,
+    platform: str,
+    country: str = "GLOBAL",
+    shop_id: Optional[str] = None,
+    seller_id: Optional[str] = None,
+    account_id: Optional[str] = None,
+    product_id: str,
+) -> str:
+    """Build the idempotency key for a product row."""
+    return build_scope_key(
+        platform=platform,
+        country=country,
+        shop_id=shop_id,
+        seller_id=seller_id,
+        account_id=account_id,
+        resource=f"product:{normalize_scope_value(product_id)}",
+    )
+
+
 def build_order_key(
     *,
     platform: str,

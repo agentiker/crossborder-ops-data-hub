@@ -222,16 +222,19 @@ def sync_inventory_flow():
 uvicorn web.app:app --host 0.0.0.0 --port 8000
 ```
 
-数据查询 API 需通过 `X-Internal-Token` 头鉴权，确保只有授权的内部服务可访问：
+数据查询 API 需通过 `X-Internal-Token` 头鉴权，确保只有授权的内部服务可访问。
+完整参数、`curl` 与响应示例见 [docs/mvp-api.md](docs/mvp-api.md)：
 
 | 端点 | 说明 |
 |------|------|
-| `GET /api/data/inventory` | 库存列表（支持平台/国家/店铺过滤） |
-| `GET /api/data/profit/summary` | 利润汇总（GMV/毛利/广告费） |
-| `GET /api/data/orders/summary` | 订单汇总（GMV/订单量/客单价） |
+| `GET /api/data/inventory` | 库存列表 + 低库存（支持平台/国家/店铺过滤） |
+| `GET /api/data/products` | 商品目录（状态过滤，用于上下架/滞销分析） |
+| `GET /api/data/orders/summary` | 订单汇总（GMV/订单量/销量/客单价） |
+| `GET /api/data/orders/trend` | 销售趋势（按天 GMV/单量/销量，无单日补 0） |
 | `GET /api/data/orders/top-skus` | 热销 SKU 排行 |
-| `GET /api/data/alerts` | 未处理告警列表 |
-| `GET /api/data/overview` | 经营概览（库存+利润+告警） |
+| `GET /api/data/overview` | 经营概览（库存 + 近 7 天订单） |
+| `GET /api/data/profit/summary` | 利润汇总（规划中，本期返回 503） |
+| `GET /api/data/alerts` | 未处理告警（规划中，本期返回 503） |
 
 ## Prefect Web UI 功能
 

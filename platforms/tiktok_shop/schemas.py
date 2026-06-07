@@ -70,6 +70,77 @@ def flatten_inventory(
     return rows
 
 
+# ── 商品模型（对齐 POST /product/202309/products/search 的 products[]）──────────
+
+
+class ProductItem(BaseModel):
+    """商品主数据（一行 = 一个商品），取 products/search 已返回的 key properties。"""
+    product_id: str
+    title: Optional[str] = None
+    status: Optional[str] = None
+    sales_regions: Optional[list[str]] = None
+    sku_count: int = 0
+    min_price: Optional[float] = None   # 该商品 SKU 最低售价
+    currency: Optional[str] = None
+    source_create_time: Optional[datetime] = None
+    source_update_time: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+def _min_sku_price(skus: list[dict]) -> tuple[Optional[float], Optional[str]]:
+    """从 skus[].price.sale_price 取最低售价及其币种（缺价跳过）。"""
+    best_price: Optional[float] = None
+    best_currency: Optional[str] = None
+    for sku in skus:
+        price = sku.get("price") or {}
+        raw = price.get("sale_price")
+        if raw in (None, ""):
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if best_price is None or value < best_price:
+            best_price = value
+            best_currency = price.get("currency")
+    return best_price, best_currency
+
+
+def _epoch_to_dt(value) -> Optional[datetime]:
+    """Unix 秒 → naive UTC datetime（与订单 store 的时间口径一致）。"""
+    if value in (None, "", 0):
+        return None
+    try:
+        return datetime.utcfromtimestamp(int(value))
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def normalize_products(products: list[dict]) -> list[dict]:
+    """把 products/search 的 products[] 清洗成 ProductItem 行。"""
+    rows: list[dict] = []
+    for p in products:
+        product_id = p.get("id")
+        if not product_id:
+            continue
+        skus = p.get("skus") or []
+        min_price, currency = _min_sku_price(skus)
+        rows.append({
+            "product_id": product_id,
+            "title": p.get("title"),
+            "status": p.get("status"),
+            "sales_regions": p.get("sales_regions") or None,
+            "sku_count": len(skus),
+            "min_price": min_price,
+            "currency": currency,
+            "source_create_time": _epoch_to_dt(p.get("create_time")),
+            "source_update_time": _epoch_to_dt(p.get("update_time")),
+        })
+    return rows
+
+
 # ── 订单模型（对齐 TTS order/202309 响应 json tag）─────────────────────────────
 
 

@@ -9,7 +9,7 @@
 """
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Optional
 
@@ -141,3 +141,95 @@ def get_top_skus(
         ]
     finally:
         session.close()
+
+
+def get_gmv_trend(
+    *,
+    start_date: date,
+    end_date: date,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_id: Optional[str] = None,
+) -> list[dict]:
+    """Return a per-day paid-order trend over [start_date, end_date].
+
+    口径与 get_gmv_summary 一致（已付款 = paid_time 非空且落在窗口内，按 paid_time 归日；
+    GMV = total_amount 求和；销量 = 已付款订单的 line_item 条数）。按天 GROUP BY 后，
+    对窗口内没有订单的日期补 0，返回连续日序列，便于直接画趋势。
+    """
+    start_dt, end_dt = _paid_window(start_date, end_date)
+    session = SessionLocal()
+    try:
+        day = func.date(OrderHeader.paid_time)
+
+        # 每日 GMV 与订单量（订单头维度）
+        header_rows = (
+            _scope_filters(
+                session.query(
+                    day.label("day"),
+                    func.coalesce(func.sum(OrderHeader.total_amount), 0),
+                    func.count(OrderHeader.order_id),
+                ).filter(
+                    OrderHeader.paid_time.isnot(None),
+                    OrderHeader.paid_time >= start_dt,
+                    OrderHeader.paid_time <= end_dt,
+                ),
+                OrderHeader,
+                platform,
+                country,
+                shop_id,
+            )
+            .group_by(day)
+            .all()
+        )
+
+        # 每日销量 = 已付款订单下的 line_item 条数（行维度）
+        units_rows = (
+            _scope_filters(
+                session.query(
+                    day.label("day"),
+                    func.count(OrderLineItem.line_item_id),
+                )
+                .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
+                .filter(
+                    OrderHeader.paid_time.isnot(None),
+                    OrderHeader.paid_time >= start_dt,
+                    OrderHeader.paid_time <= end_dt,
+                ),
+                OrderHeader,
+                platform,
+                country,
+                shop_id,
+            )
+            .group_by(day)
+            .all()
+        )
+
+        gmv_by_day = {_as_date(d): (g, c) for d, g, c in header_rows}
+        units_by_day = {_as_date(d): u for d, u in units_rows}
+
+        points: list[dict] = []
+        cursor = start_date
+        while cursor <= end_date:
+            gmv, order_count = gmv_by_day.get(cursor, (0, 0))
+            points.append(
+                {
+                    "date": cursor.isoformat(),
+                    "gmv": _to_float(gmv),
+                    "order_count": int(order_count or 0),
+                    "units_sold": int(units_by_day.get(cursor, 0) or 0),
+                }
+            )
+            cursor += timedelta(days=1)
+        return points
+    finally:
+        session.close()
+
+
+def _as_date(value) -> date:
+    """Normalize a SQL DATE() result (date or 'YYYY-MM-DD' string) to date."""
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    return date.fromisoformat(str(value))

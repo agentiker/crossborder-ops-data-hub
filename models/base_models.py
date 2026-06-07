@@ -46,6 +46,50 @@ class Inventory(Base):
         return f"<Inventory(sku_id={self.sku_id}, stock={self.available_stock})>"
 
 
+class Product(Base):
+    """Lightweight product master scoped by platform account.
+
+    数据来自 POST /product/202309/products/search 已返回的字段（枚举库存时顺手入库，
+    零额外 API 调用）。仅存 key properties；品牌/类目/详情需另调 Get Product，本期不做。
+    """
+
+    __tablename__ = "products"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String(32), nullable=False, default="tiktok_shop", index=True)
+    country = Column(String(16), nullable=False, default="GLOBAL", index=True)
+    shop_id = Column(String(64), index=True)
+    seller_id = Column(String(64), index=True)
+    account_id = Column(String(64), index=True)
+    idempotency_key = Column(String(500), nullable=False, unique=True, index=True)
+    product_id = Column(String(64), nullable=False, index=True)
+    title = Column(String(500))
+    status = Column(String(32), index=True)  # ACTIVATE / SELLER_DEACTIVATED / DRAFT ...
+    sales_regions = Column(JSON)  # 销售地区列表，如 ["GB", "US"]
+    sku_count = Column(Integer, default=0)
+    min_price = Column(Numeric(18, 4))  # 该商品 SKU 最低售价（概览用）
+    currency = Column(String(8))
+    source_create_time = Column(DateTime)  # 商品在平台的创建时间
+    source_update_time = Column(DateTime)  # 商品在平台的最后更新时间
+    raw_response_id = Column(Integer, nullable=True)
+    synced_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "platform",
+            "country",
+            "shop_id",
+            "seller_id",
+            "account_id",
+            "product_id",
+            name="uq_product_scope_product_id",
+        ),
+    )
+
+    def __repr__(self):
+        return f"<Product(product_id={self.product_id}, status={self.status})>"
+
+
 class PlatformToken(Base):
     """Platform token persisted per platform account scope."""
 

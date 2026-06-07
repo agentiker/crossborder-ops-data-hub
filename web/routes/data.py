@@ -7,11 +7,9 @@ from typing import Optional
 from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 
-from ai_tools.operations_read import get_profit_summary, list_open_alerts
 from core.db import SessionLocal
-from models.base_models import Inventory, DailyProfit, Alert
-from services.order_metrics import get_gmv_summary, get_top_skus
-from sqlalchemy import func
+from models.base_models import Inventory, Product
+from services.order_metrics import get_gmv_summary, get_gmv_trend, get_top_skus
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -83,6 +81,34 @@ class TopSkuResponse(BaseModel):
     total: int
 
 
+class ProductItemOut(BaseModel):
+    product_id: str
+    title: Optional[str] = None
+    status: Optional[str] = None
+    sales_regions: Optional[list[str]] = None
+    sku_count: int = 0
+    min_price: Optional[float] = None
+    currency: Optional[str] = None
+
+
+class ProductResponse(BaseModel):
+    items: list[ProductItemOut]
+    total: int
+
+
+class TrendPoint(BaseModel):
+    date: str
+    gmv: float
+    order_count: int
+    units_sold: int
+
+
+class TrendResponse(BaseModel):
+    start_date: str
+    end_date: str
+    points: list[TrendPoint]
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 
@@ -128,6 +154,14 @@ async def get_inventory(
         session.close()
 
 
+PROFIT_NOT_READY = (
+    "利润功能规划中：需先接入结算(Finance API)、广告费(Ads API)与商品成本录入后开放。"
+)
+ALERTS_NOT_READY = (
+    "告警功能规划中：依赖利润与库存指标，待结算/广告/成本数据接入后开放。"
+)
+
+
 @router.get("/profit/summary", response_model=ProfitSummary)
 async def get_profit(
     start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
@@ -136,33 +170,11 @@ async def get_profit(
     country: Optional[str] = Query(None, description="国家/地区，如 ID / GLOBAL"),
     shop_id: Optional[str] = Query(None, description="店铺ID"),
 ):
-    """获取利润汇总数据，默认最近7天"""
-    today = date.today()
-    sd = date.fromisoformat(start_date) if start_date else today - timedelta(days=7)
-    ed = date.fromisoformat(end_date) if end_date else today
+    """利润汇总（规划中，本期不提供）。
 
-    data = get_profit_summary(
-        start_date=sd,
-        end_date=ed,
-        platform=platform,
-        country=country,
-        shop_id=shop_id,
-    )
-
-    gmv = data["gmv"]
-    gross_profit = data["gross_profit"]
-    profit_margin = (gross_profit / gmv * 100) if gmv > 0 else 0
-
-    return ProfitSummary(
-        start_date=data["start_date"],
-        end_date=data["end_date"],
-        gmv=gmv,
-        gross_profit=gross_profit,
-        ad_cost=data["ad_cost"],
-        order_count=data["order_count"],
-        units_sold=data["units_sold"],
-        profit_margin=round(profit_margin, 2),
-    )
+    计算逻辑已就绪，但缺成本数据源（结算/广告/商品成本），返回数据会误导，故显式 503。
+    """
+    raise HTTPException(status_code=503, detail=PROFIT_NOT_READY)
 
 
 @router.get("/alerts", response_model=AlertResponse)
@@ -172,24 +184,8 @@ async def get_alerts(
     shop_id: Optional[str] = Query(None, description="店铺ID"),
     limit: int = Query(20, description="返回数量"),
 ):
-    """获取未处理的告警"""
-    alerts = list_open_alerts(
-        platform=platform, country=country, shop_id=shop_id, limit=limit
-    )
-    return AlertResponse(
-        alerts=[
-            AlertItem(
-                metric_date=a.get("metric_date"),
-                alert_type=a["alert_type"],
-                severity=a["severity"],
-                title=a["title"],
-                message=a.get("message"),
-                impact_scope=a.get("impact_scope"),
-            )
-            for a in alerts
-        ],
-        total=len(alerts),
-    )
+    """未处理告警（规划中，本期不提供）。"""
+    raise HTTPException(status_code=503, detail=ALERTS_NOT_READY)
 
 
 @router.get("/overview")
@@ -198,7 +194,7 @@ async def get_overview(
     country: Optional[str] = Query(None, description="国家/地区，如 ID / GLOBAL"),
     shop_id: Optional[str] = Query(None, description="店铺ID"),
 ):
-    """获取经营概览（库存+利润+告警的综合视图）"""
+    """经营概览：库存快照 + 近 7 天订单概览（不含利润/告警，本期未上线）。"""
     today = date.today()
     week_ago = today - timedelta(days=7)
 
@@ -219,18 +215,13 @@ async def get_overview(
     finally:
         session.close()
 
-    # 利润
-    profit = get_profit_summary(
+    # 近 7 天订单（已付款口径）
+    orders = get_gmv_summary(
         start_date=week_ago,
         end_date=today,
         platform=platform,
         country=country,
         shop_id=shop_id,
-    )
-
-    # 告警
-    alerts = list_open_alerts(
-        platform=platform, country=country, shop_id=shop_id, limit=5
     )
 
     return {
@@ -240,16 +231,11 @@ async def get_overview(
             "total_stock": total_stock,
             "low_stock_count": low_stock,
         },
-        "profit": {
-            "gmv": profit["gmv"],
-            "gross_profit": profit["gross_profit"],
-            "order_count": profit["order_count"],
-            "units_sold": profit["units_sold"],
-        },
-        "alerts": {
-            "total": len(alerts),
-            "critical": sum(1 for a in alerts if a["severity"] == "critical"),
-            "items": alerts[:5],
+        "orders": {
+            "gmv": orders["gmv"],
+            "order_count": orders["order_count"],
+            "units_sold": orders["units_sold"],
+            "avg_order_value": orders["avg_order_value"],
         },
     }
 
@@ -303,3 +289,71 @@ async def get_orders_top_skus(
         items=[TopSkuItem(**i) for i in items],
         total=len(items),
     )
+
+
+@router.get("/orders/trend", response_model=TrendResponse)
+async def get_orders_trend(
+    start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
+    platform: Optional[str] = Query(None, description="平台标识，如 tiktok_shop / shopee"),
+    country: Optional[str] = Query(None, description="国家/地区，如 ID / GLOBAL"),
+    shop_id: Optional[str] = Query(None, description="店铺ID（店铺 GMV 趋势按此过滤）"),
+):
+    """已付款订单按天的 GMV/单量/销量趋势，默认近 7 天（窗口内无单的日期补 0）。
+
+    近 3 天/7 天传不同 start_date；店铺 GMV 趋势传 shop_id。
+    """
+    today = date.today()
+    sd = date.fromisoformat(start_date) if start_date else today - timedelta(days=6)
+    ed = date.fromisoformat(end_date) if end_date else today
+
+    points = get_gmv_trend(
+        start_date=sd,
+        end_date=ed,
+        platform=platform,
+        country=country,
+        shop_id=shop_id,
+    )
+    return TrendResponse(
+        start_date=sd.isoformat(),
+        end_date=ed.isoformat(),
+        points=[TrendPoint(**p) for p in points],
+    )
+
+
+@router.get("/products", response_model=ProductResponse)
+async def get_products(
+    platform: Optional[str] = Query(None, description="平台标识，如 tiktok_shop / shopee"),
+    country: Optional[str] = Query(None, description="国家/地区，如 ID / GLOBAL"),
+    shop_id: Optional[str] = Query(None, description="店铺ID"),
+    status: Optional[str] = Query(None, description="商品状态，如 ACTIVATE / SELLER_DEACTIVATED / DRAFT"),
+    limit: int = Query(100, description="返回数量上限"),
+):
+    """商品目录列表，支持平台/国家/店铺/状态过滤，用于商品目录、上下架与滞销分析。"""
+    session = SessionLocal()
+    try:
+        query = session.query(Product)
+        if platform:
+            query = query.filter(Product.platform == platform)
+        if country:
+            query = query.filter(Product.country == country)
+        if shop_id:
+            query = query.filter(Product.shop_id == shop_id)
+        if status:
+            query = query.filter(Product.status == status)
+        rows = query.order_by(Product.source_update_time.desc()).limit(limit).all()
+        items = [
+            ProductItemOut(
+                product_id=r.product_id,
+                title=r.title,
+                status=r.status,
+                sales_regions=r.sales_regions,
+                sku_count=r.sku_count or 0,
+                min_price=float(r.min_price) if r.min_price is not None else None,
+                currency=r.currency,
+            )
+            for r in rows
+        ]
+        return ProductResponse(items=items, total=len(items))
+    finally:
+        session.close()
