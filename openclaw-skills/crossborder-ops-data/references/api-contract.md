@@ -35,6 +35,7 @@ All endpoints are read-only and live under `/api/data`.
 | `GET /api/data/orders/summary` | live | Paid-order GMV/order_count/units_sold/AOV. |
 | `GET /api/data/orders/trend` | live | Per-day paid-order GMV/order_count/units_sold; window with no orders is zero-filled. |
 | `GET /api/data/orders/top-skus` | live | Top SKUs by units within paid orders. |
+| `GET /api/data/scopes` | live | List of configured business scopes (id, name, shop_ids). Used when user asks "what scopes do I have". |
 | `GET /api/data/profit/summary` | **503 — planned** | Needs Finance/Ads/cost data sources, not connected. |
 | `GET /api/data/alerts` | **503 — planned** | Depends on profit + inventory metrics. |
 
@@ -233,6 +234,34 @@ Response shape:
 - Same paid-order scope as `/orders/summary`.
 - Per-SKU GMV: sum of `line_item.sale_price` for that SKU (unit retail price, excluding shipping). This differs from the order-level total amount.
 - Ranking: by `units_sold` (line_item count) descending.
+
+## GET /api/data/scopes
+
+Lists all configured business scopes. No query parameters, no auth beyond the standard header.
+
+Response shape:
+
+```json
+{
+  "items": [
+    {
+      "scope_key": "tts-id-all",
+      "scope_name": "印尼TikTok全部店",
+      "scope_type": "shop_group",
+      "platform": "tiktok_shop",
+      "country": "ID",
+      "shop_ids": ["7494691994496238970"]
+    }
+  ],
+  "total": 1
+}
+```
+
+Use this when:
+- User asks "什么范围可选" / "可用 scope 有哪些" / "切换范围" / "scope"
+- You need to confirm a `scope_key` exists before referencing it in a reply
+
+Do not list scopes proactively (no "你也可以查 X / Y / Z" suffix on every answer).
 
 ## GET /api/data/profit/summary
 

@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from core.db import SessionLocal
 from models.base_models import Inventory, Product
 from services.order_metrics import get_gmv_summary, get_gmv_trend, get_top_skus
-from services.scope_resolution import ScopeError, ScopeFilters, resolve_filters
+from services.scope_resolution import ScopeError, ScopeFilters, list_scopes, resolve_filters
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -124,6 +124,20 @@ class ProductResponse(BaseModel):
     items: list[ProductItemOut]
     total: int
     scope: Optional[str] = None
+
+
+class ScopeItem(BaseModel):
+    scope_key: str
+    scope_name: str
+    scope_type: str
+    platform: Optional[str] = None
+    country: Optional[str] = None
+    shop_ids: list[str] = []
+
+
+class ScopeListResponse(BaseModel):
+    items: list[ScopeItem]
+    total: int
 
 
 class TrendPoint(BaseModel):
@@ -428,3 +442,14 @@ async def get_products(
         return ProductResponse(items=items, total=len(items), scope=scope.display_text)
     finally:
         session.close()
+
+
+@router.get("/scopes", response_model=ScopeListResponse)
+async def get_scopes():
+    """列出所有启用的业务范围（scope）。用于 agent 在用户问"有哪些范围"时回答。"""
+    scopes = list_scopes()
+    return ScopeListResponse(
+        items=[ScopeItem(**s) for s in scopes],
+        total=len(scopes),
+    )
+

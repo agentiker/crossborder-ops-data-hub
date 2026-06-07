@@ -45,6 +45,7 @@ metadata:
 - ❌ 不要调 `/api/data/profit/summary` 或 `/api/data/alerts`——它们本期固定返回 503，调用 = 浪费时间 + 误导用户。当用户问利润/告警时，**直接告知本期未上线**，不要发请求。
 - ❌ 不要在不知道用户要看什么之前并行调 `overview + summary + inventory + alerts`。一次问题对应一个最小端点集；模糊时先问用户。
 - ❌ 不要凭用户消息里的"印尼"两字自己拼"查询范围：印尼"——首行 `scope` 文本**必须**取自 API 响应里的 `scope` 字段。
+- ❌ 不要调 SKILL.md / api-contract.md 中**没列出**的端点。所有可用端点见"意图路由"节和 `references/api-contract.md` 的 Endpoint Inventory 表。猜测一个 URL（如 `/api/data/scopes`、`/api/data/list`、`/api/data/menu`）会拿到 404。
 
 ## 前置检查
 
@@ -90,10 +91,10 @@ metadata:
 | `切换范围` / `范围` / `scope` | — | 列出可用 scope |
 
 命中时的行为：
-- **不调用 Data API**。
+- **不调用 Data 业务 API**（不要查 overview/inventory/orders/...）。
 - 回复："已切换到 **{display_text}**，请问需要查什么？（GMV / 库存 / 商品 / 趋势 / 单品榜）"
 - 拉美：回复"拉美目前未配置业务范围，请告诉我具体国家（巴西/墨西哥/...）。"
-- `切换范围`/`范围`：回复目前可用的菜单短语清单。
+- `切换范围`/`范围`/`scope`：调 `GET /api/data/scopes` 拿到所有 scope，列出 `scope_key`（简短中文短语）和 `scope_name`，请用户选。**只这一种情况可以调 /scopes**，其它情况不要凭空调任何 API。
 - 本期（08a）**没有跨消息的持久 binding**——下一条消息如果不带范围词或菜单短语，回到默认全量。这是已知限制，08b 期会用 webhook + binding 表持久化。
 
 ### 步骤 2：从自然语言里抽取范围词（仅当步骤 1 未命中）
@@ -251,6 +252,17 @@ GET {{DATA_HUB_URL}}/api/data/alerts
 ```
 
 > **本期不可用**。AI 可基于已查到的库存/订单数据**自己**提出"基于当前数据观察"的风险（参考"分析职责"），但**不得**称其为系统正式告警。
+
+### 范围列表（meta）
+
+用户问"有哪些范围/可选 scope/切换范围"时：
+
+```
+GET {{DATA_HUB_URL}}/api/data/scopes
+Header: X-Internal-Token: {{DATA_HUB_TOKEN}}
+```
+
+返回 `items: [{scope_key, scope_name, platform, country, shop_ids}, ...]`。把每条 `scope_key` 和 `scope_name` 列给用户选。**只在用户明确问可选范围时调用**。
 
 ### 意图组合
 
