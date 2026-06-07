@@ -38,11 +38,92 @@ metadata:
 - 只调用 `GET {{DATA_HUB_URL}}/api/data/*`。
 - 请求头必须携带 `X-Internal-Token: {{DATA_HUB_TOKEN}}`。
 - 不得在回复、日志摘要或错误解释中暴露 `DATA_HUB_TOKEN`。
-- 用户指定平台、国家或店铺时，透传为查询参数：
+- 用户指定平台、国家、店铺或业务范围时，透传为查询参数：
+  - `scope_id`: 业务范围（命名店铺集合），如 `tts-id-all`（印尼 TikTok 全部店）。**优先使用**——一次过滤一组店铺。
+  - `shop_ids`: 店铺 ID 集合（逗号分隔），用于不走命名 scope 的多店查询。
   - `platform`: 平台标识，如 `tiktok_shop`、`shopee`、`amazon`。
   - `country`: 国家或地区，如 `ID`、`GLOBAL`。
-  - `shop_id`: 店铺 ID。
+  - `shop_id`: 单一店铺 ID。
+- **scope 收窄语义**：`scope_id` + 显式 `shop_id`/`shop_ids` → 取交集（在 scope 内收窄到指定店）；指定店越界 → 服务端 400 拒绝，不会静默放行范围外的店。
 - 日期参数使用 `YYYY-MM-DD`。如果用户使用"今天、昨天、最近 7 天"等相对日期，先换算为明确日期后再请求。
+
+## 范围解析 SOP（必须在每次调用前执行）
+
+用户可能通过**飞书菜单按钮**（按钮点击发送一条纯文字消息）或**自然语言**指定查询范围。
+按以下顺序判断本次查询的范围：
+
+### 步骤 1：判断是否为"菜单短语 = 切换默认范围"
+
+如果用户消息**整条等于**以下短语（去除前后空白后），则**该消息不是数据请求**，
+而是切换默认范围的指令：
+
+| 用户消息 | 对应 scope_key | display_text |
+| --- | --- | --- |
+| `印尼` | `tts-id-all` | TikTok Shop / 印尼 / 1 个店铺 |
+| `全部` | （不传 scope_id） | 全部范围 |
+| `拉美` | （暂无 scope） | — 触发追问 |
+| `切换范围` / `范围` / `scope` | — | 列出可用 scope |
+
+命中时的行为：
+- **不调用 Data API**。
+- 回复："已切换到 **{display_text}**，请问需要查什么？（GMV / 库存 / 商品 / 趋势 / 单品榜）"
+- 拉美：回复"拉美目前未配置业务范围，请告诉我具体国家（巴西/墨西哥/...）。"
+- `切换范围`/`范围`：回复目前可用的菜单短语清单。
+- 本期（08a）**没有跨消息的持久 binding**——下一条消息如果不带范围词或菜单短语，回到默认全量。这是已知限制，08b 期会用 webhook + binding 表持久化。
+
+### 步骤 2：从自然语言里抽取范围词（仅当步骤 1 未命中）
+
+按下面**词表**做确定性映射，不上 LLM 抽取：
+
+```
+平台 alias：
+  TikTok / TTS / 抖音小店国际 → platform=tiktok_shop
+  虾皮 / Shopee → platform=shopee
+
+国家 alias：
+  印尼 / Indonesia / ID → country=ID
+  马来 / Malaysia / MY → country=MY
+  泰国 / Thailand / TH → country=TH
+  越南 / Vietnam / VN → country=VN
+  菲律宾 / Philippines / PH → country=PH
+  英国 / UK / GB → country=GB
+  美国 / US / USA → country=US
+
+业务范围 alias：
+  印尼 TikTok / 印尼店 / 印尼全部店 → scope_id=tts-id-all
+
+店铺定位：
+  "只看 A 店" / "只看 7494..." → 当前 scope 内收窄到该 shop_id
+  "拆到店铺看" → 不改 scope，回答按店分组（聚合粒度变化，不是 scope 变化）
+
+模糊词（必须追问，不擅自映射）：
+  拉美 → 覆盖一组国家或单店，需要用户明确
+```
+
+抽取规则：
+- 抽到平台/国家词 → 透传为 `platform`/`country`。
+- 抽到业务范围短语 → 透传为 `scope_id`。
+- 抽到店铺 ID 或"只看 X 店" → 透传为 `shop_id`，与上面的 `scope_id` 一起发，**服务端会取交集**。
+- 越界 → 服务端 400，按"异常处理"节处理。
+- 抽到模糊词（拉美等）→ 追问，不调 API。
+
+### 步骤 3：都没抽到 → 全量查询
+
+用户问的是数据但完全没提范围，本期（08a）就**全量查询**（不传 `scope_id`/`shop_id`），
+回答首行**必须**声明 `查询范围：未限定店铺范围（全部）`，让用户知道当前结果覆盖什么。
+
+## 回答首行声明范围（强制）
+
+所有数据回答的**第一行**必须用 Data API 返回的 `scope` 字段声明本次查询范围 + 时间窗口，例如：
+
+```
+查询范围：TikTok Shop / 印尼 / 1 个店铺 ・ 2026-06-01 ~ 2026-06-07（已付款口径）
+```
+
+- `scope` 字段直接从 API 响应取（如 `"TikTok Shop / 印尼 / 1 个店铺"`），不要自己编。
+- 时间窗口由本次查询的 `start_date` / `end_date` 拼出。
+- 口径标签（已付款/库存快照/商品目录）按端点决定。
+- 同一对话中后续追问，范围或窗口未变可简短重复"范围同上"。
 
 ## 意图路由
 
@@ -53,8 +134,10 @@ metadata:
 ```
 GET {{DATA_HUB_URL}}/api/data/overview
 Header: X-Internal-Token: {{DATA_HUB_TOKEN}}
-Query: platform?, country?, shop_id?
+Query: scope_id?, shop_ids?, platform?, country?, shop_id?
 ```
+
+> **本期 /overview 不含利润与告警两段**，仅返回库存快照 + 近 7 天已付款订单概览。利润/告警单独 503，见下文。
 
 ### 库存
 
@@ -63,8 +146,20 @@ Query: platform?, country?, shop_id?
 ```
 GET {{DATA_HUB_URL}}/api/data/inventory
 Header: X-Internal-Token: {{DATA_HUB_TOKEN}}
-Query: platform?, country?, shop_id?, low_stock_threshold?
+Query: scope_id?, shop_ids?, platform?, country?, shop_id?, low_stock_threshold?
 ```
+
+### 商品目录
+
+商品列表、上下架状态、滞销商品、商品标题：
+
+```
+GET {{DATA_HUB_URL}}/api/data/products
+Header: X-Internal-Token: {{DATA_HUB_TOKEN}}
+Query: scope_id?, shop_ids?, platform?, country?, shop_id?, status?, limit?
+```
+
+> **口径说明**：商品主数据来自 TikTok Shop `POST /product/202309/products/search`，在库存同步流程内顺手入库，**零额外 API 调用**。`min_price`/`currency` 在跨境店常为 null（products/search 的 skus[].price 不一定返回）——这是正常现象，不是数据缺口。品牌/类目/详情需另调单品 API，本期未做。
 
 ### 利润（汇总利润口径）
 
@@ -72,11 +167,10 @@ Query: platform?, country?, shop_id?, low_stock_threshold?
 
 ```
 GET {{DATA_HUB_URL}}/api/data/profit/summary
-Header: X-Internal-Token: {{DATA_HUB_TOKEN}}
-Query: start_date?, end_date?, platform?, country?, shop_id?
+→ HTTP 503 {"detail": "利润功能规划中：需先接入结算(Finance API)、广告费(Ads API)与商品成本录入后开放。"}
 ```
 
-> **口径说明**：利润相关指标由 `fact_profit_daily` 表计算，需配合财务结算数据。当前 TTS 订单已上线，利润结算尚待对接 finance 模块后才能产出真实数据；若返回值为空或字段缺失，请如实告知用户。
+> **本期不可用**。**禁止用 0 或编造值回答**——必须如实告知：当前利润功能尚未上线，待接入结算/广告/商品成本数据后开放；只能提供与利润间接相关的指标（GMV、销量、库存）。
 
 ### GMV 与订单销量（已付款订单口径）
 
@@ -85,7 +179,7 @@ GMV、订单量、客单价、销量、卖了多少钱、卖了多少单：
 ```
 GET {{DATA_HUB_URL}}/api/data/orders/summary
 Header: X-Internal-Token: {{DATA_HUB_TOKEN}}
-Query: start_date?, end_date?, platform?, country?, shop_id?
+Query: scope_id?, shop_ids?, start_date?, end_date?, platform?, country?, shop_id?
 ```
 
 > **口径说明**（必须在回答中告知用户）：
@@ -95,6 +189,18 @@ Query: start_date?, end_date?, platform?, country?, shop_id?
 > - 客单价（`avg_order_value`）：`GMV / 订单数`（接口已计算）。
 > - 来源：TikTok Shop 官方 Open API（`/order/202309/orders/search`）。
 
+### 销售趋势（按天）
+
+近 3 天 / 近 7 天 / 本月 GMV/订单/销量趋势；店铺级 GMV 趋势：
+
+```
+GET {{DATA_HUB_URL}}/api/data/orders/trend
+Header: X-Internal-Token: {{DATA_HUB_TOKEN}}
+Query: scope_id?, shop_ids?, start_date?, end_date?, platform?, country?, shop_id?
+```
+
+> 默认窗口为近 7 天；近 3 天传 `start_date = 今天-2`。窗口内**无单的日期补 0**（趋势图需连续日期），所以"中间几天 0"是真实空窗，不是接口异常。店铺级趋势传 `shop_id` 或单店 scope 的 `scope_id`。口径与 `/orders/summary` 完全一致。
+
 ### 单品销量排行（已付款订单口径）
 
 哪个商品卖得最好、爆款、单品销量榜：
@@ -102,7 +208,7 @@ Query: start_date?, end_date?, platform?, country?, shop_id?
 ```
 GET {{DATA_HUB_URL}}/api/data/orders/top-skus
 Header: X-Internal-Token: {{DATA_HUB_TOKEN}}
-Query: start_date?, end_date?, platform?, country?, shop_id?, limit?
+Query: scope_id?, shop_ids?, start_date?, end_date?, platform?, country?, shop_id?, limit?
 ```
 
 > **口径说明**（必须在回答中告知用户）：
@@ -116,34 +222,37 @@ Query: start_date?, end_date?, platform?, country?, shop_id?, limit?
 
 ```
 GET {{DATA_HUB_URL}}/api/data/alerts
-Header: X-Internal-Token: {{DATA_HUB_TOKEN}}
-Query: platform?, country?, shop_id?, limit?
+→ HTTP 503 {"detail": "告警功能规划中：依赖利润与库存指标，待结算/广告/成本数据接入后开放。"}
 ```
+
+> **本期不可用**。AI 可基于已查到的库存/订单数据**自己**提出"基于当前数据观察"的风险（参考"分析职责"），但**不得**称其为系统正式告警。
 
 ### 意图组合
 
-如果用户的问题横跨多个主题，例如"今天整体怎么样，有没有库存风险"，先查 `/overview`，必要时再查 `/inventory` 或 `/alerts` 补充明细。如果用户同时问 GMV 和爆款，可组合调用 `/orders/summary` + `/orders/top-skus`。
+如果用户的问题横跨多个主题，例如"今天整体怎么样，有没有库存风险"，先查 `/overview`，必要时再查 `/inventory` 补充明细。如果用户同时问 GMV 和爆款，可组合调用 `/orders/summary` + `/orders/top-skus`。如果问的是"最近几天 GMV 趋势 + 爆款"，组合 `/orders/trend` + `/orders/top-skus`。
+
+> 注意：`/overview` **本期不返回利润/告警**，所以"老板日报"类问题如果涉及利润/告警，必须显式告知本期不可用，不要静默缺失。
 
 ## 结果解释
 
 - 以 HTTP API 返回值为唯一事实来源。
 - 不得自行重算利润、ROI、退款率、库存覆盖等核心指标。
 - **必须告知用户数据口径**：调用 GMV/订单/销量相关接口时，必须主动说明"此数据基于已付款订单、来自 TikTok Shop 官方 API"，避免用户误以为是平台最终结算金额或内部计算值。
-- 可以做展示层处理，例如排序、筛选、截断长表格、四舍五入显示、把 `profit_margin` 加 `%`。
+- 可以做展示层处理，例如排序、筛选、截断长表格、四舍五入显示、金额格式化。
 - 如果用户询问接口未返回的指标，明确说明"当前数据接口暂未提供该指标"，并给出已返回的相关指标。
 - 如果结果为空，说明当前筛选条件下暂无数据，不要臆测原因。
 - 对库存问题，优先展示 `low_stock_items`，再展示总体 SKU 数和库存明细。
-- 对告警问题，优先展示 `severity=critical` 或更高风险的告警，再展示普通告警。
-- 对利润问题，必须展示统计周期 `start_date` 到 `end_date`。
+- 利润/告警接口本期返回 503，按"异常处理"节如实告知用户该功能未上线。
+- 对趋势问题，连续若干天 0 是真实空窗（窗口内无单），不是数据缺失。
 
 ## 分析职责
 
 调用数据接口后，Agent 必须把结果组织为运营分析，而不是只复述 JSON。回答应覆盖：
 
-1. **事实摘要**：用接口返回值说明当前经营状态，例如 GMV、毛利、订单数、销量、库存、低库存 SKU、告警数量。
+1. **事实摘要**：用接口返回值说明当前经营状态，例如 GMV、订单数、销量、库存、低库存 SKU。**本期利润与告警接口 503**，不要把"毛利/告警数量"列为已知事实。
 2. **异常识别**：
-   - `/api/data/alerts` 或 `/api/data/overview.alerts` 返回的内容称为"正式告警"。
-   - Agent 可基于多接口数据提出"观察到的风险"或"疑似异常"，例如库存低但销量高、GMV 有表现但毛利偏弱、告警数量上升等。
+   - 本期 `/api/data/alerts` 返回 503，**没有"系统正式告警"可引用**。
+   - Agent 可基于多接口数据提出"观察到的风险"或"疑似异常"，例如库存低但销量高、连续多日无订单、低库存 SKU 占比偏高等。
    - AI 推断的异常必须明确标注为"基于当前数据观察"，不得称为系统已生成告警。
 3. **原因解释**：只能基于已返回字段解释可能原因；如果缺少订单明细、流量、广告 ROI、退款率等必要数据，必须说明当前接口不足以确认原因。
 4. **决策建议**：主动给出下一步运营动作建议，按优先级排序。建议应具体、可执行，但不得承诺已执行任何业务操作。
@@ -151,7 +260,15 @@ Query: platform?, country?, shop_id?, limit?
 
 ## 回答结构
 
-默认按以下结构输出：
+默认按以下结构输出。**首行必须是查询范围 + 时间窗口声明**，详见上文"回答首行声明范围"节。
+
+### 查询范围声明（首行，强制）
+
+```
+查询范围：{API 返回的 scope 字段} ・ {start_date} ~ {end_date}（{口径标签}）
+```
+
+例：`查询范围：TikTok Shop / 印尼 / 1 个店铺 ・ 2026-06-01 ~ 2026-06-07（已付款口径）`
 
 ### 结论
 
@@ -201,9 +318,10 @@ Query: platform?, country?, shop_id?, limit?
 
 ## 异常处理
 
-- 401：说明内部数据接口鉴权失败，需要检查 Data Hub token 配置。
-- 503：说明服务端内部 token 未配置或数据服务暂不可用。
-- 404：说明请求的指标接口不存在，可能是 Skill 文档与服务端版本不一致。
+- **400**（ScopeError）：服务端拒绝了 scope/店铺组合（典型原因：指定店不在 scope 内、店铺未授权）。不要重试；如实告知用户范围与店铺冲突，请用户确认要查哪个店或哪个 scope。响应里的 `detail` 字段会说明原因，可以转述要点，但不要输出 token 等敏感内容。
+- **401**：说明内部数据接口鉴权失败，需要检查 Data Hub token 配置。
+- **503**：当前接口规划中、本期未上线（典型为 `/profit/summary`、`/alerts`）。如实告知用户该功能未上线，**复述响应里的 detail**（说明缺什么数据源），不要返回 0 或编造值。
+- **404**：说明请求的指标接口不存在，可能是 Skill 文档与服务端版本不一致。
 - 连接失败或超时：说明本机 Data Hub 服务不可达，需要检查服务是否启动及 `DATA_HUB_URL`。
 - 返回字段缺失：说明接口契约与 Skill 不一致，不要补造字段。
 
