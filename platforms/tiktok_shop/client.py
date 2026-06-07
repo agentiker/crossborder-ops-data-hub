@@ -157,6 +157,9 @@ class TikTokShopClient(BaseAPIClient):
                 record.refresh_token_expire_at = refresh_expire_dt
                 record.shop_cipher = self.shop_cipher
                 record.token_payload = token_payload
+                # token 响应中可能含 shop_id/seller_id，顺手回填
+                if self.shop_id and not record.shop_id:
+                    record.shop_id = self.shop_id
             else:
                 record = PlatformToken(
                     platform=target_platform,
@@ -204,6 +207,15 @@ class TikTokShopClient(BaseAPIClient):
         self.access_token = data["access_token"]
         self.refresh_token = data["refresh_token"]
         self.shop_cipher = data.get("shop_cipher")
+        # TikTok token 响应含 seller 对象（shop_id / seller_id），
+        # 但 schema 版本间字段名不一致，优先取 data 顶层，再从 seller 里兜底。
+        if not self.shop_id:
+            self.shop_id = (
+                data.get("shop_id")
+                or data.get("shopid")
+                or (data.get("seller") or {}).get("shop_id")
+                or (data.get("seller") or {}).get("shopid")
+            )
         now = time.time()
         self.token_expire_at = _coerce_expiry(data, "access_token_expire_in", now)
         if not self.token_expire_at:
