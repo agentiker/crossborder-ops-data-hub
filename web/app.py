@@ -1,6 +1,8 @@
 """FastAPI application entry point."""
 
 from fastapi import Depends, FastAPI
+from fastapi_mcp import FastApiMCP
+
 from web.routes.auth import router as auth_router
 from web.routes.data import router as data_router
 from web.security import require_internal_token
@@ -28,3 +30,25 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# ── MCP 服务（方案 C：同进程暴露只读数据工具给 openclaw） ──────────────────────
+# fastapi-mcp 用 ASGITransport 进程内调用底层路由（无额外 HTTP 跳），并复用
+# /api/data 的 require_internal_token 依赖。openclaw 在 MCP 请求头携带
+# X-Internal-Token，经 headers 白名单转发到底层依赖完成鉴权。
+# include_operations 白名单仅暴露 7 个 ops_* live 工具；profit/alerts（503）不暴露。
+mcp = FastApiMCP(
+    app,
+    name="Data Hub",
+    include_operations=[
+        "ops_overview",
+        "ops_inventory",
+        "ops_products",
+        "ops_orders_summary",
+        "ops_orders_trend",
+        "ops_top_skus",
+        "ops_scopes",
+    ],
+    headers=["x-internal-token"],
+)
+mcp.mount_http()  # streamable-http，挂在 /mcp

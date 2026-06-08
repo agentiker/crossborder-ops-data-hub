@@ -8,3 +8,4 @@ cryptography>=41.0.0
 prefect>=3.0.0
 fastapi>=0.109.0
 uvicorn>=0.27.0
+fastapi-mcp>=0.4.0

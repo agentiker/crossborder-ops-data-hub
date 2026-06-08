@@ -1,16 +1,19 @@
 ---
 name: crossborder-ops-data
-description: "查询跨境电商经营概览、库存、利润、GMV、订单销量和告警等只读运营数据；通过本机 Data Hub HTTP API 获取结果。"
+description: "查询跨境电商经营概览、库存、利润、GMV、订单销量和告警等只读运营数据；通过 Data Hub 的 ops_* MCP 工具获取结果。"
 version: 1.0.0
 user-invocable: true
 metadata:
   openclaw:
     requires:
-      env:
-        - DATA_HUB_URL
-        - DATA_HUB_TOKEN
       tools:
-        - http_get
+        - ops_overview
+        - ops_inventory
+        - ops_products
+        - ops_orders_summary
+        - ops_orders_trend
+        - ops_top_skus
+        - ops_scopes
 ---
 
 # 跨境电商运营数据查询
@@ -48,10 +51,10 @@ metadata:
 
 **强禁忌（违反 = 严重错误）**：
 - ❌ 不要为单字短语（如"印尼"）调 Data API；这是切换指令，不是查询。
-- ❌ 不要调 `/api/data/profit/summary` 或 `/api/data/alerts`——它们本期固定返回 503，调用 = 浪费时间 + 误导用户。当用户问利润/告警时，**直接告知本期未上线**，不要发请求。
-- ❌ 不要在不知道用户要看什么之前并行调 `overview + summary + inventory + alerts`。一次问题对应一个最小端点集；模糊时先问用户。
-- ❌ 不要凭用户消息里的"印尼"两字自己拼"查询范围：印尼"——首行 `scope` 文本**必须**取自 API 响应里的 `scope` 字段。
-- ❌ 不要调 SKILL.md / api-contract.md 中**没列出**的端点。所有可用端点见"意图路由"节和 `references/api-contract.md` 的 Endpoint Inventory 表。猜测一个 URL（如 `/api/data/scopes`、`/api/data/list`、`/api/data/menu`）会拿到 404。
+- ❌ 利润/告警**没有对应工具**（本期未上线）。当用户问利润/告警时，**直接告知本期未上线**，不要去找或调用任何工具。
+- ❌ 不要在不知道用户要看什么之前并行调 `ops_overview + ops_orders_summary + ops_inventory` 等。一次问题对应一个最小工具集；模糊时先问用户。
+- ❌ 不要凭用户消息里的"印尼"两字自己拼"查询范围：印尼"——首行 `scope` 文本**必须**取自工具返回结果里的 `scope` 字段。
+- ❌ 只能调用本 skill 列出的 7 个 `ops_*` 工具（见"意图路由"节）。不要臆造工具名或参数。
 - ❌ **不要输出过程性独白**。下列内容**禁止**出现在面向用户的回答里（中英文都禁止）：
   - "Let me analyze..." / "Let me format the response..." / "Let me format..." / "I have the data..." / "I'll call the API..." / "Now I'll..." / "Based on the data..." / "Now I'll send a welcome message..." / "following the persona" / "following the skill"
   - "我先调用 API" / "让我分析一下" / "我现在按 skill 格式回复" / "好的，我来查询" / "数据已获取"
@@ -114,22 +117,18 @@ metadata:
 
 ## 前置检查
 
-执行前确认以下环境可用：
+执行前确认 Data Hub 的 `ops_*` MCP 工具可用（`ops_overview`、`ops_inventory`、`ops_products`、`ops_orders_summary`、`ops_orders_trend`、`ops_top_skus`、`ops_scopes`）。
 
-- `DATA_HUB_URL`: Data Hub 本机 HTTP 地址，通常为 `http://127.0.0.1:8000`。
-- `DATA_HUB_TOKEN`: Data Hub 内部只读接口 token。
-- `http_get`: openclaw 可用的 HTTP GET 工具。
+鉴权与地址由 openclaw 的 MCP 配置处理（请求头自动注入内部 token），**skill 不需要拼 URL、不需要处理 token**。
 
-如果缺少环境变量或 HTTP 工具不可用，直接告诉用户"数据查询配置不可用"，不要猜测业务数据。
+如果这些工具不可用（调用报工具不存在/连接失败），直接告诉用户"数据查询服务暂不可用"，不要猜测业务数据。
 
 ## 请求规则
 
 所有请求必须满足：
 
-- 只调用 `GET {{DATA_HUB_URL}}/api/data/*`。
-- 请求头必须携带 `X-Internal-Token: {{DATA_HUB_TOKEN}}`。
-- 不得在回复、日志摘要或错误解释中暴露 `DATA_HUB_TOKEN`。
-- 用户指定平台、国家、店铺或业务范围时，透传为查询参数：
+- 只调用本 skill 列出的 `ops_*` MCP 工具（见"意图路由"）。鉴权（内部 token）由 openclaw 自动注入，skill 不传 token、不拼 URL。
+- 用户指定平台、国家、店铺或业务范围时，透传为工具参数：
   - `scope_id`: 业务范围（命名店铺集合），如 `tts-id-all`（印尼 TikTok 全部店）。**优先使用**——一次过滤一组店铺。
   - `shop_ids`: 店铺 ID 集合（逗号分隔），用于不走命名 scope 的多店查询。
   - `platform`: 平台标识，如 `tiktok_shop`、`shopee`、`amazon`。
@@ -153,7 +152,7 @@ metadata:
 | `印尼` | 切换默认范围 | `tts-id-all` | 见下方"切换默认范围"行为 |
 | `全部` | 切换为全量 | （不传 scope_id） | 见下方"切换默认范围"行为 |
 | `拉美` | 切换（无对应 scope） | — | 触发追问 |
-| `有哪些范围` / `可用范围` / `范围列表` / `list scopes` | 查询有哪些可选 scope | — | 调 `/api/data/scopes` 列出 |
+| `有哪些范围` / `可用范围` / `范围列表` / `list scopes` | 查询有哪些可选 scope | — | 调 `ops_scopes` 列出 |
 
 **关键消歧**："切换范围"这类模糊短语**不进表**——它有歧义（业务范围 vs 查询维度），让用户用上面更明确的措辞。
 
@@ -165,7 +164,7 @@ metadata:
 - 拉美：回复"拉美目前未配置业务范围，请告诉我具体国家（巴西/墨西哥/...）。"
 
 **查询可用范围（有哪些范围 / 可用范围 / 范围列表 / list scopes）**：
-- 调 `GET /api/data/scopes`（这是唯一允许调它的场景）。
+- 调 `ops_scopes` 工具（这是唯一允许调它的场景）。
 - 用响应里的 `items[]` 渲染列表，每行 `scope_key — scope_name`，并提示用户"直接发送对应短语即可切换"。
 - 示例响应处理：
   - 响应 `{"items":[{"scope_key":"tts-id-all","scope_name":"印尼TikTok全部店",...}],"total":1}`
@@ -237,9 +236,8 @@ metadata:
 总体表现、老板日报、今天/最近整体情况：
 
 ```
-GET {{DATA_HUB_URL}}/api/data/overview
-Header: X-Internal-Token: {{DATA_HUB_TOKEN}}
-Query: scope_id?, shop_ids?, platform?, country?, shop_id?
+工具：ops_overview
+参数（全可选）：scope_id, shop_ids, platform, country, shop_id
 ```
 
 > **本期 /overview 不含利润与告警两段**，仅返回库存快照 + 近 7 天已付款订单概览。利润/告警单独 503，见下文。
@@ -249,9 +247,8 @@ Query: scope_id?, shop_ids?, platform?, country?, shop_id?
 低库存、缺货、SKU 库存、仓库库存：
 
 ```
-GET {{DATA_HUB_URL}}/api/data/inventory
-Header: X-Internal-Token: {{DATA_HUB_TOKEN}}
-Query: scope_id?, shop_ids?, platform?, country?, shop_id?, low_stock_threshold?
+工具：ops_inventory
+参数（全可选）：scope_id, shop_ids, platform, country, shop_id, low_stock_threshold
 ```
 
 ### 商品目录
@@ -259,9 +256,8 @@ Query: scope_id?, shop_ids?, platform?, country?, shop_id?, low_stock_threshold?
 商品列表、上下架状态、滞销商品、商品标题：
 
 ```
-GET {{DATA_HUB_URL}}/api/data/products
-Header: X-Internal-Token: {{DATA_HUB_TOKEN}}
-Query: scope_id?, shop_ids?, platform?, country?, shop_id?, status?, limit?
+工具：ops_products
+参数（全可选）：scope_id, shop_ids, platform, country, shop_id, status, limit
 ```
 
 > **口径说明**：商品主数据来自 TikTok Shop `POST /product/202309/products/search`，在库存同步流程内顺手入库，**零额外 API 调用**。`min_price`/`currency` 在跨境店常为 null（products/search 的 skus[].price 不一定返回）——这是正常现象，不是数据缺口。品牌/类目/详情需另调单品 API，本期未做。
@@ -271,8 +267,7 @@ Query: scope_id?, shop_ids?, platform?, country?, shop_id?, status?, limit?
 利润、毛利、广告花费、利润率：
 
 ```
-GET {{DATA_HUB_URL}}/api/data/profit/summary
-→ HTTP 503 {"detail": "利润功能规划中：需先接入结算(Finance API)、广告费(Ads API)与商品成本录入后开放。"}
+无对应工具——利润功能本期未上线（需先接入结算/广告费/商品成本）。
 ```
 
 > **本期不可用**。**禁止用 0 或编造值回答**——必须如实告知：当前利润功能尚未上线，待接入结算/广告/商品成本数据后开放；只能提供与利润间接相关的指标（GMV、销量、库存）。
@@ -282,9 +277,8 @@ GET {{DATA_HUB_URL}}/api/data/profit/summary
 GMV、订单量、客单价、销量、卖了多少钱、卖了多少单：
 
 ```
-GET {{DATA_HUB_URL}}/api/data/orders/summary
-Header: X-Internal-Token: {{DATA_HUB_TOKEN}}
-Query: scope_id?, shop_ids?, start_date?, end_date?, platform?, country?, shop_id?
+工具：ops_orders_summary
+参数（全可选）：scope_id, shop_ids, start_date, end_date, platform, country, shop_id
 ```
 
 > **口径说明**（必须在回答中告知用户）：
@@ -299,9 +293,8 @@ Query: scope_id?, shop_ids?, start_date?, end_date?, platform?, country?, shop_i
 近 3 天 / 近 7 天 / 本月 GMV/订单/销量趋势；店铺级 GMV 趋势：
 
 ```
-GET {{DATA_HUB_URL}}/api/data/orders/trend
-Header: X-Internal-Token: {{DATA_HUB_TOKEN}}
-Query: scope_id?, shop_ids?, start_date?, end_date?, platform?, country?, shop_id?
+工具：ops_orders_trend
+参数（全可选）：scope_id, shop_ids, start_date, end_date, platform, country, shop_id
 ```
 
 > 默认窗口为近 7 天；近 3 天传 `start_date = 今天-2`。窗口内**无单的日期补 0**（趋势图需连续日期），所以"中间几天 0"是真实空窗，不是接口异常。店铺级趋势传 `shop_id` 或单店 scope 的 `scope_id`。口径与 `/orders/summary` 完全一致。
@@ -311,9 +304,8 @@ Query: scope_id?, shop_ids?, start_date?, end_date?, platform?, country?, shop_i
 哪个商品卖得最好、爆款、单品销量榜：
 
 ```
-GET {{DATA_HUB_URL}}/api/data/orders/top-skus
-Header: X-Internal-Token: {{DATA_HUB_TOKEN}}
-Query: scope_id?, shop_ids?, start_date?, end_date?, platform?, country?, shop_id?, limit?
+工具：ops_top_skus
+参数（全可选）：scope_id, shop_ids, start_date, end_date, platform, country, shop_id, limit
 ```
 
 > **口径说明**（必须在回答中告知用户）：
@@ -326,8 +318,7 @@ Query: scope_id?, shop_ids?, start_date?, end_date?, platform?, country?, shop_i
 异常、风险、需要关注的问题：
 
 ```
-GET {{DATA_HUB_URL}}/api/data/alerts
-→ HTTP 503 {"detail": "告警功能规划中：依赖利润与库存指标，待结算/广告/成本数据接入后开放。"}
+无对应工具——告警功能本期未上线（依赖利润与库存指标，待数据源接入后开放）。
 ```
 
 > **本期不可用**。AI 可基于已查到的库存/订单数据**自己**提出"基于当前数据观察"的风险（参考"分析职责"），但**不得**称其为系统正式告警。
@@ -337,8 +328,8 @@ GET {{DATA_HUB_URL}}/api/data/alerts
 用户问"有哪些范围/可选 scope/切换范围"时：
 
 ```
-GET {{DATA_HUB_URL}}/api/data/scopes
-Header: X-Internal-Token: {{DATA_HUB_TOKEN}}
+工具：ops_scopes
+参数：无
 ```
 
 返回 `items: [{scope_key, scope_name, platform, country, shop_ids}, ...]`。把每条 `scope_key` 和 `scope_name` 列给用户选。**只在用户明确问可选范围时调用**。
@@ -367,7 +358,7 @@ Header: X-Internal-Token: {{DATA_HUB_TOKEN}}
 
 1. **事实摘要**：用接口返回值说明当前经营状态，例如 GMV、订单数、销量、库存、低库存 SKU。**本期利润与告警接口 503**，不要把"毛利/告警数量"列为已知事实。
 2. **异常识别**：
-   - 本期 `/api/data/alerts` 返回 503，**没有"系统正式告警"可引用**。
+   - 本期无告警工具，**没有"系统正式告警"可引用**。
    - Agent 可基于多接口数据提出"观察到的风险"或"疑似异常"，例如库存低但销量高、连续多日无订单、低库存 SKU 占比偏高等。
    - AI 推断的异常必须明确标注为"基于当前数据观察"，不得称为系统已生成告警。
 3. **原因解释**：只能基于已返回字段解释可能原因；如果缺少订单明细、流量、广告 ROI、退款率等必要数据，必须说明当前接口不足以确认原因。
@@ -512,10 +503,9 @@ Header: X-Internal-Token: {{DATA_HUB_TOKEN}}
 ## 异常处理
 
 - **400**（ScopeError）：服务端拒绝了 scope/店铺组合（典型原因：指定店不在 scope 内、店铺未授权）。不要重试；如实告知用户范围与店铺冲突，请用户确认要查哪个店或哪个 scope。响应里的 `detail` 字段会说明原因，可以转述要点，但不要输出 token 等敏感内容。
-- **401**：说明内部数据接口鉴权失败，需要检查 Data Hub token 配置。
-- **503**：当前接口规划中、本期未上线（典型为 `/profit/summary`、`/alerts`）。如实告知用户该功能未上线，**复述响应里的 detail**（说明缺什么数据源），不要返回 0 或编造值。
-- **404**：说明请求的指标接口不存在，可能是 Skill 文档与服务端版本不一致。
-- 连接失败或超时：说明本机 Data Hub 服务不可达，需要检查服务是否启动及 `DATA_HUB_URL`。
+- **401**：内部鉴权失败，说明 openclaw 的 MCP token 配置有误（运维问题），如实告知"数据服务鉴权异常"，不要编数。
+- **503**：某能力本期未上线。利润/告警本就无工具，应在路由阶段直接告知未上线，不应走到这里；若其他工具返 503，复述 detail，不要返回 0 或编造值。
+- 工具不存在 / 调用失败 / 超时：说明数据服务暂不可达（Data Hub 服务或 MCP 配置异常），不要猜测业务数据。
 - 返回字段缺失：说明接口契约与 Skill 不一致，不要补造字段。
 
 ## 输出与安全约束

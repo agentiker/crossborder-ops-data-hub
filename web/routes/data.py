@@ -154,10 +154,30 @@ class TrendResponse(BaseModel):
     scope: Optional[str] = None
 
 
+class OverviewInventory(BaseModel):
+    total_sku: int
+    total_stock: int
+    low_stock_count: int
+
+
+class OverviewOrders(BaseModel):
+    gmv: float
+    order_count: int
+    units_sold: int
+    avg_order_value: float
+
+
+class OverviewResponse(BaseModel):
+    period: str
+    scope: Optional[str] = None
+    inventory: OverviewInventory
+    orders: OverviewOrders
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 
-@router.get("/inventory", response_model=InventoryResponse)
+@router.get("/inventory", response_model=InventoryResponse, operation_id="ops_inventory")
 async def get_inventory(
     platform: Optional[str] = Query(None, description="平台标识，如 tiktok_shop / shopee"),
     country: Optional[str] = Query(None, description="国家/地区，如 ID / GLOBAL"),
@@ -240,7 +260,7 @@ async def get_alerts(
     raise HTTPException(status_code=503, detail=ALERTS_NOT_READY)
 
 
-@router.get("/overview")
+@router.get("/overview", response_model=OverviewResponse, operation_id="ops_overview")
 async def get_overview(
     platform: Optional[str] = Query(None, description="平台标识，如 tiktok_shop / shopee"),
     country: Optional[str] = Query(None, description="国家/地区，如 ID / GLOBAL"),
@@ -299,7 +319,7 @@ async def get_overview(
     }
 
 
-@router.get("/orders/summary", response_model=OrderSummary)
+@router.get("/orders/summary", response_model=OrderSummary, operation_id="ops_orders_summary")
 async def get_orders_summary(
     start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
@@ -328,7 +348,7 @@ async def get_orders_summary(
     return OrderSummary(**data, scope=scope.display_text)
 
 
-@router.get("/orders/top-skus", response_model=TopSkuResponse)
+@router.get("/orders/top-skus", response_model=TopSkuResponse, operation_id="ops_top_skus")
 async def get_orders_top_skus(
     start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
@@ -363,7 +383,7 @@ async def get_orders_top_skus(
     )
 
 
-@router.get("/orders/trend", response_model=TrendResponse)
+@router.get("/orders/trend", response_model=TrendResponse, operation_id="ops_orders_trend")
 async def get_orders_trend(
     start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
@@ -400,7 +420,7 @@ async def get_orders_trend(
     )
 
 
-@router.get("/products", response_model=ProductResponse)
+@router.get("/products", response_model=ProductResponse, operation_id="ops_products")
 async def get_products(
     platform: Optional[str] = Query(None, description="平台标识，如 tiktok_shop / shopee"),
     country: Optional[str] = Query(None, description="国家/地区，如 ID / GLOBAL"),
@@ -444,7 +464,7 @@ async def get_products(
         session.close()
 
 
-@router.get("/scopes", response_model=ScopeListResponse)
+@router.get("/scopes", response_model=ScopeListResponse, operation_id="ops_scopes")
 async def get_scopes():
     """列出所有启用的业务范围（scope）。用于 agent 在用户问"有哪些范围"时回答。"""
     scopes = list_scopes()

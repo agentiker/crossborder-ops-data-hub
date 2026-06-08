@@ -8,7 +8,9 @@ from core.config import settings
 
 
 async def require_internal_token(
-    x_internal_token: str = Header(default="", alias="X-Internal-Token"),
+    x_internal_token: str = Header(
+        default="", alias="X-Internal-Token", include_in_schema=False
+    ),
 ) -> None:
     """Reject /api/data calls that lack a valid internal token.
 
