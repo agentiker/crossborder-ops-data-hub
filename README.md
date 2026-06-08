@@ -163,6 +163,72 @@ prefect deploy --all                       # 部署所有任务
 prefect deploy --name tiktok-inventory-sync  # 部署单个任务
 ```
 
+## 服务器定时任务运维（测试服务器 yamk）
+
+> 测试服务器 `yamk`（局域网 192.168.1.129，本机用 `ssh hp` 免密登录）上的数据拉取
+> **不走 Prefect server，也不走 cron**，用 **systemd user timer** 跑。下面是日常运维口径。
+
+### 部署了什么
+
+| timer | 跑的 flow | 周期 |
+|-------|-----------|------|
+| `data-sync-inventory.timer` | `flows.sync_inventory` | 每小时 `*:17` |
+| `data-sync-orders.timer`    | `flows.sync_orders`    | 每小时 `*:23` |
+| `data-refresh-tokens.timer` | `flows.refresh_tokens` | 每 6h `00,06,12,18:41` |
+
+- unit 文件：`~/.config/systemd/user/`（**用户级，不用 sudo**；linger 已开，登出仍跑）
+- 每个 service：`Type=oneshot` + `WorkingDirectory=~/code/crossborder-ops-data-hub`
+  + `ExecStart=/home/guopeixin/.local/bin/uv run python -m flows.<X>`，`Persistent=true`（补跑错过的）
+
+### 常用命令（在服务器上，或 `ssh hp '...'`）
+
+```bash
+# 看下次/上次触发时间
+systemctl --user list-timers 'data-*'
+
+# 看某个任务最近日志（实时加 -f）
+journalctl --user -u data-sync-inventory -n 50 --no-pager
+
+# 立刻手动跑一次（不影响 timer 排程）
+systemctl --user start data-sync-orders.service
+
+# 看上次跑的结果（success/失败码）
+systemctl --user show -p Result -p ExecMainStatus data-sync-orders.service
+
+# 暂停 / 恢复某个定时
+systemctl --user disable --now data-sync-orders.timer
+systemctl --user enable  --now data-sync-orders.timer
+```
+
+### 改周期
+
+编辑 `~/.config/systemd/user/<name>.timer` 的 `OnCalendar=`，然后：
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart <name>.timer
+```
+
+### ⚠️ 前置依赖：TikTok 出口 IP 必须在白名单内
+
+服务器装了 **ShellCrash 透明代理**（iptables TPROXY，网络层劫持全部流量）。TikTok 调用
+要能成功，必须让 TikTok 域名**绕过代理走直连**——这样出口才是局域网真实 NAT IP
+`112.94.74.178`（已在 TikTok 后台白名单内）。已在 ShellCrash 加了两条直连规则：
+
+```yaml
+# /etc/ShellCrash/yamls/config.yaml 的 rules 段（需 sudo 改，改后 sudo systemctl restart shellcrash）
+- DOMAIN-SUFFIX,tiktok-shops.com,DIRECT
+- DOMAIN-SUFFIX,tiktokglobalshop.com,DIRECT
+```
+
+- 验证直连生效：`grep tiktok /tmp/ShellCrash/config.yaml`（运行配置里要有这两行）
+- 验证能调通：`uv run python -c "from flows._shop_discovery import discover_single_shop; from platforms.tiktok_shop.client import TikTokShopClient; print(len(TikTokShopClient(**discover_single_shop()).list_products(page_size=5)))"`
+- `112.94.74.178` 是住宅联通 IP，可能 re-dial 变动；变了要同步更新 TikTok 后台白名单。
+
+> **注意日志里的「出口 IP」行**：flow 开头会打印出口 IP（查 `ddns.oray.com`），正常应是
+> `112.94.74.178`。若看到 `104.28.x` 或 `2a09:bac5:...`，说明这次查询被代理兜走了，
+> 不一定代表 TikTok 调用失败——以实际 flow 是否 `Completed` 为准。
+
 ## 核心架构
 
 ### BaseAPIClient 基类
