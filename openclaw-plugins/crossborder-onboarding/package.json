@@ -1,0 +1,20 @@
+{
+  "name": "openclaw-plugin-crossborder-onboarding",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "OpenClaw 命令插件：/start 直出跨境电商 onboarding 文案（不走 LLM）。",
+  "files": [
+    "index.js",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "openclaw": ">=2026.5.17"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ]
+  }
+}

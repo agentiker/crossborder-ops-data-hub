@@ -65,6 +65,12 @@ metadata:
 
 ## 使用指引文案（onboarding）
 
+> **注意**：`/start` 现在由 `crossborder-onboarding` 插件**确定性拦截**（命令直出固定文案、不经过 LLM），
+> 是 onboarding 的主入口（飞书「指引」菜单按钮发送 `/start`）。本节只是**用户手打裸词**
+> （"指引"/"开始"等，无法做成命令）时的 **LLM 兜底**。
+> **文案权威来源是插件 `openclaw-plugins/crossborder-onboarding/index.js` 的 `ONBOARDING_ZH`**——
+> 本节 `===ONBOARDING_BEGIN/END===` 之间的文案必须与它**逐字一致**，改一处要同步另一处。
+
 ### 触发条件
 
 用户消息（去前后空白后）∈ {`/start`, `start`, `开始`, `操作指引`, `使用指引`, `指引`, `help`, `帮助`} 时进入本节。
