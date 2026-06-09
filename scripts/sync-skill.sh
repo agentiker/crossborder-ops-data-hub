@@ -23,6 +23,13 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$REPO_DIR/openclaw-skills/crossborder-ops-data"
 
+# 通用人格文件源（行为规范，所有 ecom workspace 应当一致）。
+# 只同步 AGENTS.md / SOUL.md；USER.md / IDENTITY.md / DREAMS.md / HEARTBEAT.md / TOOLS.md
+# 是 per-workspace 客户专属（含各自称呼、业务、身份），本脚本绝不碰——否则会把某个
+# workspace 的个人称呼（如 main 的"阿🌟"）误推到客户 bot。
+PERSONA_SRC="$REPO_DIR/openclaw-docs"
+PERSONA_FILES=(AGENTS.md SOUL.md)
+
 # 需要同步 skill 的 workspace 名（~/.openclaw/<name>）。
 # 新增客户 workspace 时往这里加一行即可。
 WORKSPACES=(
@@ -42,19 +49,29 @@ if [[ "${1-}" == "--check" ]]; then
   rc=0
   for ws in "${WORKSPACES[@]}"; do
     dst="$(dst_for "$ws")"
+    ws_root="$HOME/.openclaw/$ws"
     echo "── $ws ──"
     if [[ ! -d "$dst" ]]; then
-      echo "  ⚠️  DST 不存在：$dst （首次同步请去掉 --check）"
+      echo "  ⚠️  skill DST 不存在：$dst （首次同步请去掉 --check）"
       rc=1
-      continue
-    fi
-    if diff -rq "$SRC" "$dst" >/dev/null 2>&1; then
-      echo "  ✅ 完全一致"
+    elif diff -rq "$SRC" "$dst" >/dev/null 2>&1; then
+      echo "  ✅ skill 一致"
     else
       diff -rq "$SRC" "$dst" || true
-      echo "  → 有差异，跑 ./scripts/sync-skill.sh 同步"
+      echo "  → skill 有差异"
       rc=1
     fi
+    for pf in "${PERSONA_FILES[@]}"; do
+      if [[ ! -f "$ws_root/$pf" ]]; then
+        echo "  ⚠️  $pf 不存在：$ws_root/$pf"
+        rc=1
+      elif diff -q "$PERSONA_SRC/$pf" "$ws_root/$pf" >/dev/null 2>&1; then
+        echo "  ✅ $pf 一致"
+      else
+        echo "  → $pf 有差异"
+        rc=1
+      fi
+    done
   done
   [[ $rc -eq 0 ]] && echo && echo "全部一致，无需同步。"
   exit $rc
@@ -75,11 +92,21 @@ for ws in "${WORKSPACES[@]}"; do
   fi
   mkdir -p "$dst"
   rsync -av --delete "$SRC/" "$dst/" | tail -5
-  echo "  ✅ $dst"
+  echo "  ✅ skill → $dst"
+  # 同步通用人格文件（AGENTS.md/SOUL.md）；绝不碰 USER.md/IDENTITY.md 等 per-workspace 文件
+  for pf in "${PERSONA_FILES[@]}"; do
+    if [[ -f "$PERSONA_SRC/$pf" ]]; then
+      cp "$PERSONA_SRC/$pf" "$ws_root/$pf"
+      echo "  ✅ persona → $ws_root/$pf"
+    else
+      echo "  ⚠️  人格源缺失：$PERSONA_SRC/$pf（跳过）"
+    fi
+  done
   echo
 done
 
-echo "✅ Synced  $SRC"
+echo "✅ Synced skill   $SRC"
+echo "✅ Synced persona ${PERSONA_FILES[*]}  ← $PERSONA_SRC"
 echo "      →   ${WORKSPACES[*]}"
 echo
 echo "下一步：在每个飞书对话发 /new（开新会话，重载 SKILL.md）"
