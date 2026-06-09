@@ -8,6 +8,7 @@ from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 
 from core.db import SessionLocal
+from core.timezone import business_today
 from models.base_models import Inventory, Product
 from services.order_metrics import get_gmv_summary, get_gmv_trend, get_top_skus
 from services.scope_resolution import ScopeError, ScopeFilters, list_scopes, resolve_filters
@@ -43,12 +44,12 @@ def _resolve_scope(
 
 # ── 数据口径常量（随响应 caliber 字段下发，agent 直接复述，无需在 skill 散文里背） ──
 ORDERS_CALIBER = (
-    "已付款订单口径（paid_time 非空、排除未付款/已取消，按 paid_time 归日）；"
+    "已付款订单口径（paid_time 非空、排除未付款/已取消，按 paid_time 归日，印尼当地时间 UTC+7）；"
     "GMV=订单 total_amount（买家实付，含运费税优惠，非平台结算）；"
     "销量=line_item 条数；客单价=GMV/订单数；来源 TikTok /order/202309/orders/search"
 )
 TOP_SKUS_CALIBER = (
-    "已付款订单口径；单品 GMV=该 SKU 各 line_item 的 sale_price 之和"
+    "已付款订单口径（统计窗口按印尼当地时间 UTC+7）；单品 GMV=该 SKU 各 line_item 的 sale_price 之和"
     "（商品行售价，不含运费）；排序按销量（line_item 条数）降序"
 )
 
@@ -295,7 +296,7 @@ async def get_overview(
         scope_id=scope_id, platform=platform, country=country,
         shop_id=shop_id, shop_ids=shop_ids,
     )
-    today = date.today()
+    today = business_today()
     week_ago = today - timedelta(days=7)
 
     # 库存
@@ -351,7 +352,7 @@ async def get_orders_summary(
     scope_id: Optional[str] = Query(None, description="业务范围 scope_key（命名店铺集合）"),
     shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
 ):
-    """已付款订单 GMV/订单量/销量/客单价汇总，默认最近7天（按 paid_time 归日）。
+    """已付款订单 GMV/订单量/销量/客单价汇总，默认最近7天（按 paid_time 归日，印尼当地时间 UTC+7）。
 
     口径（随响应 caliber 字段返回）：已付款订单（paid_time 非空、排除未付款/已取消）；
     GMV=订单 total_amount（买家实付，非平台结算）；销量=line_item 条数；客单价=GMV/订单数。
@@ -360,7 +361,7 @@ async def get_orders_summary(
         scope_id=scope_id, platform=platform, country=country,
         shop_id=shop_id, shop_ids=shop_ids,
     )
-    today = date.today()
+    today = business_today()
     sd = date.fromisoformat(start_date) if start_date else today - timedelta(days=7)
     ed = date.fromisoformat(end_date) if end_date else today
 
@@ -394,7 +395,7 @@ async def get_orders_top_skus(
         scope_id=scope_id, platform=platform, country=country,
         shop_id=shop_id, shop_ids=shop_ids,
     )
-    today = date.today()
+    today = business_today()
     sd = date.fromisoformat(start_date) if start_date else today - timedelta(days=7)
     ed = date.fromisoformat(end_date) if end_date else today
 
@@ -433,7 +434,7 @@ async def get_orders_trend(
         scope_id=scope_id, platform=platform, country=country,
         shop_id=shop_id, shop_ids=shop_ids,
     )
-    today = date.today()
+    today = business_today()
     sd = date.fromisoformat(start_date) if start_date else today - timedelta(days=6)
     ed = date.fromisoformat(end_date) if end_date else today
 

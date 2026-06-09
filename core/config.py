@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     tiktok: TikTokConfig
     api: APIConfig = APIConfig()
     scheduler_interval_minutes: int = 60
+    # 业务归日时区偏移（小时）。印尼 WIB 固定 UTC+7（无夏令时）。
+    # 订单 paid_time 存 naive UTC，GMV/趋势/单品按此偏移归到当地"自然日"。
+    # 多店未来若跨时区，应改为按 shop 所在国时区，本期单店固定印尼。
+    business_tz_offset_hours: int = 7
 
     class Config:
         env_file = ".env"

@@ -1,21 +1,24 @@
 """Deterministic order metrics (GMV, units sold, top SKUs).
 
 口径（已与业务确认）：
-- 已付款订单：`paid_time` 非空且落在统计窗口内（按 paid_time 归日）。
+- 已付款订单：`paid_time` 非空且落在统计窗口内（按 paid_time 归日，**印尼当地时间 UTC+7**）。
 - GMV：订单 `total_amount`（买家实付）求和。
 - 销量：line_item 条数（每条 = 售出一件）。
 
+时区：paid_time 存 naive UTC，归日按印尼 UTC+7（见 core.timezone）。窗口边界经 paid_window_utc
+转成 UTC 查询；趋势按天归日在 Python 端用 to_business_day 完成（规避 SQL date() 的方言差异）。
 公式全部在此用确定性 SQL/Python 实现，AI 仅解释结果。
 """
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import func
 
 from core.db import SessionLocal
+from core.timezone import paid_window_utc, to_business_day
 from models.base_models import OrderHeader, OrderLineItem
 
 
@@ -26,10 +29,8 @@ def _to_float(value) -> float:
 
 
 def _paid_window(start_date: date, end_date: date):
-    """Inclusive day window → [start 00:00:00, end 23:59:59] naive UTC bounds."""
-    start_dt = datetime.combine(start_date, time.min)
-    end_dt = datetime.combine(end_date, time.max)
-    return start_dt, end_dt
+    """业务日闭区间 → naive UTC 查询边界（按印尼 UTC+7 归日，见 core.timezone）。"""
+    return paid_window_utc(start_date, end_date)
 
 
 def _scope_filters(query, model, platform, country, shop_id, shop_ids=None):
@@ -160,66 +161,59 @@ def get_gmv_trend(
     """Return a per-day paid-order trend over [start_date, end_date].
 
     口径与 get_gmv_summary 一致（已付款 = paid_time 非空且落在窗口内，按 paid_time 归日；
-    GMV = total_amount 求和；销量 = 已付款订单的 line_item 条数）。按天 GROUP BY 后，
-    对窗口内没有订单的日期补 0，返回连续日序列，便于直接画趋势。
+    GMV = total_amount 求和；销量 = 已付款订单的 line_item 条数）。
+
+    归日按**印尼当地时间 UTC+7**，在 Python 端用 to_business_day 完成（不在 SQL 里做
+    date(paid_time + interval)，规避 SQLite/MySQL 的方言差异）。对窗口内没有订单的日期补 0，
+    返回连续日序列，便于直接画趋势。
     """
     start_dt, end_dt = _paid_window(start_date, end_date)
     session = SessionLocal()
     try:
-        day = func.date(OrderHeader.paid_time)
-
-        # 每日 GMV 与订单量（订单头维度）
-        header_rows = (
-            _scope_filters(
-                session.query(
-                    day.label("day"),
-                    func.coalesce(func.sum(OrderHeader.total_amount), 0),
-                    func.count(OrderHeader.order_id),
-                ).filter(
-                    OrderHeader.paid_time.isnot(None),
-                    OrderHeader.paid_time >= start_dt,
-                    OrderHeader.paid_time <= end_dt,
-                ),
-                OrderHeader,
-                platform,
-                country,
-                shop_id,
-                shop_ids,
-            )
-            .group_by(day)
-            .all()
+        # 每笔已付款订单的 paid_time + 金额（Python 端按印尼归日聚合）
+        header_q = _scope_filters(
+            session.query(OrderHeader.paid_time, OrderHeader.total_amount).filter(
+                OrderHeader.paid_time.isnot(None),
+                OrderHeader.paid_time >= start_dt,
+                OrderHeader.paid_time <= end_dt,
+            ),
+            OrderHeader,
+            platform,
+            country,
+            shop_id,
+            shop_ids,
         )
+        gmv_by_day: dict[date, list] = {}
+        for paid_time, amount in header_q.all():
+            d = to_business_day(paid_time)
+            agg = gmv_by_day.setdefault(d, [0.0, 0])
+            agg[0] += _to_float(amount)
+            agg[1] += 1
 
-        # 每日销量 = 已付款订单下的 line_item 条数（行维度）
-        units_rows = (
-            _scope_filters(
-                session.query(
-                    day.label("day"),
-                    func.count(OrderLineItem.line_item_id),
-                )
-                .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
-                .filter(
-                    OrderHeader.paid_time.isnot(None),
-                    OrderHeader.paid_time >= start_dt,
-                    OrderHeader.paid_time <= end_dt,
-                ),
-                OrderHeader,
-                platform,
-                country,
-                shop_id,
-                shop_ids,
-            )
-            .group_by(day)
-            .all()
+        # 每日销量 = 已付款订单下的 line_item 条数，按订单 paid_time 归日
+        line_q = _scope_filters(
+            session.query(OrderHeader.paid_time)
+            .join(OrderLineItem, OrderLineItem.order_id == OrderHeader.order_id)
+            .filter(
+                OrderHeader.paid_time.isnot(None),
+                OrderHeader.paid_time >= start_dt,
+                OrderHeader.paid_time <= end_dt,
+            ),
+            OrderHeader,
+            platform,
+            country,
+            shop_id,
+            shop_ids,
         )
-
-        gmv_by_day = {_as_date(d): (g, c) for d, g, c in header_rows}
-        units_by_day = {_as_date(d): u for d, u in units_rows}
+        units_by_day: dict[date, int] = {}
+        for (paid_time,) in line_q.all():
+            d = to_business_day(paid_time)
+            units_by_day[d] = units_by_day.get(d, 0) + 1
 
         points: list[dict] = []
         cursor = start_date
         while cursor <= end_date:
-            gmv, order_count = gmv_by_day.get(cursor, (0, 0))
+            gmv, order_count = gmv_by_day.get(cursor, (0.0, 0))
             points.append(
                 {
                     "date": cursor.isoformat(),
@@ -232,12 +226,3 @@ def get_gmv_trend(
         return points
     finally:
         session.close()
-
-
-def _as_date(value) -> date:
-    """Normalize a SQL DATE() result (date or 'YYYY-MM-DD' string) to date."""
-    if isinstance(value, date) and not isinstance(value, datetime):
-        return value
-    if isinstance(value, datetime):
-        return value.date()
-    return date.fromisoformat(str(value))

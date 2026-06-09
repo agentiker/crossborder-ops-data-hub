@@ -7,8 +7,8 @@ from services import order_metrics
 from services.order_store import upsert_orders
 
 
-def _unix(y, m, d):
-    return int(datetime(y, m, d, 12, 0, tzinfo=timezone.utc).timestamp())
+def _unix(y, m, d, h=12, mi=0):
+    return int(datetime(y, m, d, h, mi, tzinfo=timezone.utc).timestamp())
 
 
 def _order(order_id, *, paid, total, lines, status="COMPLETED"):
@@ -140,3 +140,51 @@ def test_gmv_trend_fills_empty_days(session, monkeypatch):
     assert by_date["2026-06-05"]["gmv"] == 50000.0
     assert by_date["2026-06-05"]["order_count"] == 2
     assert by_date["2026-06-05"]["units_sold"] == 2
+
+
+def test_business_day_timezone_boundary(session, monkeypatch):
+    """跨日边界：UTC 23:57 的单（印尼 UTC+7 已是次日凌晨）应归到印尼次日，而非 UTC 当日。
+
+    复刻线上那笔 paid_time=2026-06-08 23:57 UTC（印尼 6/9 06:57）被错算到 6/8 的 bug。
+    """
+    orders = [
+        # UTC 6/8 14:00 → 印尼 6/8 21:00 → 印尼日 6/8
+        _order("early", paid=_unix(2026, 6, 8, 14, 0), total="46894",
+               lines=[{"id": "le", "sku_id": "sku-A", "sale_price": "46894"}]),
+        # UTC 6/8 23:57 → 印尼 6/9 06:57 → 印尼日 6/9（关键）
+        _order("late", paid=_unix(2026, 6, 8, 23, 57), total="20028",
+               lines=[{"id": "ll", "sku_id": "sku-B", "sale_price": "20028"}]),
+    ]
+    upsert_orders(session, orders, country="ID", shop_id="shop-1")
+    session.commit()
+    monkeypatch.setattr(order_metrics, "SessionLocal", lambda: session)
+
+    points = order_metrics.get_gmv_trend(
+        start_date=date(2026, 6, 8), end_date=date(2026, 6, 9),
+        country="ID", shop_id="shop-1",
+    )
+    by_date = {p["date"]: p for p in points}
+    assert by_date["2026-06-08"]["gmv"] == 46894.0
+    assert by_date["2026-06-08"]["order_count"] == 1
+    assert by_date["2026-06-08"]["units_sold"] == 1
+    # 关键断言：23:57 UTC 的单归到印尼 6/9，不再算进 6/8
+    assert by_date["2026-06-09"]["gmv"] == 20028.0
+    assert by_date["2026-06-09"]["order_count"] == 1
+    assert by_date["2026-06-09"]["units_sold"] == 1
+
+    # summary 查印尼 6/9 当天，应只含 late 那笔（窗口边界也按印尼时区）
+    summary = order_metrics.get_gmv_summary(
+        start_date=date(2026, 6, 9), end_date=date(2026, 6, 9),
+        country="ID", shop_id="shop-1",
+    )
+    assert summary["gmv"] == 20028.0
+    assert summary["order_count"] == 1
+    assert summary["units_sold"] == 1
+
+    # 查印尼 6/8 当天，应只含 early 那笔
+    summary_8 = order_metrics.get_gmv_summary(
+        start_date=date(2026, 6, 8), end_date=date(2026, 6, 8),
+        country="ID", shop_id="shop-1",
+    )
+    assert summary_8["gmv"] == 46894.0
+    assert summary_8["order_count"] == 1

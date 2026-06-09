@@ -158,7 +158,7 @@ Response shape:
   "units_sold": 1,
   "avg_order_value": 100888.0,
   "scope": "TikTok Shop / 印尼 / 1 个店铺",
-  "caliber": "已付款订单口径（paid_time 非空、排除未付款/已取消，按 paid_time 归日）；GMV=订单 total_amount（买家实付，含运费税优惠，非平台结算）；销量=line_item 条数；客单价=GMV/订单数；来源 TikTok /order/202309/orders/search"
+  "caliber": "已付款订单口径（paid_time 非空、排除未付款/已取消，按 paid_time 归日，印尼当地时间 UTC+7）；GMV=订单 total_amount（买家实付，含运费税优惠，非平台结算）；销量=line_item 条数；客单价=GMV/订单数；来源 TikTok /order/202309/orders/search"
 }
 ```
 
@@ -170,7 +170,7 @@ Response shape:
 - GMV: sum of `payment.total_amount` across qualifying orders — the amount the buyer actually paid (including shipping, tax, after discounts). This is **not** the platform settlement amount.
 - `units_sold`: count of `line_item` rows under paid orders. In the TTS 202309 model each line_item represents one sold unit (no `quantity` field).
 - `avg_order_value`: `GMV / order_count` (computed server-side).
-- Time grouping: by `paid_time` (UTC-naive bounds, inclusive day window).
+- Time grouping: by `paid_time`, bucketed to the **Indonesia local day (UTC+7 / WIB)**. `paid_time` is stored UTC-naive; day windows and per-day trend buckets are computed in Asia/Jakarta time so a sale at UTC 23:57 (07:57 next day in Jakarta) counts on the next local day. Inclusive day window.
 - Source: TikTok Shop official API (`/order/202309/orders/search`).
 
 ## GET /api/data/orders/trend
