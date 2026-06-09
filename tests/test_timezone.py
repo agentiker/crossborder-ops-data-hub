@@ -88,23 +88,23 @@ def test_resolve_window_bad_period_raises_400(fixed_today):
 def test_describe_window_this_week_includes_today(fixed_today):
     # 本周 6/8(周一)~6/9(周二)，含今天 6/9
     label = describe_window(date(2026, 6, 8), date(2026, 6, 9))
-    assert label == "6/8（周一） ~ 6/9（周二），共 2 天；今天 6/9（周二）"
+    assert label == "印尼时间 6/8（周一） ~ 6/9（周二），共 2 天；今天 6/9（周二）"
 
 
 def test_describe_window_single_day_today(fixed_today):
     # 今天 6/9 周二，单日且就是今天 → 带"今天"
-    assert describe_window(REF, REF) == "6/9（周二，今天）"
+    assert describe_window(REF, REF) == "印尼时间 6/9（周二，今天）"
 
 
 def test_describe_window_single_day_not_today(fixed_today):
     # 昨天 6/8 周一，单日非今天 → 不带"今天"
-    assert describe_window(date(2026, 6, 8), date(2026, 6, 8)) == "6/8（周一）"
+    assert describe_window(date(2026, 6, 8), date(2026, 6, 8)) == "印尼时间 6/8（周一）"
 
 
 def test_describe_window_past_range_excludes_today(fixed_today):
     # 上周 6/1(周一)~6/7(周日)，今天 6/9 不在区间 → 不追加"今天"
     label = describe_window(date(2026, 6, 1), date(2026, 6, 7))
-    assert label == "6/1（周一） ~ 6/7（周日），共 7 天"
+    assert label == "印尼时间 6/1（周一） ~ 6/7（周日），共 7 天"
     assert "今天" not in label
 
 

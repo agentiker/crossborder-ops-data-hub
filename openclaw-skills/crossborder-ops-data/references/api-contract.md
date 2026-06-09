@@ -154,7 +154,7 @@ Response shape:
 {
   "start_date": "2026-06-01",
   "end_date": "2026-06-07",
-  "window_label": "6/1（周一） ~ 6/7（周日），共 7 天",
+  "window_label": "印尼时间 6/1（周一） ~ 6/7（周日），共 7 天",
   "gmv": 100888.0,
   "order_count": 1,
   "units_sold": 1,
@@ -166,7 +166,7 @@ Response shape:
 
 > **`caliber` 字段**：响应自带本端点数据口径文本，agent 在「📐 数据口径」段**直接复述**即可，不必从 skill 散文里背。下面的 Methodology 是同一口径的人读详版。
 
-> **`window_label` 字段**：服务端按印尼业务日算好的人读时间窗口，已含**星期**与**是否含今天**（如 `6/8（周一） ~ 6/9（周二），共 2 天；今天 6/9（周二）`；窗口含今天时才追加"今天…"）。agent 声明时间窗口时**直接复述此串**，**严禁自己把日期换算成星期、或推断"今天是周几/几号"**（调用方无可靠当前日期，会算错）。`/orders/trend` 与 `/orders/top-skus` 同有此字段。
+> **`window_label` 字段**：服务端按印尼业务日算好的人读时间窗口，串首带 **`印尼时间`** 前缀、并含**星期**与**是否含今天**（如 `印尼时间 6/8（周一） ~ 6/9（周二），共 2 天；今天 6/9（周二）`；窗口含今天时才追加"今天…"）。agent 声明时间窗口时**直接复述此串**——这样首行就向客户说明了时区基准（北京 0 点后印尼仍是前一天，避免"今天数据怎么还没动"的误解）。**严禁自己把日期换算成星期、或推断"今天是周几/几号"**（调用方无可靠当前日期，会算错）。`/orders/trend` 与 `/orders/top-skus` 同有此字段。
 
 **Methodology (must be disclosed to users):**
 
@@ -195,7 +195,7 @@ Response shape:
 {
   "start_date": "2026-06-04",
   "end_date": "2026-06-07",
-  "window_label": "6/4（周四） ~ 6/7（周日），共 4 天",
+  "window_label": "印尼时间 6/4（周四） ~ 6/7（周日），共 4 天",
   "points": [
     {"date": "2026-06-04", "gmv": 100888.0, "order_count": 1, "units_sold": 1},
     {"date": "2026-06-05", "gmv": 0.0, "order_count": 0, "units_sold": 0},
@@ -238,7 +238,7 @@ Response shape:
   "total": 1,
   "start_date": "2026-06-01",
   "end_date": "2026-06-07",
-  "window_label": "6/1（周一） ~ 6/7（周日），共 7 天",
+  "window_label": "印尼时间 6/1（周一） ~ 6/7（周日），共 7 天",
   "scope": "TikTok Shop / 印尼 / 1 个店铺",
   "caliber": "已付款订单口径；单品 GMV=该 SKU 各 line_item 的 sale_price 之和（商品行售价，不含运费）；排序按销量（line_item 条数）降序"
 }

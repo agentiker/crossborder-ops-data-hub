@@ -64,19 +64,21 @@ def describe_window(start_date: date, end_date: date) -> str:
 
     弱模型不可靠地知道"今天几号/某天周几"（曾把周二答成周一）。和 resolve_period 同理，把
     星期/今天的判断收回服务端：agent 复述本串即可，**不要自己推算星期或今天是周几**。
-    例：本周 6/8~6/9（今天 6/9）→ `6/8（周一）~ 6/9（周二），共 2 天；今天 6/9（周二）`；
-    昨天 6/8 → `6/8（周一）`；今天 6/9 → `6/9（周二，今天）`。
+    串首固定带"印尼时间"前缀，让 agent 复述首行时即向客户说明时区基准（北京 0 点后印尼仍是前一天）。
+    例：本周 6/8~6/9（今天 6/9）→ `印尼时间 6/8（周一） ~ 6/9（周二），共 2 天；今天 6/9（周二）`；
+    昨天 6/8 → `印尼时间 6/8（周一）`；今天 6/9 → `印尼时间 6/9（周二，今天）`。
     """
     today = business_today()
     if start_date == end_date:
         d = start_date
         suffix = "，今天" if d == today else ""
-        return f"{d.month}/{d.day}（{WEEKDAYS_ZH[d.weekday()]}{suffix}）"
-    days = (end_date - start_date).days + 1
-    label = f"{_fmt_day(start_date)} ~ {_fmt_day(end_date)}，共 {days} 天"
-    if start_date <= today <= end_date:
-        label += f"；今天 {_fmt_day(today)}"
-    return label
+        body = f"{d.month}/{d.day}（{WEEKDAYS_ZH[d.weekday()]}{suffix}）"
+    else:
+        days = (end_date - start_date).days + 1
+        body = f"{_fmt_day(start_date)} ~ {_fmt_day(end_date)}，共 {days} 天"
+        if start_date <= today <= end_date:
+            body += f"；今天 {_fmt_day(today)}"
+    return f"印尼时间 {body}"
 
 
 def resolve_period(period: str) -> tuple[date, date]:
