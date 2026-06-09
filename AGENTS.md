@@ -53,8 +53,9 @@
 ## 代码风格
 
 - 平台专属的 API 逻辑放在 `platforms/<platform>/` 下。
-- 跨平台的业务逻辑放在 `services/` 下。
-- 面向 AI 的只读读取辅助函数放在 `ai_tools/` 下；它们应当是只读且职责单一的，并被 HTTP 路由复用。
+- `analytics/` 放确定性分析公式与告警规则，如利润、ROI、退款率、库存覆盖等。此层应尽量保持纯计算：不打开数据库 session，不做 HTTP 调用，不依赖 AI 输出。
+- `services/` 放业务服务、持久化编排与可复用的确定性 SQL/Python 能力，如 upsert、raw payload 归档、同步游标、token、scope key、跨平台业务指标查询。
+- `ai_tools/` 放面向 AI/openclaw/HTTP 复用的只读读取辅助函数；它们应职责单一、输出稳定，可调用 `services`/`analytics`，但不得成为核心公式的真相来源。
 - 对外 HTTP 接口放在 `web/` 下；路由只做编排与校验，不实现业务公式。
 - openclaw 的 skill 维护在 `openclaw-skills/` 下，与其调用的 HTTP 接口契约保持同步。
 - 使用 Pydantic 模型校验外部负载。
@@ -72,7 +73,9 @@
 - 在本项目中，任何时候只要需要“新建、修改、审查或优化 Skill（技能）”，必须严格执行./openclaw-skills/README.md 中定义的《Skill 开发与编写规范》。
 
 ## 开发材料
-- 接口文档在./material/目录下
-
+- 接口原始文档在./material/目录下，分别是：
+    - postman文档，包含请求参数，不包含响应字段。
+    - sdk(go)，包含请求参数、响应字段、错误码等。
+- 根据原始文档整理好的接口文档在./docs/目录下, 接口开发优先根据这里的文档，必要时再查原始文档或者官方在线文档。
 
 
