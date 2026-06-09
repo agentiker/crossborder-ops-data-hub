@@ -157,9 +157,12 @@ Response shape:
   "order_count": 1,
   "units_sold": 1,
   "avg_order_value": 100888.0,
-  "scope": "TikTok Shop / 印尼 / 1 个店铺"
+  "scope": "TikTok Shop / 印尼 / 1 个店铺",
+  "caliber": "已付款订单口径（paid_time 非空、排除未付款/已取消，按 paid_time 归日）；GMV=订单 total_amount（买家实付，含运费税优惠，非平台结算）；销量=line_item 条数；客单价=GMV/订单数；来源 TikTok /order/202309/orders/search"
 }
 ```
+
+> **`caliber` 字段**：响应自带本端点数据口径文本，agent 在「📐 数据口径」段**直接复述**即可，不必从 skill 散文里背。下面的 Methodology 是同一口径的人读详版。
 
 **Methodology (must be disclosed to users):**
 
@@ -193,11 +196,12 @@ Response shape:
     {"date": "2026-06-06", "gmv": 0.0, "order_count": 0, "units_sold": 0},
     {"date": "2026-06-07", "gmv": 0.0, "order_count": 0, "units_sold": 0}
   ],
-  "scope": "TikTok Shop / 印尼 / 1 个店铺"
+  "scope": "TikTok Shop / 印尼 / 1 个店铺",
+  "caliber": "（同 /orders/summary 的已付款订单口径文本）"
 }
 ```
 
-Same paid-order methodology as `/orders/summary`. Use this endpoint for shop-level GMV trend by passing `scope_id` for a single-shop scope or `shop_id` directly.
+Same paid-order methodology as `/orders/summary` (响应 `caliber` 字段与 summary 一致，agent 直接复述). Use this endpoint for shop-level GMV trend by passing `scope_id` for a single-shop scope or `shop_id` directly.
 
 ## GET /api/data/orders/top-skus
 
@@ -225,9 +229,12 @@ Response shape:
     }
   ],
   "total": 1,
-  "scope": "TikTok Shop / 印尼 / 1 个店铺"
+  "scope": "TikTok Shop / 印尼 / 1 个店铺",
+  "caliber": "已付款订单口径；单品 GMV=该 SKU 各 line_item 的 sale_price 之和（商品行售价，不含运费）；排序按销量（line_item 条数）降序"
 }
 ```
+
+> **`caliber` 字段**：同上，响应自带口径文本，agent 直接复述。
 
 **Methodology (must be disclosed to users):**
 

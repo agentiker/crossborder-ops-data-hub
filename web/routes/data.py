@@ -41,6 +41,18 @@ def _resolve_scope(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+# ── 数据口径常量（随响应 caliber 字段下发，agent 直接复述，无需在 skill 散文里背） ──
+ORDERS_CALIBER = (
+    "已付款订单口径（paid_time 非空、排除未付款/已取消，按 paid_time 归日）；"
+    "GMV=订单 total_amount（买家实付，含运费税优惠，非平台结算）；"
+    "销量=line_item 条数；客单价=GMV/订单数；来源 TikTok /order/202309/orders/search"
+)
+TOP_SKUS_CALIBER = (
+    "已付款订单口径；单品 GMV=该 SKU 各 line_item 的 sale_price 之和"
+    "（商品行售价，不含运费）；排序按销量（line_item 条数）降序"
+)
+
+
 # ── Response Models ──────────────────────────────────────────────────────────
 
 
@@ -94,6 +106,7 @@ class OrderSummary(BaseModel):
     units_sold: int
     avg_order_value: float
     scope: Optional[str] = None
+    caliber: Optional[str] = None
 
 
 class TopSkuItem(BaseModel):
@@ -108,6 +121,7 @@ class TopSkuResponse(BaseModel):
     items: list[TopSkuItem]
     total: int
     scope: Optional[str] = None
+    caliber: Optional[str] = None
 
 
 class ProductItemOut(BaseModel):
@@ -152,6 +166,7 @@ class TrendResponse(BaseModel):
     end_date: str
     points: list[TrendPoint]
     scope: Optional[str] = None
+    caliber: Optional[str] = None
 
 
 class OverviewInventory(BaseModel):
@@ -186,7 +201,11 @@ async def get_inventory(
     shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
     low_stock_threshold: int = Query(10, description="低库存阈值"),
 ):
-    """获取库存列表，同时返回低库存商品"""
+    """获取库存列表，同时返回低库存商品。
+
+    口径：当前库存快照（无历史趋势）；available_stock < low_stock_threshold（默认 10）记为低库存；
+    来源 TikTok /product/202309/inventory/search。
+    """
     scope = _resolve_scope(
         scope_id=scope_id, platform=platform, country=country,
         shop_id=shop_id, shop_ids=shop_ids,
@@ -268,7 +287,10 @@ async def get_overview(
     scope_id: Optional[str] = Query(None, description="业务范围 scope_key（命名店铺集合）"),
     shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
 ):
-    """经营概览：库存快照 + 近 7 天订单概览（不含利润/告警，本期未上线）。"""
+    """经营概览：库存快照 + 近 7 天订单概览（不含利润/告警，本期未上线）。
+
+    订单段为已付款订单口径（同 ops_orders_summary）；库存段为当前快照（低库存阈值 10）。
+    """
     scope = _resolve_scope(
         scope_id=scope_id, platform=platform, country=country,
         shop_id=shop_id, shop_ids=shop_ids,
@@ -329,7 +351,11 @@ async def get_orders_summary(
     scope_id: Optional[str] = Query(None, description="业务范围 scope_key（命名店铺集合）"),
     shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
 ):
-    """已付款订单 GMV/订单量/销量/客单价汇总，默认最近7天（按 paid_time 归日）。"""
+    """已付款订单 GMV/订单量/销量/客单价汇总，默认最近7天（按 paid_time 归日）。
+
+    口径（随响应 caliber 字段返回）：已付款订单（paid_time 非空、排除未付款/已取消）；
+    GMV=订单 total_amount（买家实付，非平台结算）；销量=line_item 条数；客单价=GMV/订单数。
+    """
     scope = _resolve_scope(
         scope_id=scope_id, platform=platform, country=country,
         shop_id=shop_id, shop_ids=shop_ids,
@@ -345,7 +371,7 @@ async def get_orders_summary(
         country=scope.country,
         shop_ids=scope.shop_ids,
     )
-    return OrderSummary(**data, scope=scope.display_text)
+    return OrderSummary(**data, scope=scope.display_text, caliber=ORDERS_CALIBER)
 
 
 @router.get("/orders/top-skus", response_model=TopSkuResponse, operation_id="ops_top_skus")
@@ -359,7 +385,11 @@ async def get_orders_top_skus(
     shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
     limit: int = Query(10, description="返回数量"),
 ):
-    """已付款订单内按销量排序的单品榜，默认最近7天。"""
+    """已付款订单内按销量排序的单品榜，默认最近7天。
+
+    口径（随响应 caliber 字段返回）：已付款订单口径；单品 GMV=该 SKU 各 line_item 的
+    sale_price 之和（商品行售价，不含运费）；排序按销量（line_item 条数）降序。
+    """
     scope = _resolve_scope(
         scope_id=scope_id, platform=platform, country=country,
         shop_id=shop_id, shop_ids=shop_ids,
@@ -380,6 +410,7 @@ async def get_orders_top_skus(
         items=[TopSkuItem(**i) for i in items],
         total=len(items),
         scope=scope.display_text,
+        caliber=TOP_SKUS_CALIBER,
     )
 
 
@@ -396,6 +427,7 @@ async def get_orders_trend(
     """已付款订单按天的 GMV/单量/销量趋势，默认近 7 天（窗口内无单的日期补 0）。
 
     近 3 天/7 天传不同 start_date；店铺 GMV 趋势传 shop_id 或 scope_id/shop_ids。
+    口径与 ops_orders_summary 完全一致，随响应 caliber 字段返回。
     """
     scope = _resolve_scope(
         scope_id=scope_id, platform=platform, country=country,
@@ -417,6 +449,7 @@ async def get_orders_trend(
         end_date=ed.isoformat(),
         points=[TrendPoint(**p) for p in points],
         scope=scope.display_text,
+        caliber=ORDERS_CALIBER,
     )
 
 
@@ -430,7 +463,11 @@ async def get_products(
     status: Optional[str] = Query(None, description="商品状态，如 ACTIVATE / SELLER_DEACTIVATED / DRAFT"),
     limit: int = Query(100, description="返回数量上限"),
 ):
-    """商品目录列表，支持平台/国家/店铺/状态过滤，用于商品目录、上下架与滞销分析。"""
+    """商品目录列表，支持平台/国家/店铺/状态过滤，用于商品目录、上下架与滞销分析。
+
+    口径：商品主数据来自 TikTok /product/202309/products/search（库存同步顺手入库）；
+    跨境店 min_price/currency 常为 null 属正常（products/search 不一定返回价格），非数据缺口。
+    """
     scope = _resolve_scope(
         scope_id=scope_id, platform=platform, country=country,
         shop_id=shop_id, shop_ids=shop_ids,
