@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 
 from core.db import SessionLocal
-from core.timezone import PERIOD_KEYS, business_today, resolve_period
+from core.timezone import PERIOD_KEYS, business_today, describe_window, resolve_period
 from models.base_models import Inventory, Product
 from services.order_metrics import get_gmv_summary, get_gmv_trend, get_top_skus
 from services.scope_resolution import ScopeError, ScopeFilters, list_scopes, resolve_filters
@@ -121,6 +121,7 @@ class AlertResponse(BaseModel):
 class OrderSummary(BaseModel):
     start_date: str
     end_date: str
+    window_label: Optional[str] = None
     gmv: float
     order_count: int
     units_sold: int
@@ -140,6 +141,9 @@ class TopSkuItem(BaseModel):
 class TopSkuResponse(BaseModel):
     items: list[TopSkuItem]
     total: int
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    window_label: Optional[str] = None
     scope: Optional[str] = None
     caliber: Optional[str] = None
 
@@ -184,6 +188,7 @@ class TrendPoint(BaseModel):
 class TrendResponse(BaseModel):
     start_date: str
     end_date: str
+    window_label: Optional[str] = None
     points: list[TrendPoint]
     scope: Optional[str] = None
     caliber: Optional[str] = None
@@ -391,7 +396,12 @@ async def get_orders_summary(
         country=scope.country,
         shop_ids=scope.shop_ids,
     )
-    return OrderSummary(**data, scope=scope.display_text, caliber=ORDERS_CALIBER)
+    return OrderSummary(
+        **data,
+        window_label=describe_window(sd, ed),
+        scope=scope.display_text,
+        caliber=ORDERS_CALIBER,
+    )
 
 
 @router.get("/orders/top-skus", response_model=TopSkuResponse, operation_id="ops_top_skus")
@@ -429,6 +439,9 @@ async def get_orders_top_skus(
     return TopSkuResponse(
         items=[TopSkuItem(**i) for i in items],
         total=len(items),
+        start_date=sd.isoformat(),
+        end_date=ed.isoformat(),
+        window_label=describe_window(sd, ed),
         scope=scope.display_text,
         caliber=TOP_SKUS_CALIBER,
     )
@@ -466,6 +479,7 @@ async def get_orders_trend(
     return TrendResponse(
         start_date=sd.isoformat(),
         end_date=ed.isoformat(),
+        window_label=describe_window(sd, ed),
         points=[TrendPoint(**p) for p in points],
         scope=scope.display_text,
         caliber=ORDERS_CALIBER,

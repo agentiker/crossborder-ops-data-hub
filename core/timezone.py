@@ -51,6 +51,34 @@ PERIOD_KEYS = (
 )
 
 
+WEEKDAYS_ZH = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
+
+def _fmt_day(d: date) -> str:
+    """`6/9（周二）`——月/日 + 中文星期。星期由服务端按印尼业务日算，避免 LLM 推错。"""
+    return f"{d.month}/{d.day}（{WEEKDAYS_ZH[d.weekday()]}）"
+
+
+def describe_window(start_date: date, end_date: date) -> str:
+    """业务日窗口 → 人读权威描述（含星期、天数、是否含今天）。供响应 `window_label` 字段下发。
+
+    弱模型不可靠地知道"今天几号/某天周几"（曾把周二答成周一）。和 resolve_period 同理，把
+    星期/今天的判断收回服务端：agent 复述本串即可，**不要自己推算星期或今天是周几**。
+    例：本周 6/8~6/9（今天 6/9）→ `6/8（周一）~ 6/9（周二），共 2 天；今天 6/9（周二）`；
+    昨天 6/8 → `6/8（周一）`；今天 6/9 → `6/9（周二，今天）`。
+    """
+    today = business_today()
+    if start_date == end_date:
+        d = start_date
+        suffix = "，今天" if d == today else ""
+        return f"{d.month}/{d.day}（{WEEKDAYS_ZH[d.weekday()]}{suffix}）"
+    days = (end_date - start_date).days + 1
+    label = f"{_fmt_day(start_date)} ~ {_fmt_day(end_date)}，共 {days} 天"
+    if start_date <= today <= end_date:
+        label += f"；今天 {_fmt_day(today)}"
+    return label
+
+
 def resolve_period(period: str) -> tuple[date, date]:
     """相对时间词 → 业务日闭区间 [start_date, end_date]（印尼时区，周一为一周起点）。
 

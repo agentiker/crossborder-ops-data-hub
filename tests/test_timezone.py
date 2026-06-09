@@ -12,7 +12,7 @@ from fastapi import HTTPException
 
 import core.timezone as tz
 import web.routes.data as data
-from core.timezone import PERIOD_KEYS, resolve_period
+from core.timezone import PERIOD_KEYS, describe_window, resolve_period
 
 REF = date(2026, 6, 9)  # 周二
 
@@ -80,3 +80,34 @@ def test_resolve_window_bad_period_raises_400(fixed_today):
     with pytest.raises(HTTPException) as exc:
         data._resolve_window(None, None, "last_quarter", default_back_days=7)
     assert exc.value.status_code == 400
+
+
+# describe_window：权威星期/今天 描述（弱模型不能自己推算，曾把周二答成周一）。
+# REF=2026-06-09 是周二（weekday=1）。
+
+def test_describe_window_this_week_includes_today(fixed_today):
+    # 本周 6/8(周一)~6/9(周二)，含今天 6/9
+    label = describe_window(date(2026, 6, 8), date(2026, 6, 9))
+    assert label == "6/8（周一） ~ 6/9（周二），共 2 天；今天 6/9（周二）"
+
+
+def test_describe_window_single_day_today(fixed_today):
+    # 今天 6/9 周二，单日且就是今天 → 带"今天"
+    assert describe_window(REF, REF) == "6/9（周二，今天）"
+
+
+def test_describe_window_single_day_not_today(fixed_today):
+    # 昨天 6/8 周一，单日非今天 → 不带"今天"
+    assert describe_window(date(2026, 6, 8), date(2026, 6, 8)) == "6/8（周一）"
+
+
+def test_describe_window_past_range_excludes_today(fixed_today):
+    # 上周 6/1(周一)~6/7(周日)，今天 6/9 不在区间 → 不追加"今天"
+    label = describe_window(date(2026, 6, 1), date(2026, 6, 7))
+    assert label == "6/1（周一） ~ 6/7（周日），共 7 天"
+    assert "今天" not in label
+
+
+def test_describe_window_weekday_is_correct_not_hallucinated(fixed_today):
+    # 回归：6/9 是周二（不是周一）——这正是 agent 之前编错的点
+    assert "6/9（周二" in describe_window(REF, REF)
