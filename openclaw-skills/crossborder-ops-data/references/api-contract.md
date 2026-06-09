@@ -144,7 +144,8 @@ Additional query parameters:
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `start_date` | date string | no | 7 days before service date | Inclusive start date, `YYYY-MM-DD`. |
+| `period` | string | no | — | Relative window resolved server-side in Indonesia time (UTC+7), week starts Monday. One of `today` / `yesterday` / `this_week` / `last_week` / `last_7d` / `last_30d` / `this_month`. **Prefer this for relative time; do not compute dates client-side.** Mutually exclusive with `start_date`/`end_date` — explicit dates win. Invalid value → 400. |
+| `start_date` | date string | no | 7 days before service date | Inclusive start date, `YYYY-MM-DD`. Only when the user gives explicit dates. |
 | `end_date` | date string | no | service date | Inclusive end date, `YYYY-MM-DD`. |
 
 Response shape:
@@ -181,6 +182,7 @@ Additional query parameters:
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
+| `period` | string | no | — | Same relative-window keys and precedence as `/orders/summary` (`today`…`this_month`, Indonesia time, Monday start). Prefer for "近 7 天/本周/本月" trends; explicit dates win, invalid → 400. |
 | `start_date` | date string | no | 6 days before service date | Inclusive start date, `YYYY-MM-DD`. Use shorter window for "近 3 天", longer for "近 7/30 天". |
 | `end_date` | date string | no | service date | Inclusive end date. |
 
@@ -211,6 +213,7 @@ Additional query parameters:
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
+| `period` | string | no | — | Same relative-window keys and precedence as `/orders/summary` (`today`…`this_month`, Indonesia time, Monday start). Prefer for relative time; explicit dates win, invalid → 400. |
 | `start_date` | date string | no | 7 days before service date | Inclusive start date. |
 | `end_date` | date string | no | service date | Inclusive end date. |
 | `limit` | integer | no | `10` | Maximum number of SKUs to return. |

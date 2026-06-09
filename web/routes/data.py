@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 
 from core.db import SessionLocal
-from core.timezone import business_today
+from core.timezone import PERIOD_KEYS, business_today, resolve_period
 from models.base_models import Inventory, Product
 from services.order_metrics import get_gmv_summary, get_gmv_trend, get_top_skus
 from services.scope_resolution import ScopeError, ScopeFilters, list_scopes, resolve_filters
@@ -40,6 +40,25 @@ def _resolve_scope(
         )
     except ScopeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+def _resolve_window(start_date, end_date, period, default_back_days):
+    """统一窗口解析（按印尼时区）：显式 start/end > period 相对词 > 默认近 N 天。返回 (sd, ed)。
+
+    把"今天/本周"等相对时间的换算放服务端（resolve_period，周一起算），不让 LLM 自己算日期，
+    避免弱模型算错星期。period 无效 → 400。
+    """
+    today = business_today()
+    if start_date or end_date:
+        sd = date.fromisoformat(start_date) if start_date else today - timedelta(days=default_back_days)
+        ed = date.fromisoformat(end_date) if end_date else today
+        return sd, ed
+    if period:
+        try:
+            return resolve_period(period)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    return today - timedelta(days=default_back_days), today
 
 
 # ── 数据口径常量（随响应 caliber 字段下发，agent 直接复述，无需在 skill 散文里背） ──
@@ -346,6 +365,7 @@ async def get_overview(
 async def get_orders_summary(
     start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
+    period: Optional[str] = Query(None, description="相对时间窗口（按印尼时区、周一起算）：today/yesterday/this_week/last_week/last_7d/last_30d/this_month。相对时间优先用本参数，不要自己算日期；与 start_date/end_date 二选一，显式日期优先。"),
     platform: Optional[str] = Query(None, description="平台标识，如 tiktok_shop / shopee"),
     country: Optional[str] = Query(None, description="国家/地区，如 ID / GLOBAL"),
     shop_id: Optional[str] = Query(None, description="店铺ID"),
@@ -354,6 +374,7 @@ async def get_orders_summary(
 ):
     """已付款订单 GMV/订单量/销量/客单价汇总，默认最近7天（按 paid_time 归日，印尼当地时间 UTC+7）。
 
+    相对时间（今天/本周/近7天…）传 `period` 参数，服务端按印尼时区+周一起算，**不要自己算日期**。
     口径（随响应 caliber 字段返回）：已付款订单（paid_time 非空、排除未付款/已取消）；
     GMV=订单 total_amount（买家实付，非平台结算）；销量=line_item 条数；客单价=GMV/订单数。
     """
@@ -361,9 +382,7 @@ async def get_orders_summary(
         scope_id=scope_id, platform=platform, country=country,
         shop_id=shop_id, shop_ids=shop_ids,
     )
-    today = business_today()
-    sd = date.fromisoformat(start_date) if start_date else today - timedelta(days=7)
-    ed = date.fromisoformat(end_date) if end_date else today
+    sd, ed = _resolve_window(start_date, end_date, period, default_back_days=7)
 
     data = get_gmv_summary(
         start_date=sd,
@@ -379,6 +398,7 @@ async def get_orders_summary(
 async def get_orders_top_skus(
     start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
+    period: Optional[str] = Query(None, description="相对时间窗口（按印尼时区、周一起算）：today/yesterday/this_week/last_week/last_7d/last_30d/this_month。相对时间优先用本参数，不要自己算日期；与 start_date/end_date 二选一，显式日期优先。"),
     platform: Optional[str] = Query(None, description="平台标识，如 tiktok_shop / shopee"),
     country: Optional[str] = Query(None, description="国家/地区，如 ID / GLOBAL"),
     shop_id: Optional[str] = Query(None, description="店铺ID"),
@@ -388,6 +408,7 @@ async def get_orders_top_skus(
 ):
     """已付款订单内按销量排序的单品榜，默认最近7天。
 
+    相对时间（今天/本周/近7天…）传 `period` 参数，服务端按印尼时区+周一起算，**不要自己算日期**。
     口径（随响应 caliber 字段返回）：已付款订单口径；单品 GMV=该 SKU 各 line_item 的
     sale_price 之和（商品行售价，不含运费）；排序按销量（line_item 条数）降序。
     """
@@ -395,9 +416,7 @@ async def get_orders_top_skus(
         scope_id=scope_id, platform=platform, country=country,
         shop_id=shop_id, shop_ids=shop_ids,
     )
-    today = business_today()
-    sd = date.fromisoformat(start_date) if start_date else today - timedelta(days=7)
-    ed = date.fromisoformat(end_date) if end_date else today
+    sd, ed = _resolve_window(start_date, end_date, period, default_back_days=7)
 
     items = get_top_skus(
         start_date=sd,
@@ -419,6 +438,7 @@ async def get_orders_top_skus(
 async def get_orders_trend(
     start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
+    period: Optional[str] = Query(None, description="相对时间窗口（按印尼时区、周一起算）：today/yesterday/this_week/last_week/last_7d/last_30d/this_month。相对时间优先用本参数，不要自己算日期；与 start_date/end_date 二选一，显式日期优先。"),
     platform: Optional[str] = Query(None, description="平台标识，如 tiktok_shop / shopee"),
     country: Optional[str] = Query(None, description="国家/地区，如 ID / GLOBAL"),
     shop_id: Optional[str] = Query(None, description="店铺ID（店铺 GMV 趋势按此过滤）"),
@@ -427,16 +447,14 @@ async def get_orders_trend(
 ):
     """已付款订单按天的 GMV/单量/销量趋势，默认近 7 天（窗口内无单的日期补 0）。
 
-    近 3 天/7 天传不同 start_date；店铺 GMV 趋势传 shop_id 或 scope_id/shop_ids。
-    口径与 ops_orders_summary 完全一致，随响应 caliber 字段返回。
+    相对时间（近3天/近7天/本周/本月…）传 `period` 参数，服务端按印尼时区+周一起算，**不要自己算日期**；
+    店铺 GMV 趋势传 shop_id 或 scope_id/shop_ids。口径与 ops_orders_summary 一致，随响应 caliber 字段返回。
     """
     scope = _resolve_scope(
         scope_id=scope_id, platform=platform, country=country,
         shop_id=shop_id, shop_ids=shop_ids,
     )
-    today = business_today()
-    sd = date.fromisoformat(start_date) if start_date else today - timedelta(days=6)
-    ed = date.fromisoformat(end_date) if end_date else today
+    sd, ed = _resolve_window(start_date, end_date, period, default_back_days=6)
 
     points = get_gmv_trend(
         start_date=sd,

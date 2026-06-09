@@ -153,16 +153,18 @@ metadata:
 
 ## 意图路由（意图 → 工具）
 
-所有数据工具的**公共参数（全可选）**：`scope_id` / `shop_ids` / `platform` / `country` / `shop_id`；日期参数用 `YYYY-MM-DD`，"今天/昨天/最近 7 天"等相对日期先换算成明确日期。鉴权由 openclaw 自动注入，skill 不传 token、不拼 URL。
+所有数据工具的**公共参数（全可选）**：`scope_id` / `shop_ids` / `platform` / `country` / `shop_id`。鉴权由 openclaw 自动注入，skill 不传 token、不拼 URL。
+
+**相对时间（今天/昨天/本周/上周/近7天/近30天/本月）一律传 `period` 参数，不要自己算日期**——订单类工具（`ops_orders_summary` / `ops_orders_trend` / `ops_top_skus`）支持 `period`，取值 `today` / `yesterday` / `this_week` / `last_week` / `last_7d` / `last_30d` / `this_month`，服务端按印尼时区 + 周一起算换算窗口（弱模型自己算星期容易错，故收回服务端）。只有用户给了**明确起止日期**（如"6月1日到6月7日"）时才传 `start_date` / `end_date`（`YYYY-MM-DD`，与 `period` 二选一，显式日期优先）。映射参考：`今天`→`today`、`昨天`→`yesterday`、`本周`→`this_week`、`上周`→`last_week`、`近7天/最近一周`→`last_7d`、`近30天/最近一个月`→`last_30d`、`本月`→`this_month`、`近3天`→无对应 period（传 `start_date`=今天往前2天，或仍用 `last_7d` 后截取）。
 
 | 用户意图（关键词） | 工具 | 专有参数 / 备注 |
 | --- | --- | --- |
 | 经营概览、老板日报、整体情况 | `ops_overview` | 库存快照 + 近 7 天已付款订单；**不含利润/告警** |
 | 库存、低库存、缺货、SKU/仓库库存 | `ops_inventory` | `low_stock_threshold`（默认 10） |
 | 商品目录、上下架状态、滞销、商品标题 | `ops_products` | `status` / `limit` |
-| GMV、订单量、销量、客单价、卖了多少钱/单 | `ops_orders_summary` | `start_date` / `end_date` |
-| 趋势、近 3/7 天走势、本月走势、店铺 GMV 趋势 | `ops_orders_trend` | 窗口内无单的日期补 0；店铺级传 `shop_id` 或单店 `scope_id` |
-| 爆款、卖得最好、单品销量榜 | `ops_top_skus` | `limit` |
+| GMV、订单量、销量、客单价、卖了多少钱/单 | `ops_orders_summary` | 相对时间传 `period`；明确日期传 `start_date` / `end_date` |
+| 趋势、近 3/7 天走势、本月走势、店铺 GMV 趋势 | `ops_orders_trend` | 相对时间传 `period`；窗口内无单的日期补 0；店铺级传 `shop_id` 或单店 `scope_id` |
+| 爆款、卖得最好、单品销量榜 | `ops_top_skus` | 相对时间传 `period`；`limit` |
 | 有哪些范围 / 可选 scope（仅此场景） | `ops_scopes` | 无参数 |
 | 利润、毛利、广告花费、利润率 | **无工具——本期未上线** | 需先接入结算/广告/成本；如实告知，**禁用 0 或编造值** |
 | 告警、风险、异常、需关注的问题 | **无工具——本期未上线** | 可基于已查数据给"基于当前数据观察"的风险，**不得**称系统正式告警 |

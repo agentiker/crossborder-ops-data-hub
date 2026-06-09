@@ -42,3 +42,37 @@ def paid_window_utc(start_date: date, end_date: date) -> tuple[datetime, datetim
     start_dt = datetime.combine(start_date, time.min) - OFFSET
     end_dt = datetime.combine(end_date, time.max) - OFFSET
     return start_dt, end_dt
+
+
+# 相对时间词 → 业务日窗口（按印尼今天 + 周一起算）。把"本周/今天"的换算从 LLM 手里收回服务端，
+# 避免弱模型算错星期、强弱模型周起算习惯不一致。
+PERIOD_KEYS = (
+    "today", "yesterday", "this_week", "last_week", "last_7d", "last_30d", "this_month",
+)
+
+
+def resolve_period(period: str) -> tuple[date, date]:
+    """相对时间词 → 业务日闭区间 [start_date, end_date]（印尼时区，周一为一周起点）。
+
+    today/yesterday：单日；this_week：本周一~今天；last_week：上周一~上周日；
+    last_7d/last_30d：含今天往前 N 天；this_month：本月 1 号~今天。未知值抛 ValueError。
+    """
+    t = business_today()
+    if period == "today":
+        return t, t
+    if period == "yesterday":
+        y = t - timedelta(days=1)
+        return y, y
+    if period == "this_week":
+        monday = t - timedelta(days=t.weekday())  # weekday(): Mon=0
+        return monday, t
+    if period == "last_week":
+        this_monday = t - timedelta(days=t.weekday())
+        return this_monday - timedelta(days=7), this_monday - timedelta(days=1)
+    if period == "last_7d":
+        return t - timedelta(days=6), t
+    if period == "last_30d":
+        return t - timedelta(days=29), t
+    if period == "this_month":
+        return t.replace(day=1), t
+    raise ValueError(f"未知 period：{period!r}，可选 {', '.join(PERIOD_KEYS)}")
