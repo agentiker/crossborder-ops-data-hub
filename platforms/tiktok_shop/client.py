@@ -327,6 +327,21 @@ class TikTokShopClient(BaseAPIClient):
             products.extend(data.get("products", []))
         return products
 
+    def get_product(self, product_id: str) -> dict:
+        """拉取单个商品详情（GET /product/202309/products/{product_id}），返回 data 段。
+
+        价格走详情而非 products/search：详情的 skus[].price.sale_price 是"商品页含税
+        展示价（折扣前）"、对所有卖家可用；products/search 的 sale_price 仅对中国跨境
+        卖家返回，本类卖家只回 tax_exclusive_price（税前价）。GET 无 body。
+        """
+        params: dict = {}
+        if self.shop_cipher:
+            params["shop_cipher"] = self.shop_cipher
+        result = self.request(
+            "GET", f"/product/202309/products/{product_id}", params=params, data=None
+        )
+        return result.get("data", {})
+
     # ── 库存（product/202309）──────────────────────────────────────────────
 
     def search_inventory_batch(self, product_ids: list[str]) -> list[dict]:

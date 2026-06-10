@@ -181,7 +181,12 @@ def to_domain_inventory(
 # ── 商品 ──────────────────────────────────────────────────────────────────
 
 def _min_sku_price(skus: list[dict]) -> tuple[Optional[Decimal], Optional[str]]:
-    """从 skus[].price.sale_price 取最低售价及其币种（缺价跳过）。
+    """从 skus[].price 取最低售价及其币种（缺价跳过）。
+
+    取价字段优先 sale_price（商品页含税展示价，运营口径），缺失时回退
+    tax_exclusive_price（税前价）。products/search 对本类卖家只回 tax_exclusive_price，
+    含税 sale_price 须由商品详情（client.get_product）的 skus 提供，故 to_domain_products
+    优先喂详情 skus。
 
     比较用 float（与历史一致地选出"哪个 SKU 最便宜"），落库用选中那条的原始字符串转
     Decimal，避免 float 精度损失。
@@ -191,7 +196,7 @@ def _min_sku_price(skus: list[dict]) -> tuple[Optional[Decimal], Optional[str]]:
     best_currency: Optional[str] = None
     for sku in skus:
         price = sku.get("price") or {}
-        raw = price.get("sale_price")
+        raw = price.get("sale_price") or price.get("tax_exclusive_price")
         if raw in (None, ""):
             continue
         try:
@@ -206,15 +211,25 @@ def _min_sku_price(skus: list[dict]) -> tuple[Optional[Decimal], Optional[str]]:
     return min_price, best_currency
 
 
-def to_domain_products(products: list[dict]) -> list[DomainProduct]:
-    """products/search 的 products[] → list[DomainProduct]（丢无 id 项，清洗最低价/时间）。"""
+def to_domain_products(
+    products: list[dict],
+    price_skus_by_id: Optional[dict[str, list[dict]]] = None,
+) -> list[DomainProduct]:
+    """products/search 的 products[] → list[DomainProduct]（丢无 id 项，清洗最低价/时间）。
+
+    price_skus_by_id：{product_id: 商品详情的 skus[]}，用于取含税 sale_price 算 min_price
+    （products/search 不回 sale_price）。某商品缺映射时回退用 search 自带 skus 的税前价。
+    sku_count 始终以 search 的 skus 为准（枚举口径不变）。
+    """
+    price_skus_by_id = price_skus_by_id or {}
     items: list[DomainProduct] = []
     for p in products:
         product_id = p.get("id")
         if not product_id:
             continue
         skus = p.get("skus") or []
-        min_price, currency = _min_sku_price(skus)
+        price_skus = price_skus_by_id.get(product_id) or skus
+        min_price, currency = _min_sku_price(price_skus)
         items.append(
             DomainProduct(
                 product_id=product_id,

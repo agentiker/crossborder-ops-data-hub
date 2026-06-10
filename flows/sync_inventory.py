@@ -50,9 +50,42 @@ def fetch_product_index(
     return product_ids, titles, products
 
 
+@task(name="fetch-product-prices", retries=3, retry_delay_seconds=60)
+def fetch_product_prices(
+    product_ids: list[str],
+    *,
+    country: str = "GLOBAL",
+    shop_id: Optional[str] = None,
+    seller_id: Optional[str] = None,
+    account_id: Optional[str] = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """逐商品取详情，返回 {product_id: skus[]}，供 normalize 取含税 sale_price 算最低价。
+
+    products/search 对本类卖家不返回 sale_price（只回税前价），含税展示价须走商品详情。
+    单个商品取价失败只跳过（该商品 min_price 回退到 search 税前价），不阻断整体。
+    """
+    if not product_ids:
+        return {}
+    client = TikTokShopClient(
+        country=country,
+        shop_id=shop_id,
+        seller_id=seller_id,
+        account_id=account_id,
+    )
+    prices: dict[str, list[dict[str, Any]]] = {}
+    for pid in product_ids:
+        try:
+            detail = client.get_product(pid)
+            prices[pid] = detail.get("skus") or []
+        except Exception as e:  # noqa: BLE001
+            print(f"商品 {pid} 详情取价失败，回退税前价: {e}")
+    return prices
+
+
 @task(name="save-products-to-db", retries=2, retry_delay_seconds=30)
 def save_products(
     products: list[dict[str, Any]],
+    price_skus_by_id: Optional[dict[str, list[dict[str, Any]]]] = None,
     *,
     country: str = "GLOBAL",
     shop_id: Optional[str] = None,
@@ -62,7 +95,7 @@ def save_products(
     """清洗并幂等 upsert 商品主数据，记一条 products/search 的 raw 审计。"""
     if not products:
         return 0
-    items = to_domain_products(products)
+    items = to_domain_products(products, price_skus_by_id)
     session = SessionLocal()
     try:
         raw_record = record_raw_response(
@@ -75,7 +108,10 @@ def save_products(
             resource="products",
             method="POST",
             path=PRODUCTS_PATH,
-            request_body={"enumerate_all": True},
+            request_body={
+                "enumerate_all": True,
+                "price_detail_count": len(price_skus_by_id or {}),
+            },
             response_payload={"product_count": len(products)},
             http_status=200,
             business_code="0",
@@ -207,14 +243,22 @@ def sync_inventory_flow(
 
     # 商品主数据顺手入库；失败不阻断库存主链路。
     try:
-        product_count = save_products(
-            products,
+        price_skus_by_id = fetch_product_prices(
+            product_ids,
             country=country,
             shop_id=shop_id,
             seller_id=seller_id,
             account_id=account_id,
         )
-        print(f"商品主数据入库: {product_count} 个")
+        product_count = save_products(
+            products,
+            price_skus_by_id,
+            country=country,
+            shop_id=shop_id,
+            seller_id=seller_id,
+            account_id=account_id,
+        )
+        print(f"商品主数据入库: {product_count} 个（取价 {len(price_skus_by_id)}/{len(product_ids)}）")
     except Exception as e:  # noqa: BLE001
         print(f"商品主数据入库失败（不影响库存同步）: {e}")
 

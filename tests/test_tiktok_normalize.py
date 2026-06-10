@@ -144,3 +144,48 @@ def test_to_domain_products_min_price_and_drop_no_id():
     assert p1.sales_regions == ["GB"]
     assert items[1].min_price is None  # 无 SKU/价格
     assert items[1].sku_count == 0
+
+
+def test_to_domain_products_falls_back_to_tax_exclusive_price():
+    """无 sale_price 时回退 tax_exclusive_price（本店 products/search 实测情形）。"""
+    products = [{
+        "id": "P1", "title": "x", "skus": [
+            {"id": "S1", "price": {"tax_exclusive_price": "5555", "currency": "IDR"}},
+            {"id": "S2", "price": {"tax_exclusive_price": "4000", "currency": "IDR"}},
+        ],
+    }]
+    p1 = nz.to_domain_products(products)[0]
+    assert p1.min_price == Decimal("4000")  # 回退税前价、取最低
+    assert p1.currency == "IDR"
+
+
+def test_to_domain_products_detail_sale_price_overrides_search_tax_price():
+    """提供商品详情 skus 时，min_price 取含税 sale_price，而非 search 的税前价。"""
+    products = [{
+        "id": "P1", "title": "x", "skus": [
+            {"id": "S1", "price": {"tax_exclusive_price": "100", "currency": "IDR"}},
+        ],
+    }]
+    price_skus_by_id = {"P1": [
+        {"id": "S1", "price": {
+            "sale_price": "120", "tax_exclusive_price": "100", "currency": "IDR"}},
+    ]}
+    p1 = nz.to_domain_products(products, price_skus_by_id)[0]
+    assert p1.min_price == Decimal("120")  # 取详情含税 sale_price
+    assert p1.currency == "IDR"
+    assert p1.sku_count == 1  # sku_count 仍以 search 为准
+
+
+def test_to_domain_products_missing_detail_falls_back_per_product():
+    """详情映射只覆盖部分商品时，未覆盖的回退用 search 自带价。"""
+    products = [
+        {"id": "P1", "title": "a", "skus": [
+            {"id": "S1", "price": {"tax_exclusive_price": "100", "currency": "IDR"}}]},
+        {"id": "P2", "title": "b", "skus": [
+            {"id": "S2", "price": {"tax_exclusive_price": "200", "currency": "IDR"}}]},
+    ]
+    price_skus_by_id = {"P1": [
+        {"id": "S1", "price": {"sale_price": "150", "currency": "IDR"}}]}
+    items = nz.to_domain_products(products, price_skus_by_id)
+    assert items[0].min_price == Decimal("150")  # P1 用详情含税价
+    assert items[1].min_price == Decimal("200")  # P2 无详情，回退税前价
