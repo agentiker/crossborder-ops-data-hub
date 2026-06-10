@@ -1,13 +1,14 @@
 """Inventory persistence helpers with idempotent upsert semantics."""
 from __future__ import annotations
 
+from core.domain import DomainInventoryItem
 from models.base_models import Inventory
 from services.scoping import build_inventory_key
 
 
 def upsert_inventory_items(
     session,
-    items,
+    items: list[DomainInventoryItem],
     *,
     platform: str = "tiktok_shop",
     country: str = "GLOBAL",
@@ -38,7 +39,7 @@ def upsert_inventory_items(
             existing.sku_name = item.sku_name
             existing.available_stock = item.available_stock
             existing.reserved_stock = item.reserved_stock
-            existing.source_updated_at = item.updated_at
+            existing.source_updated_at = item.source_updated_at
             existing.raw_response_id = raw_response_id
         else:
             session.add(
@@ -56,7 +57,7 @@ def upsert_inventory_items(
                     available_stock=item.available_stock,
                     reserved_stock=item.reserved_stock,
                     warehouse_id=item.warehouse_id,
-                    source_updated_at=item.updated_at,
+                    source_updated_at=item.source_updated_at,
                     raw_response_id=raw_response_id,
                 )
             )

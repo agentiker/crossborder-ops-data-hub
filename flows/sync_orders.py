@@ -11,10 +11,11 @@ from typing import Any, Optional
 from prefect import flow, task
 
 from core.db import SessionLocal
+from core.domain import DomainOrder
 from flows.network import log_egress_ip
 from platforms.tiktok_shop.client import PLATFORM as TIKTOK_PLATFORM
 from platforms.tiktok_shop.client import TikTokShopClient
-from platforms.tiktok_shop.schemas import OrderSchema
+from platforms.tiktok_shop.normalize import to_domain_orders
 from services.order_store import upsert_orders
 from services.sync_state import get_cursor, record_raw_response, upsert_cursor
 
@@ -83,30 +84,16 @@ def fetch_orders(
     return pages
 
 
-def flatten_order_pages(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Extract order dicts from paginated payloads."""
-    orders = []
-    for page in pages:
-        orders.extend(page.get("orders", []))
-    return orders
-
-
 @task(name="validate-orders")
-def validate_orders(pages: list[dict[str, Any]]) -> list[OrderSchema]:
-    """Pydantic 校验清洗。"""
-    valid = []
-    for raw in flatten_order_pages(pages):
-        try:
-            valid.append(OrderSchema.model_validate(raw))
-        except Exception as e:  # noqa: BLE001
-            print(f"订单校验失败: {e}")
-    return valid
+def validate_orders(pages: list[dict[str, Any]]) -> list[DomainOrder]:
+    """原始分页 dict → 平台中立 DomainOrder（展平/校验/容错均下沉到 normalize 边界）。"""
+    return to_domain_orders(pages)
 
 
 @task(name="save-orders-to-db", retries=2, retry_delay_seconds=30)
 def save_orders_to_db(
     pages: list[dict[str, Any]],
-    orders: list[OrderSchema],
+    orders: list[DomainOrder],
     *,
     create_time_ge: int,
     create_time_lt: int,

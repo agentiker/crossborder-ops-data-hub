@@ -1,5 +1,5 @@
 from models.base_models import Product
-from platforms.tiktok_shop.schemas import ProductItem, normalize_products
+from platforms.tiktok_shop.normalize import to_domain_products
 from services.product_store import upsert_products
 
 
@@ -15,22 +15,11 @@ SAMPLE = [
     {"id": "P2", "title": "No price", "status": "DRAFT", "skus": []},
     {"title": "Missing id, dropped", "skus": []},
 ]
-
-
-def test_normalize_products_extracts_min_price_and_sku_count():
-    rows = normalize_products(SAMPLE)
-    assert len(rows) == 2  # 缺 id 的被丢弃
-    p1 = rows[0]
-    assert p1["product_id"] == "P1"
-    assert p1["min_price"] == 9.99
-    assert p1["currency"] == "GBP"
-    assert p1["sku_count"] == 2
-    assert p1["sales_regions"] == ["GB"]
-    assert rows[1]["min_price"] is None  # 无 SKU/价格
+# 注：dict→DTO 的清洗正确性（min_price 取最低、丢无 id、sku_count）见 test_tiktok_normalize.py。
 
 
 def test_upsert_products_idempotent_and_updates(session):
-    items = [ProductItem.model_validate(r) for r in normalize_products(SAMPLE)]
+    items = to_domain_products(SAMPLE)
 
     assert upsert_products(session, items, country="GB", shop_id="shop-1") == 2
     # 重跑同一批不应产生重复
@@ -39,13 +28,11 @@ def test_upsert_products_idempotent_and_updates(session):
     assert session.query(Product).count() == 2
 
     # 更新：P2 上架、改价
-    updated = ProductItem.model_validate(
-        normalize_products([{
-            "id": "P2", "title": "No price", "status": "ACTIVATE",
-            "skus": [{"id": "S9", "price": {"sale_price": "5.00", "currency": "GBP"}}],
-        }])[0]
-    )
-    upsert_products(session, [updated], country="GB", shop_id="shop-1")
+    updated = to_domain_products([{
+        "id": "P2", "title": "No price", "status": "ACTIVATE",
+        "skus": [{"id": "S9", "price": {"sale_price": "5.00", "currency": "GBP"}}],
+    }])
+    upsert_products(session, updated, country="GB", shop_id="shop-1")
     session.commit()
 
     p2 = session.query(Product).filter_by(product_id="P2").one()
@@ -56,7 +43,7 @@ def test_upsert_products_idempotent_and_updates(session):
 
 
 def test_upsert_products_keeps_shops_distinct(session):
-    items = [ProductItem.model_validate(r) for r in normalize_products(SAMPLE)]
+    items = to_domain_products(SAMPLE)
     upsert_products(session, items, country="GB", shop_id="shop-1")
     upsert_products(session, items, country="GB", shop_id="shop-2")
     session.commit()

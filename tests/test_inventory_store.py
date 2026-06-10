@@ -1,10 +1,10 @@
+from core.domain import DomainInventoryItem
 from models.base_models import Inventory
-from platforms.tiktok_shop.schemas import InventoryItem
 from services.inventory_store import upsert_inventory_items
 
 
 def test_upsert_inventory_items_updates_existing_row_without_duplicate(session):
-    original = InventoryItem(
+    original = DomainInventoryItem(
         sku_id="sku-1",
         product_id="product-1",
         product_name="Old Product",
@@ -13,7 +13,7 @@ def test_upsert_inventory_items_updates_existing_row_without_duplicate(session):
         reserved_stock=1,
         warehouse_id="warehouse-1",
     )
-    updated = InventoryItem(
+    updated = DomainInventoryItem(
         sku_id="sku-1",
         product_id="product-1",
         product_name="New Product",
@@ -36,7 +36,7 @@ def test_upsert_inventory_items_updates_existing_row_without_duplicate(session):
 
 def test_upsert_inventory_items_keeps_warehouses_distinct(session):
     items = [
-        InventoryItem(
+        DomainInventoryItem(
             sku_id="sku-1",
             product_id="product-1",
             product_name="Product",
@@ -45,7 +45,7 @@ def test_upsert_inventory_items_keeps_warehouses_distinct(session):
             reserved_stock=1,
             warehouse_id="warehouse-1",
         ),
-        InventoryItem(
+        DomainInventoryItem(
             sku_id="sku-1",
             product_id="product-1",
             product_name="Product",

@@ -1,0 +1,74 @@
+"""平台中立的领域模型（已清洗、不可变契约）。
+
+平台特定的数据怪癖（金额是字符串、时间是 Unix 秒、库存嵌套、字段命名）一律在
+`platforms/<platform>/normalize.py` 收敛掉；`services` 持久层只认本模块的 DTO 与
+`models/base_models` ORM，**不 import 任何 platforms 下的 schema/normalize**。
+
+字段命名对齐 `models/base_models`，让 store 成为 DTO→ORM 的纯映射。中立类型约定：
+金额一律 `Decimal`、时间一律 naive UTC `datetime`、嵌套一律已展平。frozen 表达
+"已清洗、不可变"，store 只读不改。
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
+from typing import Optional
+
+
+@dataclass(frozen=True)
+class DomainOrderLineItem:
+    """订单行项（每条 = 售出一件）。`currency` 已应用 order.payment 的 fallback。"""
+    line_item_id: str
+    product_id: Optional[str] = None
+    product_name: Optional[str] = None
+    sku_id: Optional[str] = None
+    sku_name: Optional[str] = None
+    seller_sku: Optional[str] = None
+    sale_price: Decimal = Decimal("0")
+    original_price: Decimal = Decimal("0")
+    currency: Optional[str] = None
+    display_status: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class DomainOrder:
+    """订单主体。`currency`/`total_amount` 已从平台 payment 拆出到顶层。"""
+    order_id: str
+    order_status: Optional[str] = None
+    currency: Optional[str] = None
+    total_amount: Decimal = Decimal("0")
+    is_cod: bool = False
+    buyer_message: Optional[str] = None
+    warehouse_id: Optional[str] = None
+    create_time: Optional[datetime] = None
+    paid_time: Optional[datetime] = None
+    update_time: Optional[datetime] = None
+    line_items: tuple[DomainOrderLineItem, ...] = ()
+
+
+@dataclass(frozen=True)
+class DomainInventoryItem:
+    """库存项（一行 = 一个 SKU 在一个仓库的库存）。"""
+    sku_id: str
+    product_id: Optional[str] = None
+    product_name: Optional[str] = None
+    sku_name: Optional[str] = None
+    warehouse_id: Optional[str] = None
+    available_stock: int = 0
+    reserved_stock: int = 0
+    source_updated_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class DomainProduct:
+    """商品主数据（一行 = 一个商品）。`min_price` 为该商品 SKU 最低售价。"""
+    product_id: str
+    title: Optional[str] = None
+    status: Optional[str] = None
+    sales_regions: Optional[list[str]] = None
+    sku_count: int = 0
+    min_price: Optional[Decimal] = None
+    currency: Optional[str] = None
+    source_create_time: Optional[datetime] = None
+    source_update_time: Optional[datetime] = None

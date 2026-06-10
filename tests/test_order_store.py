@@ -1,34 +1,45 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime
+from decimal import Decimal
 
 from ai_tools import operations_read  # noqa: F401  (ensures models imported)
+from core.domain import DomainOrder, DomainOrderLineItem
 from models.base_models import OrderHeader, OrderLineItem
-from platforms.tiktok_shop.schemas import OrderSchema
 from services import order_metrics
 from services.order_store import upsert_orders
 
 
-def _unix(y, m, d, h=12, mi=0):
-    return int(datetime(y, m, d, h, mi, tzinfo=timezone.utc).timestamp())
+def _dt(y, m, d, h=12, mi=0):
+    """naive UTC datetime（与 normalize 的时间口径一致）。"""
+    return datetime(y, m, d, h, mi)
 
 
 def _order(order_id, *, paid, total, lines, status="COMPLETED"):
-    return OrderSchema.model_validate(
-        {
-            "id": order_id,
-            "status": status,
-            "create_time": paid,
-            "paid_time": paid,
-            "update_time": paid,
-            "payment": {"currency": "IDR", "total_amount": total},
-            "line_items": lines,
-        }
+    """构造平台中立 DomainOrder（store 现在只认它）。line dict 仍用旧 key 方便书写。"""
+    return DomainOrder(
+        order_id=order_id,
+        order_status=status,
+        currency="IDR",
+        total_amount=Decimal(total),
+        create_time=paid,
+        paid_time=paid,
+        update_time=paid,
+        line_items=tuple(
+            DomainOrderLineItem(
+                line_item_id=ln["id"],
+                sku_id=ln.get("sku_id"),
+                product_name=ln.get("product_name"),
+                sale_price=Decimal(ln.get("sale_price", "0")),
+                currency="IDR",
+            )
+            for ln in lines
+        ),
     )
 
 
 def test_upsert_orders_idempotent(session):
     order = _order(
         "order-1",
-        paid=_unix(2026, 6, 1),
+        paid=_dt(2026, 6, 1),
         total="100000",
         lines=[
             {"id": "line-1", "sku_id": "sku-A", "product_name": "P-A", "sale_price": "60000"},
@@ -49,7 +60,7 @@ def test_upsert_orders_idempotent(session):
 
 
 def test_upsert_orders_updates_existing_status(session):
-    base = dict(paid=_unix(2026, 6, 1), total="50000",
+    base = dict(paid=_dt(2026, 6, 1), total="50000",
                lines=[{"id": "line-1", "sku_id": "sku-A", "sale_price": "50000"}])
     upsert_orders(session, [_order("order-1", status="AWAITING_SHIPMENT", **base)],
                   country="ID", shop_id="shop-1")
@@ -63,17 +74,18 @@ def test_upsert_orders_updates_existing_status(session):
 
 def test_gmv_summary_paid_window(session, monkeypatch):
     orders = [
-        _order("paid-in", paid=_unix(2026, 6, 3), total="100000",
+        _order("paid-in", paid=_dt(2026, 6, 3), total="100000",
                lines=[{"id": "l1", "sku_id": "sku-A", "sale_price": "100000"}]),
-        _order("paid-out", paid=_unix(2026, 5, 1), total="999999",
+        _order("paid-out", paid=_dt(2026, 5, 1), total="999999",
                lines=[{"id": "l2", "sku_id": "sku-A", "sale_price": "999999"}]),
     ]
     # 一笔未付款订单（paid_time 为空）应被排除
-    unpaid = OrderSchema.model_validate({
-        "id": "unpaid", "status": "UNPAID", "create_time": _unix(2026, 6, 3),
-        "payment": {"currency": "IDR", "total_amount": "777777"},
-        "line_items": [{"id": "l3", "sku_id": "sku-A", "sale_price": "777777"}],
-    })
+    unpaid = DomainOrder(
+        order_id="unpaid", order_status="UNPAID", currency="IDR",
+        total_amount=Decimal("777777"), create_time=_dt(2026, 6, 3), paid_time=None,
+        line_items=(DomainOrderLineItem(line_item_id="l3", sku_id="sku-A",
+                                        sale_price=Decimal("777777"), currency="IDR"),),
+    )
     upsert_orders(session, orders + [unpaid], country="ID", shop_id="shop-1")
     session.commit()
     monkeypatch.setattr(order_metrics, "SessionLocal", lambda: session)
@@ -90,7 +102,7 @@ def test_gmv_summary_paid_window(session, monkeypatch):
 
 def test_top_skus_ranked_by_units(session, monkeypatch):
     order = _order(
-        "order-1", paid=_unix(2026, 6, 3), total="300000",
+        "order-1", paid=_dt(2026, 6, 3), total="300000",
         lines=[
             {"id": "l1", "sku_id": "sku-A", "product_name": "Hot", "sale_price": "50000"},
             {"id": "l2", "sku_id": "sku-A", "product_name": "Hot", "sale_price": "50000"},
@@ -112,11 +124,11 @@ def test_top_skus_ranked_by_units(session, monkeypatch):
 
 def test_gmv_trend_fills_empty_days(session, monkeypatch):
     orders = [
-        _order("d3", paid=_unix(2026, 6, 3), total="100000",
+        _order("d3", paid=_dt(2026, 6, 3), total="100000",
                lines=[{"id": "l1", "sku_id": "sku-A", "sale_price": "100000"}]),
-        _order("d5a", paid=_unix(2026, 6, 5), total="30000",
+        _order("d5a", paid=_dt(2026, 6, 5), total="30000",
                lines=[{"id": "l2", "sku_id": "sku-A", "sale_price": "30000"}]),
-        _order("d5b", paid=_unix(2026, 6, 5), total="20000",
+        _order("d5b", paid=_dt(2026, 6, 5), total="20000",
                lines=[{"id": "l3", "sku_id": "sku-B", "sale_price": "20000"}]),
     ]
     upsert_orders(session, orders, country="ID", shop_id="shop-1")
@@ -149,10 +161,10 @@ def test_business_day_timezone_boundary(session, monkeypatch):
     """
     orders = [
         # UTC 6/8 14:00 → 印尼 6/8 21:00 → 印尼日 6/8
-        _order("early", paid=_unix(2026, 6, 8, 14, 0), total="46894",
+        _order("early", paid=_dt(2026, 6, 8, 14, 0), total="46894",
                lines=[{"id": "le", "sku_id": "sku-A", "sale_price": "46894"}]),
         # UTC 6/8 23:57 → 印尼 6/9 06:57 → 印尼日 6/9（关键）
-        _order("late", paid=_unix(2026, 6, 8, 23, 57), total="20028",
+        _order("late", paid=_dt(2026, 6, 8, 23, 57), total="20028",
                lines=[{"id": "ll", "sku_id": "sku-B", "sale_price": "20028"}]),
     ]
     upsert_orders(session, orders, country="ID", shop_id="shop-1")

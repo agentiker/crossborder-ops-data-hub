@@ -13,14 +13,10 @@ from prefect import flow, task
 
 from core.db import SessionLocal
 from flows.network import log_egress_ip
+from core.domain import DomainInventoryItem
 from platforms.tiktok_shop.client import PLATFORM as TIKTOK_PLATFORM
 from platforms.tiktok_shop.client import TikTokShopClient
-from platforms.tiktok_shop.schemas import (
-    InventoryItem,
-    ProductItem,
-    flatten_inventory,
-    normalize_products,
-)
+from platforms.tiktok_shop.normalize import to_domain_inventory, to_domain_products
 from services.inventory_store import upsert_inventory_items
 from services.product_store import upsert_products
 from services.sync_state import record_raw_response, upsert_cursor
@@ -66,7 +62,7 @@ def save_products(
     """清洗并幂等 upsert 商品主数据，记一条 products/search 的 raw 审计。"""
     if not products:
         return 0
-    items = [ProductItem.model_validate(row) for row in normalize_products(products)]
+    items = to_domain_products(products)
     session = SessionLocal()
     try:
         raw_record = record_raw_response(
@@ -128,21 +124,15 @@ def fetch_inventory(
 def validate_inventory(
     inventory: list[dict[str, Any]],
     product_titles: dict[str, str],
-) -> list[InventoryItem]:
-    """展平嵌套响应并 Pydantic 校验清洗。"""
-    valid_items = []
-    for row in flatten_inventory(inventory, product_titles):
-        try:
-            valid_items.append(InventoryItem.model_validate(row))
-        except Exception as e:  # noqa: BLE001
-            print(f"库存校验失败: {e}")
-    return valid_items
+) -> list[DomainInventoryItem]:
+    """展平嵌套响应并转成平台中立 DomainInventoryItem（校验/容错下沉到 normalize）。"""
+    return to_domain_inventory(inventory, product_titles)
 
 
 @task(name="save-inventory-to-db", retries=2, retry_delay_seconds=30)
 def save_to_db(
     inventory: list[dict[str, Any]],
-    items: list[InventoryItem],
+    items: list[DomainInventoryItem],
     *,
     product_ids: list[str],
     country: str = "GLOBAL",

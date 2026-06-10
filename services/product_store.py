@@ -1,13 +1,14 @@
 """Product master persistence helpers with idempotent upsert semantics."""
 from __future__ import annotations
 
+from core.domain import DomainProduct
 from models.base_models import Product
 from services.scoping import build_product_key
 
 
 def upsert_products(
     session,
-    items,
+    items: list[DomainProduct],
     *,
     platform: str = "tiktok_shop",
     country: str = "GLOBAL",

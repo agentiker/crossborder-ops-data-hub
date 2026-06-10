@@ -1,9 +1,10 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime
+from decimal import Decimal
 
 import pytest
 
+from core.domain import DomainOrder, DomainOrderLineItem
 from models.base_models import BusinessScope, PlatformToken
-from platforms.tiktok_shop.schemas import OrderSchema
 from services import order_metrics, scope_resolution
 from services.order_store import upsert_orders
 from services.scope_resolution import ScopeError, expand_scope, resolve_filters
@@ -106,18 +107,18 @@ def test_resolve_filters_passthrough_without_scope_or_shop(session, monkeypatch)
 # ── 多店集合聚合（order_metrics 走 shop_ids in_()） ──────────────────────────
 
 
-def _unix(y, m, d):
-    return int(datetime(y, m, d, 12, 0, tzinfo=timezone.utc).timestamp())
+def _dt(y, m, d):
+    return datetime(y, m, d, 12, 0)
 
 
 def _order(order_id, *, total, shop):
-    return OrderSchema.model_validate({
-        "id": order_id, "status": "COMPLETED",
-        "create_time": _unix(2026, 6, 3), "paid_time": _unix(2026, 6, 3),
-        "update_time": _unix(2026, 6, 3),
-        "payment": {"currency": "IDR", "total_amount": total},
-        "line_items": [{"id": f"l-{order_id}", "sku_id": "sku-A", "sale_price": total}],
-    })
+    return DomainOrder(
+        order_id=order_id, order_status="COMPLETED",
+        currency="IDR", total_amount=Decimal(total),
+        create_time=_dt(2026, 6, 3), paid_time=_dt(2026, 6, 3), update_time=_dt(2026, 6, 3),
+        line_items=(DomainOrderLineItem(line_item_id=f"l-{order_id}", sku_id="sku-A",
+                                        sale_price=Decimal(total), currency="IDR"),),
+    )
 
 
 def test_gmv_summary_aggregates_only_listed_shops(session, monkeypatch):

@@ -52,7 +52,11 @@
 
 ## 代码风格
 
-- 平台专属的 API 逻辑放在 `platforms/<platform>/` 下。
+- 平台专属的 API 逻辑放在 `platforms/<platform>/` 下，是该平台所有数据怪癖的唯一收敛点：
+    - `client.py` 必须继承 `core.base_client.BaseAPIClient` 并实现其抽象方法（`authenticate`/`refresh_access_token`），复用基类的 token 加载保存、签名、重试、scope；对外只暴露按资源组织的能力面（如 `iter_orders`/`list_products`/`search_inventory`）。
+    - `schemas.py` 只放 Pydantic 模型，作 wire 格式忠实镜像（字符串金额、Unix 秒、嵌套原样），负责校验/裁剪外部负载（`extra="ignore"`），**不在此做类型转换**。
+    - `normalize.py` 是"平台怪癖 → 平台中立领域模型（`core/domain.py`）"的唯一转换点（金额 str→Decimal、Unix 秒→naive UTC datetime、嵌套展平、currency fallback、逐条校验容错），只对外暴露 `to_domain_*`（输入原始 dict、输出 DTO）。
+- `core/domain.py` 是平台中立、已清洗、不可变（frozen dataclass）的领域契约：金额一律 `Decimal`、时间一律 naive UTC `datetime`、嵌套一律已展平。`services` 持久层只认 `core/domain` 的 DTO 与 `models/base_models` ORM，**绝不 import 任何 `platforms/<platform>/` 下的 schema 或 normalize**；`flows` 负责编排：先以原始 dict 记 raw 审计、再调 `to_domain_*` 得 DTO、交 store 幂等 upsert。
 - `analytics/` 放确定性分析公式与告警规则，如利润、ROI、退款率、库存覆盖等。此层应尽量保持纯计算：不打开数据库 session，不做 HTTP 调用，不依赖 AI 输出。
 - `services/` 放业务服务、持久化编排与可复用的确定性 SQL/Python 能力，如 upsert、raw payload 归档、同步游标、token、scope key、跨平台业务指标查询。
 - `ai_tools/` 放面向 AI/openclaw/HTTP 复用的只读读取辅助函数；它们应职责单一、输出稳定，可调用 `services`/`analytics`，但不得成为核心公式的真相来源。
