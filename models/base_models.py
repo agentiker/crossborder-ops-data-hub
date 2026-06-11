@@ -115,6 +115,38 @@ class BusinessScope(Base):
         return f"<BusinessScope(scope_key={self.scope_key}, type={self.scope_type})>"
 
 
+class ConversationScopeBinding(Base):
+    """会话级"默认查询范围"持久绑定（飞书菜单切换后，跨会话记住上次选的范围）。
+
+    用户点菜单（08a 文字模式）切换范围时，agent 调 ops_set_scope_binding 写本表；
+    之后不带范围词的查询，agent 调 ops_scope_binding 读默认范围。
+    主键 (channel, account_id, open_id)：open_id 取自 openclaw 注入 system prompt 的
+    trusted metadata（sender_id=ou_xxx），account_id 区分 ecom-app / ecom-app-gtl。
+    scope_key 为空表示"显式全量"（与"未设置"靠是否有行区分）。单租户阶段不引入 tenant_id（plan/09）。
+    """
+
+    __tablename__ = "conversation_scope_bindings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    channel = Column(String(16), nullable=False, default="feishu", index=True)
+    account_id = Column(String(64), nullable=False, index=True)  # ecom-app / ecom-app-gtl
+    open_id = Column(String(64), nullable=False, index=True)  # 飞书用户 ou_xxx
+    scope_key = Column(String(64), nullable=True)  # None = 显式全量
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "channel", "account_id", "open_id", name="uq_conv_scope_binding"
+        ),
+    )
+
+    def __repr__(self):
+        return (
+            f"<ConversationScopeBinding(open_id={self.open_id}, "
+            f"scope_key={self.scope_key})>"
+        )
+
+
 class PlatformToken(Base):
     """Platform token persisted per platform account scope."""
 

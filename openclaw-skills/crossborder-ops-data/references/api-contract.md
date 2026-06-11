@@ -6,7 +6,7 @@ Base URL comes from `DATA_HUB_URL`. All endpoints below require:
 X-Internal-Token: {{DATA_HUB_TOKEN}}
 ```
 
-All endpoints are read-only and live under `/api/data`.
+All endpoints are read-only and live under `/api/data`, **except** `POST /api/data/scope/binding` (the one write — persists a conversation's default scope).
 
 ## Shared Query Parameters
 
@@ -36,6 +36,8 @@ All endpoints are read-only and live under `/api/data`.
 | `GET /api/data/orders/trend` | live | Per-day paid-order GMV/order_count/units_sold; window with no orders is zero-filled. |
 | `GET /api/data/orders/top-skus` | live | Top SKUs by units within paid orders. |
 | `GET /api/data/scopes` | live | List of configured business scopes (id, name, shop_ids). Used when user asks "what scopes do I have". |
+| `GET /api/data/scope/binding` | live | Read a conversation's persisted **default scope** (by `open_id`). Call before a data query that carries no scope words. |
+| `POST /api/data/scope/binding` | live (write) | Persist a conversation's default scope. The **only** write endpoint; called when the user switches scope via menu phrase. |
 | `GET /api/data/profit/summary` | **503 — planned** | Needs Finance/Ads/cost data sources, not connected. |
 | `GET /api/data/alerts` | **503 — planned** | Depends on profit + inventory metrics. |
 
@@ -279,6 +281,51 @@ Use this when:
 - You need to confirm a `scope_key` exists before referencing it in a reply
 
 Do not list scopes proactively (no "你也可以查 X / Y / Z" suffix on every answer).
+
+## GET /api/data/scope/binding
+
+Reads the conversation's persisted **default scope** (set by a prior menu switch). Call this before running a data query that carries **no** scope words, to decide whether to pass a `scope_id`.
+
+Query parameters:
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `open_id` | string | **yes** | — | Feishu user open id, taken from the system-prompt trusted metadata `sender_id` (`ou_xxx`). |
+| `channel` | string | no | `feishu` | Channel. |
+| `account_id` | string | no | `ecom-app` | Bot account; distinguishes `ecom-app` vs `ecom-app-gtl`. |
+
+Response shape:
+
+```json
+{
+  "open_id": "ou_abc123",
+  "scope_key": "tts-id-all",
+  "scope": "TikTok Shop / 印尼 / 1 个店铺",
+  "is_set": true
+}
+```
+
+- `is_set=false` → the user has never switched scope; treat as **全量** (pass no `scope_id`). `scope` is then `未设置默认范围（全部）`.
+- `is_set=true` with a non-null `scope_key` → pass that `scope_key` as `scope_id` to the data tools.
+- `is_set=true` with `scope_key=null` → the user explicitly switched to **全部**; query 全量 (pass no `scope_id`). `scope` is `全部范围`.
+
+## POST /api/data/scope/binding
+
+Persists the conversation's default scope. Called when the user switches scope via a menu phrase (`印尼` / `全部`). The **only** write endpoint.
+
+Request body (JSON):
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `open_id` | string | **yes** | — | Feishu user open id (`ou_xxx`, from trusted metadata `sender_id`). |
+| `scope_key` | string \| null | no | `null` | Named scope to set as default (e.g. `tts-id-all`). Omit / null / empty string → switch to **全量**. |
+| `channel` | string | no | `feishu` | Channel. |
+| `account_id` | string | no | `ecom-app` | Bot account. |
+
+Response shape: same as `GET /api/data/scope/binding` (`open_id` / `scope_key` / `scope` / `is_set`). Use the returned `scope` string for the "已切换到 **{scope}**" confirmation line.
+
+- A non-null `scope_key` that does not exist or is inactive → **400** `ScopeError` (nothing is written). Under normal config this should not happen; surface a switch-failure message, do not claim success.
+- Upsert by `(channel, account_id, open_id)`; switching again overwrites the previous default.
 
 ## GET /api/data/profit/summary
 
