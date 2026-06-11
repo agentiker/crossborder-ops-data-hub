@@ -1,8 +1,20 @@
 ---
-status: draft
+status: superseded
 owner: codex
 depends_on: [08a_feishu_menu_text]
+superseded_by: 08b 路线 A（菜单文字 + agent 写 binding，MCP 工具层）
 ---
+
+> ⚠️ **本文档的核心架构已被证伪、不要按此实现。** 它假设「另起一个独立 Feishu webhook
+> 服务接菜单事件，与 openclaw 长连接互不干扰」。但飞书一个应用的事件投递方式 **长连接 XOR
+> webhook 互斥**——openclaw 已占用长连接，切 webhook 会让 openclaw 收不到普通消息；
+> 另起独立长连接 client 又因「集群模式不广播」与 openclaw 抢事件。结论：菜单事件只能走
+> openclaw 现有长连接，而「不改 openclaw」是既定原则。
+>
+> **实际采用路线 A**（已实现）：菜单保持 08a「发送文字消息」模式，把持久化做成 MCP 工具
+> `ops_scope_binding`（读）/ `ops_set_scope_binding`（写），由 agent 在识别菜单短语时写、
+> 在无范围词查询时读。零 openclaw 改动、零飞书事件订阅改动、零长连接冲突，确认消息天然由
+> agent 回（不需要飞书 OpenAPI 客户端 / app_secret）。下文仅作历史存档。
 
 # 08b 飞书菜单事件持久化（后做）
 

@@ -11,6 +11,7 @@ from core.db import SessionLocal
 from core.timezone import PERIOD_KEYS, business_today, describe_window, resolve_period
 from models.base_models import Inventory, Product
 from services.order_metrics import get_gmv_summary, get_gmv_trend, get_top_skus
+from services.scope_binding import get_binding, set_binding
 from services.scope_resolution import ScopeError, ScopeFilters, list_scopes, resolve_filters
 
 logger = logging.getLogger(__name__)
@@ -176,6 +177,20 @@ class ScopeItem(BaseModel):
 class ScopeListResponse(BaseModel):
     items: list[ScopeItem]
     total: int
+
+
+class ScopeBindingResponse(BaseModel):
+    open_id: str
+    scope_key: Optional[str] = None  # None = 显式全量 / 未设置
+    scope: Optional[str] = None  # display_text，如 "TikTok Shop / 印尼 / 1 个店铺"
+    is_set: bool
+
+
+class SetScopeBindingRequest(BaseModel):
+    open_id: str
+    scope_key: Optional[str] = None  # None/"" = 切换为全量
+    channel: str = "feishu"
+    account_id: str = "ecom-app"
 
 
 class TrendPoint(BaseModel):
@@ -542,4 +557,42 @@ async def get_scopes():
         items=[ScopeItem(**s) for s in scopes],
         total=len(scopes),
     )
+
+
+@router.get(
+    "/scope/binding", response_model=ScopeBindingResponse, operation_id="ops_scope_binding"
+)
+async def get_scope_binding(
+    open_id: str = Query(..., description="飞书用户 open_id（取自 system prompt trusted metadata 的 sender_id，形如 ou_xxx）"),
+    channel: str = Query("feishu", description="渠道，默认 feishu"),
+    account_id: str = Query("ecom-app", description="账号，区分 ecom-app / ecom-app-gtl"),
+):
+    """读该用户的会话默认查询范围（菜单上次切换记住的范围）。
+
+    不带范围词的数据请求前调用：`is_set=true` 且有 `scope_key` → 用作 `scope_id`；
+    否则（未设置/全量）走全量。`scope` 为该范围的展示文案。
+    """
+    data = get_binding(open_id, channel=channel, account_id=account_id)
+    return ScopeBindingResponse(open_id=open_id, **data)
+
+
+@router.post(
+    "/scope/binding", response_model=ScopeBindingResponse, operation_id="ops_set_scope_binding"
+)
+async def set_scope_binding(body: SetScopeBindingRequest):
+    """写该用户的会话默认查询范围（菜单切换默认范围时调用）。
+
+    `scope_key` 传命名 scope（如 `tts-id-all`）切到该范围；传空/省略切为全量。
+    未知或已停用的 scope_key → 400。写入后返回该范围展示文案，用于"已切换到 X"确认话术。
+    """
+    try:
+        data = set_binding(
+            body.open_id,
+            body.scope_key,
+            channel=body.channel,
+            account_id=body.account_id,
+        )
+    except ScopeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return ScopeBindingResponse(open_id=body.open_id, **data)
 

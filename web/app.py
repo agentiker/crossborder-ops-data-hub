@@ -48,6 +48,8 @@ mcp = FastApiMCP(
         "ops_orders_trend",
         "ops_top_skus",
         "ops_scopes",
+        "ops_scope_binding",
+        "ops_set_scope_binding",
     ],
     headers=["x-internal-token"],
 )
