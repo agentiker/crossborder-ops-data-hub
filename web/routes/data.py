@@ -25,11 +25,21 @@ def _resolve_scope(
     country: Optional[str] = None,
     shop_id: Optional[str] = None,
     shop_ids: Optional[str] = None,
+    open_id: Optional[str] = None,
 ) -> ScopeFilters:
     """统一解析 scope/显式过滤，ScopeError → 400。
 
     `scope_id` 对外命名，内部即 scope_key；`shop_ids` 为逗号分隔字符串。
+
+    服务器端自动兜底：agent 没传 scope_id 但有 open_id 时，自动查 binding 表取默认范围，
+    消除对弱模型「主动调 ops_scope_binding」的依赖。带 scope_id 则显式优先、不读 binding。
     """
+    if not scope_id and open_id:
+        binding = get_binding(open_id)
+        if binding.get("is_set") and binding.get("scope_key"):
+            scope_id = binding["scope_key"]
+            logger.info("auto-applied scope binding: open_id=%s → %s", open_id, scope_id)
+
     id_list = [s.strip() for s in shop_ids.split(",") if s.strip()] if shop_ids else None
     try:
         return resolve_filters(
@@ -240,6 +250,7 @@ async def get_inventory(
     scope_id: Optional[str] = Query(None, description="业务范围 scope_key（命名店铺集合）"),
     shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
     low_stock_threshold: int = Query(10, description="低库存阈值"),
+    open_id: Optional[str] = Query(None, description="飞书用户 open_id（ou_xxx，用于自动应用会话默认范围）"),
 ):
     """获取库存列表，同时返回低库存商品。
 
@@ -248,7 +259,7 @@ async def get_inventory(
     """
     scope = _resolve_scope(
         scope_id=scope_id, platform=platform, country=country,
-        shop_id=shop_id, shop_ids=shop_ids,
+        shop_id=shop_id, shop_ids=shop_ids, open_id=open_id,
     )
     session = SessionLocal()
     try:
@@ -326,6 +337,7 @@ async def get_overview(
     shop_id: Optional[str] = Query(None, description="店铺ID"),
     scope_id: Optional[str] = Query(None, description="业务范围 scope_key（命名店铺集合）"),
     shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
+    open_id: Optional[str] = Query(None, description="飞书用户 open_id（ou_xxx，用于自动应用会话默认范围）"),
 ):
     """经营概览：库存快照 + 近 7 天订单概览（不含利润/告警，本期未上线）。
 
@@ -333,7 +345,7 @@ async def get_overview(
     """
     scope = _resolve_scope(
         scope_id=scope_id, platform=platform, country=country,
-        shop_id=shop_id, shop_ids=shop_ids,
+        shop_id=shop_id, shop_ids=shop_ids, open_id=open_id,
     )
     today = business_today()
     week_ago = today - timedelta(days=7)
@@ -391,6 +403,7 @@ async def get_orders_summary(
     shop_id: Optional[str] = Query(None, description="店铺ID"),
     scope_id: Optional[str] = Query(None, description="业务范围 scope_key（命名店铺集合）"),
     shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
+    open_id: Optional[str] = Query(None, description="飞书用户 open_id（ou_xxx，用于自动应用会话默认范围）"),
 ):
     """已付款订单 GMV/订单量/销量/客单价汇总，默认最近7天（按 paid_time 归日，印尼当地时间 UTC+7）。
 
@@ -400,7 +413,7 @@ async def get_orders_summary(
     """
     scope = _resolve_scope(
         scope_id=scope_id, platform=platform, country=country,
-        shop_id=shop_id, shop_ids=shop_ids,
+        shop_id=shop_id, shop_ids=shop_ids, open_id=open_id,
     )
     sd, ed = _resolve_window(start_date, end_date, period, default_back_days=7)
 
@@ -430,6 +443,7 @@ async def get_orders_top_skus(
     scope_id: Optional[str] = Query(None, description="业务范围 scope_key（命名店铺集合）"),
     shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
     limit: int = Query(10, description="返回数量"),
+    open_id: Optional[str] = Query(None, description="飞书用户 open_id（ou_xxx，用于自动应用会话默认范围）"),
 ):
     """已付款订单内按销量排序的单品榜，默认最近7天。
 
@@ -439,7 +453,7 @@ async def get_orders_top_skus(
     """
     scope = _resolve_scope(
         scope_id=scope_id, platform=platform, country=country,
-        shop_id=shop_id, shop_ids=shop_ids,
+        shop_id=shop_id, shop_ids=shop_ids, open_id=open_id,
     )
     sd, ed = _resolve_window(start_date, end_date, period, default_back_days=7)
 
@@ -472,6 +486,7 @@ async def get_orders_trend(
     shop_id: Optional[str] = Query(None, description="店铺ID（店铺 GMV 趋势按此过滤）"),
     scope_id: Optional[str] = Query(None, description="业务范围 scope_key（命名店铺集合）"),
     shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
+    open_id: Optional[str] = Query(None, description="飞书用户 open_id（ou_xxx，用于自动应用会话默认范围）"),
 ):
     """已付款订单按天的 GMV/单量/销量趋势，默认近 7 天（窗口内无单的日期补 0）。
 
@@ -480,7 +495,7 @@ async def get_orders_trend(
     """
     scope = _resolve_scope(
         scope_id=scope_id, platform=platform, country=country,
-        shop_id=shop_id, shop_ids=shop_ids,
+        shop_id=shop_id, shop_ids=shop_ids, open_id=open_id,
     )
     sd, ed = _resolve_window(start_date, end_date, period, default_back_days=6)
 
@@ -510,6 +525,7 @@ async def get_products(
     shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
     status: Optional[str] = Query(None, description="商品状态，如 ACTIVATE / SELLER_DEACTIVATED / DRAFT"),
     limit: int = Query(100, description="返回数量上限"),
+    open_id: Optional[str] = Query(None, description="飞书用户 open_id（ou_xxx，用于自动应用会话默认范围）"),
 ):
     """商品目录列表，支持平台/国家/店铺/状态过滤，用于商品目录、上下架与滞销分析。
 
@@ -518,7 +534,7 @@ async def get_products(
     """
     scope = _resolve_scope(
         scope_id=scope_id, platform=platform, country=country,
-        shop_id=shop_id, shop_ids=shop_ids,
+        shop_id=shop_id, shop_ids=shop_ids, open_id=open_id,
     )
     session = SessionLocal()
     try:

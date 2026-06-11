@@ -140,16 +140,12 @@ metadata:
 - 抽到店铺 ID 或"只看 X 店" → 透传 `shop_id`，与 `scope_id` 一起发，**服务端取交集**；越界 → 服务端 400，按「异常处理」处理。
 - 抽到模糊词（拉美等）→ 追问，不调工具。
 
-### 步骤 3：消息没带范围词 → 先读默认 binding，再决定全量
+### 步骤 3：消息没带范围词 → 直接查数据（服务端自动应用默认范围）
 
 数据请求但步骤 1/2 都没命中范围（消息里完全没提范围）时：
 
-1. **调 `ops_scope_binding` 读会话默认范围**：参数 `open_id` = trusted metadata 的 `sender_id`（`ou_xxx`）；`account_id` 取 metadata 的 `account_id`（没有就省略）。
-2. 返回 `is_set=true` 且有 `scope_key` → 把该 `scope_key` 当作数据工具的 `scope_id` 传入查询（如 `tts-id-all`）。
-3. 返回 `is_set=false`（用户从没切过）或 `scope_key` 为空（用户显式切到全量）→ **全量查询**（不传 `scope_id`/`shop_id`）。
-4. 回答首行仍按下文用**数据工具响应**的 `scope` 字段声明范围（全量时写 `查询范围：未限定店铺范围（全部）`），让用户知道结果覆盖什么。
-
-> 只有「消息没带范围词」才需要读 binding；带了范围词（步骤 2）直接用范围词，不必读 binding（省一次调用）。
+1. **直接调数据工具**（不调 `ops_scope_binding`，服务端已自动处理）：只要把 `open_id` = trusted metadata 的 `sender_id` 传给数据工具，服务端会自动查 binding 表注入默认范围（已切「印尼」→ 自动用 `tts-id-all`，未设过 → 全量）。
+2. 回答首行用**数据工具响应**的 `scope` 字段声明范围（全量时响应 scope 为 `未限定店铺范围（全部）`），让用户知道结果覆盖什么。
 
 ## 回答首行声明范围（强制）
 
@@ -168,7 +164,9 @@ metadata:
 
 ## 意图路由（意图 → 工具）
 
-所有数据工具的**公共参数（全可选）**：`scope_id` / `shop_ids` / `platform` / `country` / `shop_id`。鉴权由 openclaw 自动注入，skill 不传 token、不拼 URL。
+所有数据工具的**公共参数（全可选）**：`scope_id` / `shop_ids` / `platform` / `country` / `shop_id` / `open_id`。鉴权由 openclaw 自动注入，skill 不传 token、不拼 URL。
+
+⚠️ **`open_id` 必传**（从 system prompt trusted metadata 取 `sender_id`，形如 `ou_xxx`）：数据端点收到 `open_id` 后，**服务端自动查 binding 表取默认范围**——用户之前通过菜单切到「印尼」，后续所有数据查询**自动**限定到印尼店，agent 无需额外操作。不传则全量（除非 message 含范围词）。
 
 **相对时间（今天/昨天/本周/上周/近7天/近30天/本月）一律传 `period` 参数，不要自己算日期**——订单类工具（`ops_orders_summary` / `ops_orders_trend` / `ops_top_skus`）支持 `period`，取值 `today` / `yesterday` / `this_week` / `last_week` / `last_7d` / `last_30d` / `this_month`，服务端按印尼时区 + 周一起算换算窗口（弱模型自己算星期容易错，故收回服务端）。只有用户给了**明确起止日期**（如"6月1日到6月7日"）时才传 `start_date` / `end_date`（`YYYY-MM-DD`，与 `period` 二选一，显式日期优先）。映射参考：`今天`→`today`、`昨天`→`yesterday`、`本周`→`this_week`、`上周`→`last_week`、`近7天/最近一周`→`last_7d`、`近30天/最近一个月`→`last_30d`、`本月`→`this_month`、`近3天`→无对应 period（传 `start_date`=今天往前2天，或仍用 `last_7d` 后截取）。
 
