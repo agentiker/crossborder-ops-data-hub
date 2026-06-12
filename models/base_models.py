@@ -119,9 +119,10 @@ class ConversationScopeBinding(Base):
     """会话级"默认查询范围"持久绑定（飞书菜单切换后，跨会话记住上次选的范围）。
 
     用户点菜单（08a 文字模式）切换范围时，agent 调 ops_set_scope_binding 写本表；
-    之后不带范围词的查询，agent 调 ops_scope_binding 读默认范围。
+    之后不带范围词的查询，数据端点凭 open_id 自动读本表注入默认范围（服务端兜底，无读工具）。
     主键 (channel, account_id, open_id)：open_id 取自 openclaw 注入 system prompt 的
-    trusted metadata（sender_id=ou_xxx），account_id 区分 ecom-app / ecom-app-gtl。
+    trusted metadata（sender_id=ou_xxx）。当前 channel/account_id 走服务端默认（feishu/ecom-app），
+    账号隔离靠 open_id 的 per-app 唯一性；account_id 列保留作多 app 真隔离的扩展位（plan/09）。
     scope_key 为空表示"显式全量"（与"未设置"靠是否有行区分）。单租户阶段不引入 tenant_id（plan/09）。
     """
 

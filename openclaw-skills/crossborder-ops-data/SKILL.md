@@ -14,7 +14,6 @@ metadata:
         - ops_orders_trend
         - ops_top_skus
         - ops_scopes
-        - ops_scope_binding
         - ops_set_scope_binding
 ---
 
@@ -32,7 +31,7 @@ metadata:
 2. 消息是切换范围/查可用范围的菜单短语（`印尼`/`全部`/`拉美`/`有哪些范围`…）→ 走「范围解析 SOP 步骤 1」：切换默认范围时**只调 `ops_set_scope_binding` 持久化**（不调任何数据工具），按那里的**固定话术**回复（如"已切换到 X"），不要把短语当话题自由发挥。
 3. 否则是数据请求 → 「范围解析 SOP 步骤 2~3」定范围 → 按「意图路由」调**最少必要**的工具 → 按「回答结构」输出，首行用响应的 `scope` 字段声明范围。
 
-约束：利润/告警**没有工具**（本期未上线），用户问到时直接如实告知，不要找或调任何工具；只调用本 skill 列出的 9 个 `ops_*` 工具，不臆造工具名或参数；**不要凭模型常识补具体数字**（如佣金率、物流/采购成本估算）——只用接口返回的数据。
+约束：利润/告警**没有工具**（本期未上线），用户问到时直接如实告知，不要找或调任何工具；只调用本 skill 列出的 8 个 `ops_*` 工具，不臆造工具名或参数；**不要凭模型常识补具体数字**（如佣金率、物流/采购成本估算）——只用接口返回的数据。
 
 ## 使用指引文案（onboarding）
 
@@ -88,8 +87,8 @@ metadata:
 
 **切换默认范围（印尼 / 全部 / 拉美）**：
 - **调且仅调 `ops_set_scope_binding` 持久化默认范围**（不查 overview/inventory/orders，**也不调 ops_scopes**）：
-  - 参数 `open_id` = system prompt trusted metadata 里的 `sender_id`（形如 `ou_xxx`）；`account_id` 取 metadata 的 `account_id`（没有就省略，服务端默认 `ecom-app`）。
-  - `印尼` → `scope_key="tts-id-all"`；`全部` → `scope_key` 留空（切为全量）。
+  - **只传两个参数**：`open_id` = system prompt trusted metadata 里的 `sender_id`（形如 `ou_xxx`）；`scope_key`（`印尼` → `tts-id-all`；`全部` → 留空切为全量）。
+  - ⚠️ **不要传 `account_id` / `channel`**——服务端按默认处理；乱传 `account_id` 会让写入的默认范围与后续查询读不到同一行（切了范围却静默失效）。
 - 回复**必须以确认话术开头**，用工具返回的 `scope` 字段填 `{display_text}`："已切换到 **{scope}**，请问需要查什么？（GMV / 库存 / 商品 / 趋势 / 单品榜）"——`印尼` → `已切换到 **TikTok Shop / 印尼 / 1 个店铺**…`，`全部` → `已切换到 **全部范围**…`。
 - ⚠️ **不要**把短语当话题反问"印尼这个方向你想看什么"或自由列维度——必须先持久化再说"已切换到 X"明确确认范围，再引导。
 - 拉美：**不调任何工具**（无对应 scope，无可持久化），回复"拉美目前未配置业务范围，请告诉我具体国家（巴西/墨西哥/...）。"
@@ -144,7 +143,7 @@ metadata:
 
 数据请求但步骤 1/2 都没命中范围（消息里完全没提范围）时：
 
-1. **直接调数据工具**（不调 `ops_scope_binding`，服务端已自动处理）：只要把 `open_id` = trusted metadata 的 `sender_id` 传给数据工具，服务端会自动查 binding 表注入默认范围（已切「印尼」→ 自动用 `tts-id-all`，未设过 → 全量）。
+1. **直接调数据工具**（无需任何"读取默认范围"动作，服务端已自动处理）：只要把 `open_id` = trusted metadata 的 `sender_id` 传给数据工具，服务端会自动查 binding 表注入默认范围（已切「印尼」→ 自动用 `tts-id-all`，未设过 → 全量）。
 2. 回答首行用**数据工具响应**的 `scope` 字段声明范围（全量时响应 scope 为 `未限定店铺范围（全部）`），让用户知道结果覆盖什么。
 
 ## 回答首行声明范围（强制）
@@ -164,9 +163,9 @@ metadata:
 
 ## 意图路由（意图 → 工具）
 
-所有数据工具的**公共参数（全可选）**：`scope_id` / `shop_ids` / `platform` / `country` / `shop_id` / `open_id`。鉴权由 openclaw 自动注入，skill 不传 token、不拼 URL。
+所有数据工具的**公共参数**：`open_id`（**每次必传**）+ 范围四件套 `scope_id` / `shop_ids` / `platform` / `country` / `shop_id`（**按需可选**，只有 message 里出现范围词时才传，见范围解析 SOP）。鉴权由 openclaw 自动注入，skill 不传 token、不拼 URL。
 
-⚠️ **`open_id` 必传**（从 system prompt trusted metadata 取 `sender_id`，形如 `ou_xxx`）：数据端点收到 `open_id` 后，**服务端自动查 binding 表取默认范围**——用户之前通过菜单切到「印尼」，后续所有数据查询**自动**限定到印尼店，agent 无需额外操作。不传则全量（除非 message 含范围词）。
+⚠️ **`open_id` 每次必传**（从 system prompt trusted metadata 取 `sender_id`，形如 `ou_xxx`）：数据端点收到 `open_id` 后，**服务端自动查 binding 表取默认范围**——用户之前通过菜单切到「印尼」，后续所有数据查询**自动**限定到印尼店，agent 无需额外操作。`open_id` 漏传则退化为全量（即便用户切过范围也读不到默认，等于静默失效）；message 里带范围词则该次用范围词、临时覆盖默认。
 
 **相对时间（今天/昨天/本周/上周/近7天/近30天/本月）一律传 `period` 参数，不要自己算日期**——订单类工具（`ops_orders_summary` / `ops_orders_trend` / `ops_top_skus`）支持 `period`，取值 `today` / `yesterday` / `this_week` / `last_week` / `last_7d` / `last_30d` / `this_month`，服务端按印尼时区 + 周一起算换算窗口（弱模型自己算星期容易错，故收回服务端）。只有用户给了**明确起止日期**（如"6月1日到6月7日"）时才传 `start_date` / `end_date`（`YYYY-MM-DD`，与 `period` 二选一，显式日期优先）。映射参考：`今天`→`today`、`昨天`→`yesterday`、`本周`→`this_week`、`上周`→`last_week`、`近7天/最近一周`→`last_7d`、`近30天/最近一个月`→`last_30d`、`本月`→`this_month`、`近3天`→无对应 period（传 `start_date`=今天往前2天，或仍用 `last_7d` 后截取）。
 

@@ -2,7 +2,8 @@
 
 跨会话记住用户上次通过菜单切换的范围：
 - `set_binding`：菜单切换默认范围时写入（agent 经 ops_set_scope_binding 调）。
-- `get_binding`：不带范围词的查询前读取默认范围（agent 经 ops_scope_binding 调）。
+- `get_binding`：数据端点（web/routes/data.py `_resolve_scope`）服务端自动读取注入，
+  agent 不直接调（无读工具）。读写都走默认 channel/account_id，命中同一行。
 
 校验与展示文案复用 `services/scope_resolution`：写入时非空 scope_key 必须存在且 active，
 否则抛 `ScopeError`（API 层转 400）；`scope_key=None` 表示"显式全量"，合法。
