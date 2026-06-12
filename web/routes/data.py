@@ -32,7 +32,9 @@ def _resolve_scope(
     `scope_id` 对外命名，内部即 scope_key；`shop_ids` 为逗号分隔字符串。
 
     服务器端自动兜底：agent 没传 scope_id 但有 open_id 时，自动查 binding 表取默认范围，
-    消除对弱模型「主动调 ops_scope_binding」的依赖。带 scope_id 则显式优先、不读 binding。
+    消除对弱模型「主动读取默认范围」的依赖。带 scope_id 则显式优先、不读 binding。
+    读取走服务端默认 channel/account_id，与写端点 (ops_set_scope_binding) 默认完全一致，
+    保证读写命中同一 binding 行（账号隔离靠 open_id 的 per-app 唯一性，见 SetScopeBindingRequest）。
     """
     if not scope_id and open_id:
         binding = get_binding(open_id)
@@ -199,8 +201,10 @@ class ScopeBindingResponse(BaseModel):
 class SetScopeBindingRequest(BaseModel):
     open_id: str
     scope_key: Optional[str] = None  # None/"" = 切换为全量
-    channel: str = "feishu"
-    account_id: str = "ecom-app"
+    # channel / account_id 不在请求体暴露：飞书 open_id 是 per-app 唯一的，账号隔离已由
+    # open_id 保证，account_id 维度冗余。写入与数据端点自动注入读取都走服务端默认
+    # (feishu / ecom-app)，保证读写命中同一 binding 行——绝不让 agent 传 account_id
+    # 制造读写不对齐（gtl 账号曾因此切范围静默失效）。多 app 真隔离留待 plan/09。
 
 
 class TrendPoint(BaseModel):
@@ -575,23 +579,6 @@ async def get_scopes():
     )
 
 
-@router.get(
-    "/scope/binding", response_model=ScopeBindingResponse, operation_id="ops_scope_binding"
-)
-async def get_scope_binding(
-    open_id: str = Query(..., description="飞书用户 open_id（取自 system prompt trusted metadata 的 sender_id，形如 ou_xxx）"),
-    channel: str = Query("feishu", description="渠道，默认 feishu"),
-    account_id: str = Query("ecom-app", description="账号，区分 ecom-app / ecom-app-gtl"),
-):
-    """读该用户的会话默认查询范围（菜单上次切换记住的范围）。
-
-    不带范围词的数据请求前调用：`is_set=true` 且有 `scope_key` → 用作 `scope_id`；
-    否则（未设置/全量）走全量。`scope` 为该范围的展示文案。
-    """
-    data = get_binding(open_id, channel=channel, account_id=account_id)
-    return ScopeBindingResponse(open_id=open_id, **data)
-
-
 @router.post(
     "/scope/binding", response_model=ScopeBindingResponse, operation_id="ops_set_scope_binding"
 )
@@ -602,12 +589,8 @@ async def set_scope_binding(body: SetScopeBindingRequest):
     未知或已停用的 scope_key → 400。写入后返回该范围展示文案，用于"已切换到 X"确认话术。
     """
     try:
-        data = set_binding(
-            body.open_id,
-            body.scope_key,
-            channel=body.channel,
-            account_id=body.account_id,
-        )
+        # channel/account_id 走服务端默认（与 _resolve_scope 的自动注入读取一致）。
+        data = set_binding(body.open_id, body.scope_key)
     except ScopeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return ScopeBindingResponse(open_id=body.open_id, **data)
