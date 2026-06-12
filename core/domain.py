@@ -44,6 +44,13 @@ class DomainOrder:
     create_time: Optional[datetime] = None
     paid_time: Optional[datetime] = None
     update_time: Optional[datetime] = None
+    # 发货时效（SLA）相关，仅待发货快照流程消费；订单 GMV 流程不依赖（全为可选、向后兼容）。
+    # 语义按 TTS Go SDK 注释：tts=最晚揽收、rts=最晚发货、*_due_time=超时平台自动取消线。
+    tts_sla_time: Optional[datetime] = None
+    rts_sla_time: Optional[datetime] = None
+    shipping_due_time: Optional[datetime] = None
+    collection_due_time: Optional[datetime] = None
+    delivery_option_name: Optional[str] = None  # 配送方式，如 Economy / Standard / Express
     line_items: tuple[DomainOrderLineItem, ...] = ()
 
 

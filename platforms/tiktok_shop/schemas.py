@@ -70,6 +70,12 @@ class OrderSchema(BaseModel):
     is_cod: Optional[bool] = None
     buyer_message: Optional[str] = None
     warehouse_id: Optional[str] = None
+    # 发货时效（SLA）相关 Unix 秒，忠实镜像不转换（转换在 normalize 层）。
+    tts_sla_time: Optional[int] = None
+    rts_sla_time: Optional[int] = None
+    shipping_due_time: Optional[int] = None
+    collection_due_time: Optional[int] = None
+    delivery_option_name: Optional[str] = None
     payment: Optional[OrderPayment] = None
     line_items: list[OrderLineItemSchema] = Field(default_factory=list)
 

@@ -32,6 +32,9 @@ def refresh_single_token(token_record: PlatformToken) -> dict:
         auto_load_token=False,
     )
     client.refresh_token = token_record.refresh_token
+    # 刷新响应不含 shop_cipher，预先载入 DB 旧值，避免刷新后内存态丢 cipher
+    # （持久层 save_token 也已对空值兜底，二者双保险）。
+    client.shop_cipher = token_record.shop_cipher
 
     result = client.refresh_access_token()
     return result

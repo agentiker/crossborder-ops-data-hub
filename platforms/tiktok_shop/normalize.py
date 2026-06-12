@@ -87,6 +87,11 @@ def _order_to_domain(order: OrderSchema) -> DomainOrder:
         create_time=_epoch_to_dt(order.create_time),
         paid_time=_epoch_to_dt(order.paid_time),
         update_time=_epoch_to_dt(order.update_time),
+        tts_sla_time=_epoch_to_dt(order.tts_sla_time),
+        rts_sla_time=_epoch_to_dt(order.rts_sla_time),
+        shipping_due_time=_epoch_to_dt(order.shipping_due_time),
+        collection_due_time=_epoch_to_dt(order.collection_due_time),
+        delivery_option_name=order.delivery_option_name,
         line_items=lines,
     )
 

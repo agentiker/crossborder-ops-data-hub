@@ -102,6 +102,26 @@ def build_order_key(
     )
 
 
+def build_pending_fulfillment_key(
+    *,
+    platform: str,
+    country: str = "GLOBAL",
+    shop_id: Optional[str] = None,
+    seller_id: Optional[str] = None,
+    account_id: Optional[str] = None,
+    order_id: str,
+) -> str:
+    """Build the idempotency key for a pending-fulfillment snapshot row."""
+    return build_scope_key(
+        platform=platform,
+        country=country,
+        shop_id=shop_id,
+        seller_id=seller_id,
+        account_id=account_id,
+        resource=f"pending_fulfillment:{normalize_scope_value(order_id)}",
+    )
+
+
 def build_order_line_key(
     *,
     platform: str,

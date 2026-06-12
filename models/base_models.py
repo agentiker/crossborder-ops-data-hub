@@ -323,6 +323,59 @@ class OrderHeader(Base):
         return f"<OrderHeader(order_id={self.order_id}, total={self.total_amount})>"
 
 
+class PendingFulfillment(Base):
+    """待发货订单快照（order_status=AWAITING_SHIPMENT），按发货时效预警。
+
+    快照式：每次同步全量拉当前所有待发货单覆盖本表，发货后的单下次快照不在结果里即被删除
+    （见 services/fulfillment_store.replace_pending_fulfillments）。故本表行集合 = 平台当前
+    待发货集合，天然无"幽灵单"（订单发走后 status 停留在 AWAITING_SHIPMENT 的问题）。
+    与 orders 表解耦：orders 走 create_time 增量、留历史；本表只反映"此刻还没发的单"。
+    """
+
+    __tablename__ = "pending_fulfillments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String(32), nullable=False, default="tiktok_shop", index=True)
+    country = Column(String(16), nullable=False, default="GLOBAL", index=True)
+    shop_id = Column(String(64), index=True)
+    seller_id = Column(String(64), index=True)
+    account_id = Column(String(64), index=True)
+    idempotency_key = Column(String(500), nullable=False, unique=True, index=True)
+    order_id = Column(String(64), nullable=False, index=True)
+    order_status = Column(String(32), index=True)  # 快照口径恒为 AWAITING_SHIPMENT
+    # 发货时效（SLA）：均为 naive UTC。tts=最晚揽收、rts=最晚发货、*_due_time=超时平台自动取消线。
+    # 超时分桶判定字段集中在 services/fulfillment_metrics（默认 tts_sla_time，待真店核对可改）。
+    tts_sla_time = Column(DateTime, index=True)
+    rts_sla_time = Column(DateTime)
+    shipping_due_time = Column(DateTime)
+    collection_due_time = Column(DateTime)
+    delivery_option_name = Column(String(64))  # Economy / Standard / Express
+    is_cod = Column(Boolean, default=False)
+    total_amount = Column(Numeric(18, 4), nullable=False, default=0)
+    currency = Column(String(8))
+    item_count = Column(Integer, default=0)  # 该单 line_item 条数（每条=一件）
+    first_product_name = Column(String(500))  # 首个行项商品名，列表展示用
+    warehouse_id = Column(String(64))
+    create_time = Column(DateTime, index=True)
+    paid_time = Column(DateTime)
+    update_time = Column(DateTime)
+    raw_response_id = Column(Integer, nullable=True)
+    synced_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "platform",
+            "country",
+            "shop_id",
+            "order_id",
+            name="uq_pending_fulfillment_scope_order",
+        ),
+    )
+
+    def __repr__(self):
+        return f"<PendingFulfillment(order_id={self.order_id}, sla={self.tts_sla_time})>"
+
+
 class OrderLineItem(Base):
     """Order line-level facts (source for per-SKU units sold and single-SKU GMV).
 
