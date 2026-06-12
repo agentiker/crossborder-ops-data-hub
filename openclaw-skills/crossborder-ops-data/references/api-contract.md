@@ -35,6 +35,7 @@ All endpoints are read-only and live under `/api/data`, **except** `POST /api/da
 | `GET /api/data/orders/summary` | live | Paid-order GMV/order_count/units_sold/AOV. |
 | `GET /api/data/orders/trend` | live | Per-day paid-order GMV/order_count/units_sold; window with no orders is zero-filled. |
 | `GET /api/data/orders/top-skus` | live | Top SKUs by units within paid orders. |
+| `GET /api/data/fulfillments/pending` | live | Pending-shipment snapshot (`order_status=AWAITING_SHIPMENT`) with overdue/critical buckets + per-shop summary. **Current snapshot, no time window**. |
 | `GET /api/data/scopes` | live | List of configured business scopes (id, name, shop_ids). Used when user asks "what scopes do I have". |
 | `POST /api/data/scope/binding` | live (write) | Persist a conversation's default scope. The **only** write endpoint; called when the user switches scope via menu phrase. The default scope is then **auto-applied server-side** on every data query that carries `open_id` and no explicit `scope_id` — there is no read endpoint/tool. |
 | `GET /api/data/profit/summary` | **503 — planned** | Needs Finance/Ads/cost data sources, not connected. |
@@ -252,6 +253,62 @@ Response shape:
 - Same paid-order scope as `/orders/summary`.
 - Per-SKU GMV: sum of `line_item.sale_price` for that SKU (unit retail price, excluding shipping). This differs from the order-level total amount.
 - Ranking: by `units_sold` (line_item count) descending.
+
+## GET /api/data/fulfillments/pending
+
+Returns the current pending-shipment snapshot (`order_status=AWAITING_SHIPMENT`), classified by how close each order is to its platform ship-by deadline, plus per-shop bucket counts. **This is a live snapshot, not a historical window** — it does NOT accept `period`/`start_date`/`end_date`. Data freshness is reported via `snapshot_at`.
+
+Additional query parameters:
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `warning_hours` | integer | no | `24` | Orders whose ship-by deadline is less than this many hours away (but not yet passed) are classified `critical`. |
+| `limit` | integer | no | `200` | Max number of detail rows in `items`. **Bucket counts and `by_shop` are computed over the full set**, unaffected by `limit`. |
+
+Response shape:
+
+```json
+{
+  "items": [
+    {
+      "order_id": "576...",
+      "shop_id": "7494691994496238970",
+      "order_status": "AWAITING_SHIPMENT",
+      "delivery_option_name": "Standard",
+      "item_count": 2,
+      "first_product_name": "Blous Linen Premium Oversize",
+      "total_amount": 120000.0,
+      "currency": "IDR",
+      "is_cod": false,
+      "create_time_local": "2026-06-10T18:30:00",
+      "sla_time_local": "2026-06-12T18:30:00",
+      "hours_left": -3.2,
+      "bucket": "overdue"
+    }
+  ],
+  "buckets": {"overdue": 1, "critical": 2, "normal": 5, "unknown": 0, "total": 8},
+  "by_shop": [
+    {"shop_id": "7494691994496238970", "overdue": 1, "critical": 2, "normal": 5, "unknown": 0, "total": 8}
+  ],
+  "snapshot_at": "2026-06-12T21:45:00",
+  "warning_hours": 24,
+  "scope": "TikTok Shop / 印尼 / 1 个店铺",
+  "caliber": "待发货快照口径（order_status=AWAITING_SHIPMENT…）"
+}
+```
+
+> **`caliber` 字段**：响应自带口径文本，agent 在「📐 数据口径」段直接复述。
+
+**Methodology (must be disclosed to users):**
+
+- Source: TikTok `/order/202309/orders/search` filtered to `order_status=AWAITING_SHIPMENT`, pulled as a **full snapshot** each sync (not incremental). Rows that have left the pending state are deleted on the next snapshot, so the table always reflects the platform's current pending set (no ghost rows).
+- Buckets (compared in UTC-naive, presented in Indonesia local time UTC+7):
+  - `overdue`: ship-by deadline `< now`.
+  - `critical`: deadline within `warning_hours` (default 24) from now.
+  - `normal`: deadline ≥ `warning_hours` away.
+  - `unknown`: no deadline on the order.
+- Deadline field: the server uses `tts_sla_time` (the platform-specified latest collection time). All times in the response (`create_time_local`, `sla_time_local`, `snapshot_at`) are Indonesia local time (UTC+7). `hours_left` is hours until the deadline (negative if overdue).
+- `items` are sorted by deadline ascending (most-overdue first), with `unknown` (no deadline) last.
 
 ## GET /api/data/scopes
 

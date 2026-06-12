@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from core.db import SessionLocal
 from core.timezone import PERIOD_KEYS, business_today, describe_window, resolve_period
 from models.base_models import Inventory, Product
+from services.fulfillment_metrics import get_pending_fulfillments
 from services.order_metrics import get_gmv_summary, get_gmv_trend, get_top_skus
 from services.scope_binding import get_binding, set_binding
 from services.scope_resolution import ScopeError, ScopeFilters, list_scopes, resolve_filters
@@ -84,6 +85,12 @@ TOP_SKUS_CALIBER = (
     "已付款订单口径（统计窗口按印尼当地时间 UTC+7）；单品 GMV=该 SKU 各 line_item 的 sale_price 之和"
     "（商品行售价，不含运费）；排序按销量（line_item 条数）降序"
 )
+FULFILLMENTS_CALIBER = (
+    "待发货快照口径（order_status=AWAITING_SHIPMENT，来源 TikTok /order/202309/orders/search 全量快照，"
+    "非历史窗口、无相对时间参数）；超时(overdue)=已过平台发货截止时间(tts_sla_time)；"
+    "临界(critical)=距截止不足 warning_hours（默认 24）小时；正常(normal)=距截止仍 ≥ warning_hours；"
+    "未知(unknown)=无发货截止时间；所有时间为印尼当地时间 UTC+7；数据新鲜度见 snapshot_at"
+)
 
 
 # ── Response Models ──────────────────────────────────────────────────────────
@@ -157,6 +164,49 @@ class TopSkuResponse(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     window_label: Optional[str] = None
+    scope: Optional[str] = None
+    caliber: Optional[str] = None
+
+
+class PendingFulfillmentItem(BaseModel):
+    order_id: str
+    shop_id: Optional[str] = None
+    order_status: Optional[str] = None
+    delivery_option_name: Optional[str] = None
+    item_count: int = 0
+    first_product_name: Optional[str] = None
+    total_amount: float = 0.0
+    currency: Optional[str] = None
+    is_cod: bool = False
+    create_time_local: Optional[str] = None  # 印尼当地时间 UTC+7
+    sla_time_local: Optional[str] = None  # 发货截止时间，印尼当地 UTC+7
+    hours_left: Optional[float] = None  # 距截止小时数（已超时为负）
+    bucket: str  # overdue / critical / normal / unknown
+
+
+class FulfillmentBuckets(BaseModel):
+    overdue: int = 0
+    critical: int = 0
+    normal: int = 0
+    unknown: int = 0
+    total: int = 0
+
+
+class ShopFulfillmentBucket(BaseModel):
+    shop_id: str
+    overdue: int = 0
+    critical: int = 0
+    normal: int = 0
+    unknown: int = 0
+    total: int = 0
+
+
+class PendingFulfillmentsResponse(BaseModel):
+    items: list[PendingFulfillmentItem]
+    buckets: FulfillmentBuckets
+    by_shop: list[ShopFulfillmentBucket]
+    snapshot_at: Optional[str] = None  # 快照同步时间，印尼当地 UTC+7
+    warning_hours: int = 24
     scope: Optional[str] = None
     caliber: Optional[str] = None
 
@@ -517,6 +567,46 @@ async def get_orders_trend(
         points=[TrendPoint(**p) for p in points],
         scope=scope.display_text,
         caliber=ORDERS_CALIBER,
+    )
+
+
+@router.get(
+    "/fulfillments/pending",
+    response_model=PendingFulfillmentsResponse,
+    operation_id="ops_fulfillments_pending",
+)
+async def get_fulfillments_pending(
+    platform: Optional[str] = Query(None, description="平台标识，如 tiktok_shop / shopee"),
+    country: Optional[str] = Query(None, description="国家/地区，如 ID / GLOBAL"),
+    shop_id: Optional[str] = Query(None, description="店铺ID"),
+    scope_id: Optional[str] = Query(None, description="业务范围 scope_key（命名店铺集合）"),
+    shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
+    warning_hours: Optional[int] = Query(None, description="临界预警阈值（小时）：距发货截止不足此值记为临界，默认 24"),
+    limit: int = Query(200, description="返回明细数量上限（计数与分店汇总不受此限）"),
+    open_id: Optional[str] = Query(None, description="飞书用户 open_id（ou_xxx，用于自动应用会话默认范围）"),
+):
+    """待发货订单列表 + 超时/临界预警分桶 + 分店汇总（当前快照，无时间窗口）。
+
+    用于"现在有几单待发货 / 几单快超时 / 已超时几单 / 哪个店该发货 / 今天该发哪些单"。
+    口径（随响应 caliber 字段返回）：待发货快照（order_status=AWAITING_SHIPMENT）；
+    超时=已过平台发货截止时间(tts_sla_time)，临界=距截止不足 warning_hours（默认 24）小时；
+    所有时间为印尼当地时间 UTC+7，数据新鲜度见 snapshot_at。**这是当前快照，不接受相对时间参数**。
+    """
+    scope = _resolve_scope(
+        scope_id=scope_id, platform=platform, country=country,
+        shop_id=shop_id, shop_ids=shop_ids, open_id=open_id,
+    )
+    data = get_pending_fulfillments(
+        platform=scope.platform,
+        country=scope.country,
+        shop_ids=scope.shop_ids,
+        warning_hours=warning_hours,
+        limit=limit,
+    )
+    return PendingFulfillmentsResponse(
+        **data,
+        scope=scope.display_text,
+        caliber=FULFILLMENTS_CALIBER,
     )
 
 

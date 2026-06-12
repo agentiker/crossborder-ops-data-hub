@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     # 订单 paid_time 存 naive UTC，GMV/趋势/单品按此偏移归到当地"自然日"。
     # 多店未来若跨时区，应改为按 shop 所在国时区，本期单店固定印尼。
     business_tz_offset_hours: int = 7
+    # 待发货超时预警阈值（小时）：距平台发货截止不足此值记为"临界"。
+    # 可经 .env 的 FULFILLMENT_WARNING_HOURS 覆盖。
+    fulfillment_warning_hours: int = 24
 
     class Config:
         env_file = ".env"

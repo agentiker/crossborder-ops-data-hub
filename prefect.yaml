@@ -12,6 +12,11 @@ deployments:
     schedule:
       interval: 3600  # 每小时
 
+  - name: tiktok-fulfillment-sync
+    entrypoint: flows/sync_fulfillments.py:sync_fulfillments_flow
+    schedule:
+      interval: 900  # 每 15 分钟（发货预警类，比库存/订单更密）
+
   - name: refresh-tiktok-tokens
     entrypoint: flows/refresh_tokens.py:refresh_tokens_flow
     schedule:

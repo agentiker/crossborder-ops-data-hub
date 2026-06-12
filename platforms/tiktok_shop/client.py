@@ -155,7 +155,12 @@ class TikTokShopClient(BaseAPIClient):
                 record.refresh_token = self.refresh_token
                 record.token_expire_at = expire_dt
                 record.refresh_token_expire_at = refresh_expire_dt
-                record.shop_cipher = self.shop_cipher
+                # 仅在本次确实拿到 shop_cipher 时才覆盖：token 刷新接口
+                # (/api/v2/token/refresh) 的响应不含 shop_cipher，若无条件写回会把
+                # DB 里的旧 cipher 抹成 None，导致后续 orders/products search 报
+                # 400 106013 Missing shop_cipher。空值时保留旧 cipher。
+                if self.shop_cipher:
+                    record.shop_cipher = self.shop_cipher
                 record.token_payload = token_payload
                 # token 响应中可能含 shop_id/seller_id，顺手回填
                 if self.shop_id and not record.shop_id:

@@ -82,6 +82,31 @@ def test_to_domain_orders_skips_bad_record_without_aborting(capsys):
     assert "订单校验失败" in capsys.readouterr().out
 
 
+def test_to_domain_orders_maps_sla_fields():
+    """发货时效 SLA：Unix 秒 → naive UTC；0/None → None；delivery_option_name 透传。"""
+    pages = [{"orders": [{
+        "id": "o1", "status": "AWAITING_SHIPMENT",
+        "tts_sla_time": PAID_EPOCH, "rts_sla_time": PAID_EPOCH,
+        "shipping_due_time": 0, "collection_due_time": None,
+        "delivery_option_name": "Standard",
+        "line_items": [],
+    }]}]
+    order = nz.to_domain_orders(pages)[0]
+    assert order.tts_sla_time == datetime(2024, 6, 1, 12, 17, 0)  # Unix 秒 → naive UTC
+    assert order.rts_sla_time == datetime(2024, 6, 1, 12, 17, 0)
+    assert order.shipping_due_time is None   # 0 → None（sentinel）
+    assert order.collection_due_time is None  # None → None
+    assert order.delivery_option_name == "Standard"
+
+
+def test_to_domain_orders_without_sla_fields_defaults_none():
+    """不带 SLA 字段的订单（GMV 流程）应正常解析，SLA 全为 None（向后兼容）。"""
+    pages = _order_page([{"id": "l1", "sku_id": "s1", "sale_price": "100"}])
+    order = nz.to_domain_orders(pages)[0]
+    assert order.tts_sla_time is None
+    assert order.delivery_option_name is None
+
+
 # ── 库存：嵌套展平两分支 + product_titles 回填 ────────────────────────────────
 
 def test_to_domain_inventory_flattens_warehouses():
