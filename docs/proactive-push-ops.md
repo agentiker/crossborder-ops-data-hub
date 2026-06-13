@@ -190,7 +190,8 @@ ssh hp 'cd ~/code/crossborder-ops-data-hub && git pull && ./scripts/sync-skill.s
 
 ## D. 已知坑（实测）
 
-- **`OPENCLAW_BIN` 绝对路径**：systemd service PATH 无 nvm，不给绝对路径 `message send` 调不到 openclaw。
+- **`OPENCLAW_BIN` 绝对路径**：systemd service PATH 无 nvm，flow/脚本调 openclaw 要用绝对路径（deploy.sh 自动写进 `.env`）。
+- **openclaw 调用要补 PATH**：openclaw 是 node CLI、内部还要调 `node`，而 systemd service 的 PATH 不含 nvm 目录——所以调 openclaw 前必须把它所在目录（同目录就有 `node`）加进 PATH，否则 `message send` 在 service 里失败（手动 shell 因 source 过 nvm 才成功，极易误判"通了"）。已在 `flows/scan_fulfillment_alerts.py` 的 `send_feishu_message` 和 `deploy/notify-failure.sh` 内处理。
 - **hp 用 systemd timer，不是 Prefect worker**：`prefect.yaml` 里的 deployments 仅文档性，没有 worker 在跑。新增定时任务要写 systemd unit（照 `data-sync-*` / `data-scan-alerts`），不是 `prefect deploy`。
 - **`openclaw cron` 必经 LLM**：payload 只有 `--message`/`--system-event`，没有纯命令/HTTP 直投 job。要 0-LLM 投递只能走 `openclaw message send`。
 - **`plugins.entries.feishu: plugin not installed`** 是无关的既有 warning（feishu 走 extension 不是 plugin），忽略。
