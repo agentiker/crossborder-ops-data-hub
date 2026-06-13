@@ -13,7 +13,7 @@ from analytics.profit_alerts import (
     build_profit_scope_key,
     calculate_gross_profit,
 )
-from models.base_models import Alert, DailyProfit
+from models.base_models import Alert, DailyProfit, FulfillmentAlertState
 
 
 def upsert_daily_profit(session, record: ProfitRecordInput) -> DailyProfit:
@@ -111,3 +111,62 @@ def _jsonable_decimal(value):
     if isinstance(value, Decimal):
         return str(value)
     return value
+
+
+def build_alert_state_key(
+    *, alert_type: str, account_id: Optional[str], scope_key: Optional[str]
+) -> str:
+    """去重状态主键：alert_type|account_id|scope_key（scope_key 空串=全量范围）。"""
+    return f"{alert_type}|{account_id or ''}|{scope_key or ''}"
+
+
+def get_fulfillment_alert_state(
+    session, *, alert_type: str, account_id: Optional[str], scope_key: Optional[str]
+) -> Optional[FulfillmentAlertState]:
+    """读某收件人范围的去重状态；无则返回 None（调用方按 last_reported_overdue=0 处理）。"""
+    state_key = build_alert_state_key(
+        alert_type=alert_type, account_id=account_id, scope_key=scope_key
+    )
+    return (
+        session.query(FulfillmentAlertState).filter_by(state_key=state_key).first()
+    )
+
+
+def upsert_fulfillment_alert_state(
+    session,
+    *,
+    alert_type: str,
+    account_id: Optional[str],
+    scope_key: Optional[str],
+    last_reported_overdue: int,
+    last_critical: int = 0,
+    mark_sent: bool = False,
+) -> FulfillmentAlertState:
+    """写回去重游标。mark_sent=True 时刷新 last_sent_at（仅在真正推送后置位）。"""
+    from datetime import datetime, timezone
+
+    state_key = build_alert_state_key(
+        alert_type=alert_type, account_id=account_id, scope_key=scope_key
+    )
+    existing = (
+        session.query(FulfillmentAlertState).filter_by(state_key=state_key).first()
+    )
+    values = {
+        "state_key": state_key,
+        "alert_type": alert_type,
+        "account_id": account_id,
+        "scope_key": scope_key,
+        "last_reported_overdue": last_reported_overdue,
+        "last_critical": last_critical,
+    }
+    if mark_sent:
+        values["last_sent_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
+    if existing:
+        for key, value in values.items():
+            setattr(existing, key, value)
+        result = existing
+    else:
+        result = FulfillmentAlertState(**values)
+        session.add(result)
+    session.flush()
+    return result

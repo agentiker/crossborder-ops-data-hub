@@ -21,3 +21,8 @@ deployments:
     entrypoint: flows/refresh_tokens.py:refresh_tokens_flow
     schedule:
       interval: 21600  # 每 6 小时
+
+  - name: scan-fulfillment-alerts
+    entrypoint: flows/scan_fulfillment_alerts.py:scan_fulfillment_alerts_flow
+    schedule:
+      interval: 1800  # 每 30 分钟巡检待发货超时（夜间静默由 flow 内判断跳过）

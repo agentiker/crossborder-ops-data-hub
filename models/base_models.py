@@ -418,3 +418,31 @@ class OrderLineItem(Base):
 
     def __repr__(self):
         return f"<OrderLineItem(line_item_id={self.line_item_id}, sku_id={self.sku_id})>"
+
+
+class FulfillmentAlertState(Base):
+    """待发货超时告警的去重状态（每「收件人 × 范围」一行，记上次已上报的超时单数）。
+
+    监控巡检高频跑（默认每 30 分钟），但只在「超时单数较上次上报增加 / 从 0 变非 0」时才推送，
+    避免同一批超时单反复刷屏（去重判定见 services/fulfillment_alerts.build_decision）。
+    state_key = alert_type|account_id|scope_key（scope_key 空串=全量范围），一行一收件人范围。
+    与 fact_alerts(Alert) 解耦：Alert 是「业务事实」沉淀，本表只是推送去重的轻量游标。
+    """
+
+    __tablename__ = "fulfillment_alert_state"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    state_key = Column(String(300), nullable=False, unique=True, index=True)
+    alert_type = Column(String(64), nullable=False, default="fulfillment_overdue", index=True)
+    account_id = Column(String(64), index=True)  # ecom-app / ecom-app-gtl
+    scope_key = Column(String(64), nullable=True)  # None/空 = 全量范围
+    last_reported_overdue = Column(Integer, nullable=False, default=0)  # 上次已推送的超时单数
+    last_critical = Column(Integer, nullable=False, default=0)  # 上次推送时的临界单数（仅记录）
+    last_sent_at = Column(DateTime)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return (
+            f"<FulfillmentAlertState(state_key={self.state_key}, "
+            f"last_reported_overdue={self.last_reported_overdue})>"
+        )

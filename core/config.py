@@ -43,6 +43,14 @@ class Settings(BaseSettings):
     # 待发货超时预警阈值（小时）：距平台发货截止不足此值记为"临界"。
     # 可经 .env 的 FULFILLMENT_WARNING_HOURS 覆盖。
     fulfillment_warning_hours: int = 24
+    # 告警静默时段（监控巡检在此窗口内不推送，避免夜间打扰）。按 alert_quiet_tz 解读。
+    # 跨午夜：start > end 时表示 [start, 次日 end) 为静默（如 23:00~次日 08:30）。
+    alert_quiet_start: str = "23:00"
+    alert_quiet_end: str = "08:30"
+    alert_quiet_tz: str = "Asia/Shanghai"
+    # openclaw CLI 可执行文件（监控用它直投飞书，0 经 LLM）。生产环境用绝对路径覆盖，
+    # 避免 flow 进程 PATH 找不到 nvm node 下的 openclaw（见 plan「部署注意」）。
+    openclaw_bin: str = "openclaw"
 
     class Config:
         env_file = ".env"

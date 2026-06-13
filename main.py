@@ -32,7 +32,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="跨境电商运营数据中台")
     parser.add_argument(
         "--task",
-        choices=["inventory", "web"],
+        choices=["inventory", "web", "alert-scan"],
         default="inventory",
         help="指定要运行的任务"
     )
@@ -56,5 +56,8 @@ if __name__ == "__main__":
 
     if args.task == "web":
         start_web(host=args.host, port=args.port, reload=not args.no_reload)
+    elif args.task == "alert-scan":
+        from flows.scan_fulfillment_alerts import scan_fulfillment_alerts_flow
+        scan_fulfillment_alerts_flow()
     else:
         run_direct()
