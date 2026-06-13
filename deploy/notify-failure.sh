@@ -21,6 +21,10 @@ OPENCLAW="${OPENCLAW_BIN:-}"
 [ -z "$OPENCLAW" ] && OPENCLAW="$(ls "$HOME"/.nvm/versions/node/*/bin/openclaw 2>/dev/null | head -1 || true)"
 [ -z "$OPENCLAW" ] && { echo "notify-failure: 找不到 openclaw，跳过告警" >&2; exit 0; }
 
+# openclaw 是 node CLI，内部会调 `node`；systemd service PATH 不含 nvm 目录，
+# 把 openclaw 所在目录（同目录就有 node）加进 PATH，否则 message send 失败。
+export PATH="$(dirname "$OPENCLAW"):${PATH:-/usr/bin:/bin}"
+
 LOG="$(journalctl --user -u "$UNIT" -n 12 --no-pager 2>/dev/null | tail -12)"
 [ -z "$LOG" ] && LOG="(无日志)"
 
