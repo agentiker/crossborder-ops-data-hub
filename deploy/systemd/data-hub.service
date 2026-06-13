@@ -9,6 +9,9 @@ WorkingDirectory=%h/code/crossborder-ops-data-hub
 Environment="NO_PROXY=localhost,127.0.0.1,::1,192.168.1.0/24"
 Environment="PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ExecStart=%h/.local/bin/uv run python main.py --task web --no-reload
+# SIGTERM(143) 是正常停止/重启的退出码：常驻服务每次 restart 都以 143 退出，
+# 不加这条会被判 failed → 误触 OnFailure 发飞书假告警。真崩溃(其他码)仍会告警。
+SuccessExitStatus=143 SIGTERM
 Restart=on-failure
 RestartSec=5
 
