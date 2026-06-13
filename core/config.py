@@ -30,11 +30,23 @@ class APIConfig(BaseModel):
     internal_token: str = ""  # skill 调用 /api/data 时需在 X-Internal-Token 头携带
 
 
+class DashboardConfig(BaseModel):
+    """飞书内嵌 H5 看板配置（路线 A：签名链接 + cloudflared 临时隧道）。
+
+    看板靠 HMAC 签名 token 承担鉴权（不碰飞书 OAuth/JSSDK）：bot 发带 token 的链接，
+    本服务验签拿 open_id，再按 open_id 的 binding scope 强制软隔离。详见 plan/13。
+    """
+    link_secret: str = ""  # HMAC-SHA256 签名密钥；未配置时拒签 token、验签一律失败
+    public_base_url: str = ""  # 隧道公网根地址（如 https://xxx.trycloudflare.com）；签发链接用
+    token_ttl_seconds: int = 1800  # token 默认有效期（30 分钟）
+
+
 class Settings(BaseSettings):
     """全局配置"""
     db: DatabaseConfig = DatabaseConfig()
     tiktok: TikTokConfig
     api: APIConfig = APIConfig()
+    dashboard: DashboardConfig = DashboardConfig()
     scheduler_interval_minutes: int = 60
     # 业务归日时区偏移（小时）。印尼 WIB 固定 UTC+7（无夏令时）。
     # 订单 paid_time 存 naive UTC，GMV/趋势/单品按此偏移归到当地"自然日"。

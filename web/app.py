@@ -4,6 +4,7 @@ from fastapi import Depends, FastAPI
 from fastapi_mcp import FastApiMCP
 
 from web.routes.auth import router as auth_router
+from web.routes.dashboard import router as dashboard_router
 from web.routes.data import router as data_router
 from web.security import require_internal_token
 
@@ -14,6 +15,8 @@ app = FastAPI(
 )
 
 app.include_router(auth_router, prefix="/auth", tags=["认证"])
+# 看板 demo：仅本机预览，不带 internal token（靠 127.0.0.1 绑定保护），不纳入 OpenAPI/MCP
+app.include_router(dashboard_router, tags=["看板"])
 app.include_router(
     data_router,
     prefix="/api/data",
@@ -36,7 +39,7 @@ async def health():
 # fastapi-mcp 用 ASGITransport 进程内调用底层路由（无额外 HTTP 跳），并复用
 # /api/data 的 require_internal_token 依赖。openclaw 在 MCP 请求头携带
 # X-Internal-Token，经 headers 白名单转发到底层依赖完成鉴权。
-# include_operations 白名单仅暴露 10 个 ops_* live 工具；profit/alerts（503）不暴露。
+# include_operations 白名单仅暴露 ops_* live 工具；profit/alerts（503）不暴露。
 # scope binding 只暴露写工具 ops_set_scope_binding；读由数据端点服务端自动注入，不再单列 GET 工具。
 mcp = FastApiMCP(
     app,
@@ -52,6 +55,7 @@ mcp = FastApiMCP(
         "ops_fulfillments_pending",
         "ops_scopes",
         "ops_set_scope_binding",
+        "ops_dashboard_link",
     ],
     headers=["x-internal-token"],
 )

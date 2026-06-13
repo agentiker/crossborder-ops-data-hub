@@ -7,6 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 
+from core.config import settings
 from core.db import SessionLocal
 from core.timezone import PERIOD_KEYS, business_today, describe_window, resolve_period
 from models.base_models import Inventory, Product
@@ -15,6 +16,7 @@ from services.order_metrics import get_gmv_summary, get_gmv_trend, get_top_skus
 from services.scope_binding import get_binding, set_binding
 from services.scope_resolution import ScopeError, ScopeFilters, list_scopes, resolve_filters
 from services.stock_metrics import get_stock_risk
+from web.signed_link import make_token
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -247,6 +249,11 @@ class ScopeBindingResponse(BaseModel):
     scope_key: Optional[str] = None  # None = 显式全量 / 未设置
     scope: Optional[str] = None  # display_text，如 "TikTok Shop / 印尼 / 1 个店铺"
     is_set: bool
+
+
+class DashboardLinkResponse(BaseModel):
+    url: str  # 完整看板链接（public_base_url + /dashboard?t=<token>）
+    expires_in: int  # token 有效期（秒）
 
 
 class SetScopeBindingRequest(BaseModel):
@@ -760,4 +767,29 @@ async def set_scope_binding(body: SetScopeBindingRequest):
     except ScopeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return ScopeBindingResponse(open_id=body.open_id, **data)
+
+
+@router.get(
+    "/dashboard/link", response_model=DashboardLinkResponse, operation_id="ops_dashboard_link"
+)
+async def get_dashboard_link(
+    open_id: str = Query(..., description="飞书用户 open_id（ou_xxx），看板范围按此账号锁定"),
+):
+    """签发一条带签名 token 的看板链接，用户点开即看自己范围内的运营看板。
+
+    用户问「看板 / 数据大盘 / 趋势图」时调用，把返回的 url 原样发给用户。看板范围由 open_id
+    的会话默认范围（binding）锁定，token 短时效（默认 30 分钟）后失效，需重新获取。
+    """
+    base = settings.dashboard.public_base_url
+    if not base:
+        raise HTTPException(status_code=503, detail="DASHBOARD__PUBLIC_BASE_URL 未配置")
+    ttl = settings.dashboard.token_ttl_seconds
+    try:
+        token = make_token(open_id, ttl=ttl)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    url = base.rstrip("/") + "/dashboard?t=" + token
+    # 审计日志：弱模型理论上可能把 A 的链接签给 B（软隔离根本局限），靠短时效 + 此日志缓解。
+    logger.info("dashboard link issued: open_id=%s ttl=%ss", open_id, ttl)
+    return DashboardLinkResponse(url=url, expires_in=ttl)
 
