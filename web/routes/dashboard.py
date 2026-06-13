@@ -15,7 +15,7 @@ get_low_stock），所有参数显式传齐，避免 FastAPI 的 Query(None) 默
 import json
 
 from fastapi import APIRouter, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from web.routes.data import (
     get_low_stock,
@@ -28,17 +28,12 @@ from web.signed_link import verify_token
 router = APIRouter()
 
 
-@router.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
-async def dashboard(
-    t: str = Query("", description="签名 token（含 open_id + 过期）"),
-    period: str = Query("last_30d", description="趋势/榜单时间窗口"),
-):
-    open_id = verify_token(t)
-    if not open_id:
-        return HTMLResponse(_render_error(), status_code=401)
+async def _collect(open_id: str, period: str) -> dict:
+    """按 open_id 的 binding scope 取看板四块数据，组装成前端用的 dict。
 
-    # 强制软隔离：scope_id/shop_ids/shop_id 一律钉 None，只按 token 里的 open_id 解析范围。
-    # 服务端取数：显式传齐每个参数，绝不让 Query 默认值生效。
+    强制软隔离：scope_id/shop_ids/shop_id 一律钉 None，只按 token 里的 open_id 解析范围。
+    服务端取数显式传齐每个参数，绝不让 FastAPI 的 Query(None) 默认值泄漏成 Query 对象。
+    """
     overview = await get_overview(
         platform=None, country=None, shop_id=None,
         scope_id=None, shop_ids=None, open_id=open_id,
@@ -61,7 +56,7 @@ async def dashboard(
 
     # 路由函数返回类型不一：overview 是 dict，其余是 Pydantic 模型——统一成 dict
     overview = _asdict(overview)
-    data = {
+    return {
         "scope": overview.get("scope") or "全部范围",
         "period": period,
         "overview": overview,
@@ -69,7 +64,34 @@ async def dashboard(
         "top": _asdict(top),
         "low": _asdict(low),
     }
+
+
+@router.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
+async def dashboard(
+    t: str = Query("", description="签名 token（含 open_id + 过期）"),
+    period: str = Query("last_30d", description="趋势/榜单时间窗口"),
+):
+    open_id = verify_token(t)
+    if not open_id:
+        return HTMLResponse(_render_error(), status_code=401)
+    data = await _collect(open_id, period)
     return HTMLResponse(_render(data))
+
+
+@router.get("/dashboard/data", include_in_schema=False)
+async def dashboard_data(
+    t: str = Query("", description="签名 token（含 open_id + 过期）"),
+    period: str = Query("last_30d", description="趋势/榜单时间窗口"),
+):
+    """日期切换用的 JSON 端点：前端 AJAX 拉新 period 数据、局部重绘，避免整页跳转。
+
+    同样验签 + 强制隔离（只认 token 里的 open_id，忽略 URL 其它参数）。验签失败 → 401 JSON。
+    """
+    open_id = verify_token(t)
+    if not open_id:
+        return JSONResponse({"error": "invalid_token"}, status_code=401)
+    data = await _collect(open_id, period)
+    return JSONResponse(data)
 
 
 def _asdict(obj):
@@ -135,6 +157,7 @@ _PAGE = r"""<!DOCTYPE html>
   .controls a { color:var(--sub); text-decoration:none; padding:5px 12px; border-radius:16px;
                 border:1px solid var(--line); font-size:12px; }
   .controls a.on { color:#fff; background:var(--accent); border-color:var(--accent); }
+  .controls.loading { opacity:.5; pointer-events:none; }
   .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
   .kpi { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; }
   .kpi .label { color:var(--sub); font-size:12px; }
@@ -189,7 +212,8 @@ _PAGE = r"""<!DOCTYPE html>
 </div>
 
 <script>
-const D = __DATA__;
+const BOOT = __DATA__;
+const TOKEN = new URLSearchParams(location.search).get('t') || '';
 const fmtInt = n => (n==null?'—':Number(n).toLocaleString('en-US'));
 const fmtMoney = n => (n==null?'—':Number(n).toLocaleString('en-US',{maximumFractionDigits:0}));
 const PERIODS = [
@@ -197,90 +221,121 @@ const PERIODS = [
   ['last_7d','近7天'],['last_30d','近30天'],['this_month','本月'],
 ];
 
-// 范围 + 窗口
-document.getElementById('scope').textContent = '· ' + (D.scope||'');
-const tw = D.trend.window_label || (D.trend.start_date+' ~ '+D.trend.end_date);
-document.getElementById('window').textContent = tw;
-document.getElementById('cap-trend').textContent = tw;
-
-// period 切换条（整体复制现有 query，t 自动随之保留）
-const qs = new URLSearchParams(location.search);
-const pbox = document.getElementById('periods');
-PERIODS.forEach(([key,label])=>{
-  const a = document.createElement('a');
-  a.textContent = label;
-  const q = new URLSearchParams(qs); q.set('period',key);
-  a.href = '?'+q.toString();
-  if ((qs.get('period')||'last_30d')===key) a.className='on';
-  pbox.appendChild(a);
-});
-
-// KPI
-const o = D.overview.orders, inv = D.overview.inventory;
-document.getElementById('k-gmv').textContent = fmtMoney(o.gmv);
-document.getElementById('k-aov').textContent = '客单价 ' + fmtMoney(o.avg_order_value);
-document.getElementById('k-orders').textContent = fmtInt(o.order_count);
-document.getElementById('k-units').textContent = fmtInt(o.units_sold);
-document.getElementById('k-sku').textContent = fmtInt(inv.total_sku);
-document.getElementById('k-stock').textContent = '总库存 '+fmtInt(inv.total_stock)+' · 低库存 '+fmtInt(inv.low_stock_count);
-
 const GRID = '#272b38', SUB = '#8a90a2';
 Chart.defaults.color = SUB;
 Chart.defaults.borderColor = GRID;
 Chart.defaults.font.family = "-apple-system,'PingFang SC',sans-serif";
 
-const pts = D.trend.points || [];
-const labels = pts.map(p=>p.date.slice(5));
+const charts = {};        // 复用 canvas 上的图表实例，切日期时只重绘、不整页重载
+const pbox = document.getElementById('periods');
+let busy = false;
 
-// GMV 趋势
-new Chart(document.getElementById('c-gmv'), {
-  type:'line',
-  data:{ labels, datasets:[{ label:'GMV', data:pts.map(p=>p.gmv),
-    borderColor:'#5b8cff', backgroundColor:'rgba(91,140,255,.12)', fill:true, tension:.3, pointRadius:2 }] },
-  options:{ plugins:{legend:{display:false}}, scales:{ y:{beginAtZero:true} } }
-});
-
-// 订单 / 销量
-new Chart(document.getElementById('c-orders'), {
-  type:'line',
-  data:{ labels, datasets:[
-    { label:'订单数', data:pts.map(p=>p.order_count), borderColor:'#3ecf8e', tension:.3, pointRadius:2 },
-    { label:'销量', data:pts.map(p=>p.units_sold), borderColor:'#f5a623', tension:.3, pointRadius:2 },
-  ]},
-  options:{ scales:{ y:{beginAtZero:true} } }
-});
-
-// 爆款榜
-const items = (D.top.items||[]).slice(0,10);
-new Chart(document.getElementById('c-top'), {
-  type:'bar',
-  data:{ labels: items.map(i=> (i.product_name||i.sku_name||i.sku_id||'?').slice(0,18)),
-    datasets:[{ label:'销量', data:items.map(i=>i.units_sold),
-      backgroundColor:'#5b8cff', borderRadius:4 }] },
-  options:{ indexAxis:'y', plugins:{legend:{display:false}}, scales:{ x:{beginAtZero:true} } }
-});
-
-// 断货风险表
-const low = D.low.items||[];
-const cap = document.getElementById('cap-low');
-cap.textContent = '断货 '+(D.low.buckets.stockout||0)+' · 告急 '+(D.low.buckets.critical||0)+' · 预警 '+(D.low.buckets.warning||0)
-  + ' · 可售天数 = 可用库存 ÷ 日均销速';
-const wrap = document.getElementById('low-wrap');
-const BLABEL = {stockout:'断货', critical:'告急', warning:'预警'};
-if (!low.length) {
-  wrap.innerHTML = '<div class="empty">暂无断货风险 SKU</div>';
-} else {
-  let html = '<table><thead><tr><th>商品</th><th>风险</th><th class="num">可用库存</th><th class="num">日均销速</th><th class="num">可售天数</th></tr></thead><tbody>';
-  low.slice(0,20).forEach(it=>{
-    html += '<tr><td>'+(it.product_name||it.sku_id)+'</td>'
-      + '<td><span class="pill '+it.bucket+'">'+(BLABEL[it.bucket]||it.bucket)+'</span></td>'
-      + '<td class="num">'+fmtInt(it.available_stock)+'</td>'
-      + '<td class="num">'+Number(it.daily_velocity).toFixed(1)+'</td>'
-      + '<td class="num">'+Number(it.days_of_cover).toFixed(1)+'</td></tr>';
+// 日期切换条：点击走 AJAX（不再 <a href> 整页跳转 → 不堆历史记录、不重下 Chart.js CDN）
+function buildPeriods(active){
+  pbox.innerHTML = '';
+  PERIODS.forEach(([key,label])=>{
+    const a = document.createElement('a');
+    a.textContent = label; a.href = '#';
+    if (key===active) a.className = 'on';
+    a.addEventListener('click', e=>{ e.preventDefault(); load(key); });
+    pbox.appendChild(a);
   });
-  html += '</tbody></table>';
-  wrap.innerHTML = html;
 }
+
+async function load(period){
+  if (busy) return;
+  busy = true; pbox.classList.add('loading');
+  try {
+    const r = await fetch('/dashboard/data?t='+encodeURIComponent(TOKEN)+'&period='+encodeURIComponent(period));
+    if (!r.ok){ if (r.status===401) location.reload(); return; }   // token 过期 → 退回错误页
+    render(await r.json());
+    // 原地更新 URL（同步 period，不新增历史记录 → 返回时无需关一堆页面）
+    const q = new URLSearchParams(location.search); q.set('period', period);
+    history.replaceState(null, '', '?'+q.toString());
+  } catch(e){ /* 网络抖动：静默，保留当前视图 */ }
+  finally { busy = false; pbox.classList.remove('loading'); }
+}
+
+function drawChart(id, cfg){
+  if (charts[id]) charts[id].destroy();                          // 同一 canvas 不能并存两个实例
+  cfg.options = Object.assign({animation:false}, cfg.options);   // 关动画，切换瞬时
+  charts[id] = new Chart(document.getElementById(id), cfg);
+}
+
+function render(D){
+  // 范围 + 窗口
+  document.getElementById('scope').textContent = '· ' + (D.scope||'');
+  const tw = D.trend.window_label || (D.trend.start_date+' ~ '+D.trend.end_date);
+  document.getElementById('window').textContent = tw;
+  document.getElementById('cap-trend').textContent = tw;
+
+  buildPeriods(D.period);   // 重建切换条并高亮当前
+
+  // KPI
+  const o = D.overview.orders, inv = D.overview.inventory;
+  document.getElementById('k-gmv').textContent = fmtMoney(o.gmv);
+  document.getElementById('k-aov').textContent = '客单价 ' + fmtMoney(o.avg_order_value);
+  document.getElementById('k-orders').textContent = fmtInt(o.order_count);
+  document.getElementById('k-units').textContent = fmtInt(o.units_sold);
+  document.getElementById('k-sku').textContent = fmtInt(inv.total_sku);
+  document.getElementById('k-stock').textContent = '总库存 '+fmtInt(inv.total_stock)+' · 低库存 '+fmtInt(inv.low_stock_count);
+
+  const pts = D.trend.points || [];
+  const labels = pts.map(p=>p.date.slice(5));
+
+  // GMV 趋势
+  drawChart('c-gmv', {
+    type:'line',
+    data:{ labels, datasets:[{ label:'GMV', data:pts.map(p=>p.gmv),
+      borderColor:'#5b8cff', backgroundColor:'rgba(91,140,255,.12)', fill:true, tension:.3, pointRadius:2 }] },
+    options:{ plugins:{legend:{display:false}}, scales:{ y:{beginAtZero:true} } }
+  });
+
+  // 订单 / 销量
+  drawChart('c-orders', {
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'订单数', data:pts.map(p=>p.order_count), borderColor:'#3ecf8e', tension:.3, pointRadius:2 },
+      { label:'销量', data:pts.map(p=>p.units_sold), borderColor:'#f5a623', tension:.3, pointRadius:2 },
+    ]},
+    options:{ scales:{ y:{beginAtZero:true} } }
+  });
+
+  // 爆款榜
+  const items = (D.top.items||[]).slice(0,10);
+  drawChart('c-top', {
+    type:'bar',
+    data:{ labels: items.map(i=> (i.product_name||i.sku_name||i.sku_id||'?').slice(0,18)),
+      datasets:[{ label:'销量', data:items.map(i=>i.units_sold),
+        backgroundColor:'#5b8cff', borderRadius:4 }] },
+    options:{ indexAxis:'y', plugins:{legend:{display:false}}, scales:{ x:{beginAtZero:true} } }
+  });
+
+  // 断货风险表
+  const low = D.low.items||[];
+  document.getElementById('cap-low').textContent =
+    '断货 '+(D.low.buckets.stockout||0)+' · 告急 '+(D.low.buckets.critical||0)+' · 预警 '+(D.low.buckets.warning||0)
+    + ' · 可售天数 = 可用库存 ÷ 日均销速';
+  const wrap = document.getElementById('low-wrap');
+  const BLABEL = {stockout:'断货', critical:'告急', warning:'预警'};
+  if (!low.length) {
+    wrap.innerHTML = '<div class="empty">暂无断货风险 SKU</div>';
+  } else {
+    let html = '<table><thead><tr><th>商品</th><th>风险</th><th class="num">可用库存</th><th class="num">日均销速</th><th class="num">可售天数</th></tr></thead><tbody>';
+    low.slice(0,20).forEach(it=>{
+      html += '<tr><td>'+(it.product_name||it.sku_id)+'</td>'
+        + '<td><span class="pill '+it.bucket+'">'+(BLABEL[it.bucket]||it.bucket)+'</span></td>'
+        + '<td class="num">'+fmtInt(it.available_stock)+'</td>'
+        + '<td class="num">'+Number(it.daily_velocity).toFixed(1)+'</td>'
+        + '<td class="num">'+Number(it.days_of_cover).toFixed(1)+'</td></tr>';
+    });
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+  }
+}
+
+// 首屏：用内嵌数据直接渲染（无需二次请求）
+render(BOOT);
 </script>
 </body>
 </html>"""
