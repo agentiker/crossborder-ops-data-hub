@@ -156,12 +156,14 @@ prefect server start
 uv run python main.py
 ```
 
-**生产部署（定时调度）：**
+**生产部署（定时调度）：** 用 **systemd user timer**，不用 Prefect server。
 
 ```bash
-prefect deploy --all                       # 部署所有任务
-prefect deploy --name tiktok-inventory-sync  # 部署单个任务
+./deploy/deploy.sh --pull     # 拉代码 + uv sync + 建表 + 装/启用所有 systemd timer
 ```
+
+> 详见「服务器定时任务运维」节与 [docs/proactive-push-ops.md](docs/proactive-push-ops.md)。
+> ⚠️ `prefect deploy` **不是**当前生产路径（没有 worker 在跑，会空转）——`@flow`/`@task` 只作编程模型用。
 
 ## 服务器定时任务运维（测试服务器 yamk）
 
@@ -307,6 +309,8 @@ uvicorn web.app:app --host 0.0.0.0 --port 8000
 
 ## Prefect Web UI 功能
 
+> ⚠️ **当前生产未运行 Prefect server**，本节仅未来迁移到 Prefect 时参考。现状调度见「服务器定时任务运维」。
+
 启动 `prefect server start` 后访问 `http://127.0.0.1:4200`：
 
 - 任务运行历史查看
@@ -331,6 +335,8 @@ def get_orders(self, start_time: int, end_time: int) -> dict:
 ```
 
 ### 新增同步任务
+
+> ⚠️ **当前生产用 systemd timer**：新增定时任务 = ① `flows/` 写 flow（`@flow` + `if __name__=="__main__"` 入口）② `deploy/systemd/` 加一对 `.service`/`.timer`（照现有的；service 记得加 `OnFailure=data-onfailure@%n.service`）③ 跑 `deploy/deploy.sh` 自动安装启用。下面的 Prefect 写法仅未来迁移时用。
 
 **第一步**：在 `flows/` 下新建 Flow 文件
 

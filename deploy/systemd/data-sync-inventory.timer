@@ -1,0 +1,7 @@
+[Unit]
+Description=每小时跑 TikTok 库存同步
+[Timer]
+OnCalendar=*-*-* *:17:00
+Persistent=true
+[Install]
+WantedBy=timers.target

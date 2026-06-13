@@ -1,0 +1,16 @@
+[Unit]
+Description=Crossborder Ops Data Hub (FastAPI web)
+After=network.target
+OnFailure=data-onfailure@%n.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/code/crossborder-ops-data-hub
+Environment="NO_PROXY=localhost,127.0.0.1,::1,192.168.1.0/24"
+Environment="PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=%h/.local/bin/uv run python main.py --task web --no-reload
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

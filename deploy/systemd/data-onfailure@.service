@@ -1,0 +1,11 @@
+# 模板 unit：任一定时任务失败时（OnFailure=data-onfailure@%n.service）触发，
+# 把失败 unit 名 + 最近日志发飞书给运维。%i = 触发的 unit 全名（如 data-sync-orders.service）。
+# 不 enable，由各任务 service 的 OnFailure= 自动拉起。
+[Unit]
+Description=定时任务失败飞书告警 (%i)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/code/crossborder-ops-data-hub
+ExecStart=%h/code/crossborder-ops-data-hub/deploy/notify-failure.sh %i
+TimeoutStartSec=120

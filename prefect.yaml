@@ -1,5 +1,10 @@
+# ⚠️ 当前生产**不用** Prefect server/worker 调度。
+# 实际调度走 systemd user timer：deploy/systemd/ + deploy/deploy.sh（见 docs/proactive-push-ops.md）。
+# 本文件仅：① 描述各 flow 的预期周期（文档性）；② 未来若迁 Prefect 时复用。
+# `prefect deploy --all` 不是当前生产路径——别照它上线，会空转（没有 worker 在跑）。
+#
 # Prefect 部署配置文件
-# 使用方式: prefect deploy --all
+# 使用方式（仅当未来真上 Prefect 时）: prefect deploy --all
 
 deployments:
   - name: tiktok-inventory-sync

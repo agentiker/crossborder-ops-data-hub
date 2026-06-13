@@ -1,0 +1,7 @@
+[Unit]
+Description=每 30 分钟跑待发货超时告警巡检
+[Timer]
+OnCalendar=*-*-* *:10,40:00
+Persistent=true
+[Install]
+WantedBy=timers.target

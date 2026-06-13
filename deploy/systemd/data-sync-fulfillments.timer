@@ -1,0 +1,7 @@
+[Unit]
+Description=每 15 分钟跑 TikTok 待发货同步
+[Timer]
+OnCalendar=*-*-* *:05,20,35,50:00
+Persistent=true
+[Install]
+WantedBy=timers.target

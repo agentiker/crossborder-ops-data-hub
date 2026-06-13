@@ -14,6 +14,24 @@
 
 ---
 
+## 一键部署（推荐）
+
+```bash
+ssh hp
+cd ~/code/crossborder-ops-data-hub
+./deploy/deploy.sh --pull     # 拉代码 + uv sync + 建表 + 装/启用所有 systemd timer
+# 可选：--sync-skill（同步文案）、--restart-web、--restart-gateway、--dry-run（只看不动）
+```
+
+- 所有 systemd unit 已纳入 repo `deploy/systemd/`（用 `%h`，换机/换用户免改）；`deploy.sh` 负责 cp → `daemon-reload` → `enable --now` 所有 timer、建表、补 `.env` 的 `OPENCLAW_BIN`。
+- **失败告警**：每个任务 service 带 `OnFailure=data-onfailure@%n.service` → `deploy/notify-failure.sh` 取最近日志、用 `openclaw message send` 发飞书给运维（`main-app` + `NOTIFY_OPENID`，可环境覆盖）。补上了 systemd「没界面、没告警」的硬伤。
+- 改周期/加任务：改 `deploy/systemd/` 里的 unit，重跑 `deploy.sh`。
+- **日报 openclaw cron 不在 deploy.sh 内**（手工，见 B 节）。
+
+下面 A/B/C 是各环节细节与排错 reference。
+
+---
+
 ## A. 待发货超时告警（systemd timer，Data Hub 侧）
 
 ### A1. 部署了什么

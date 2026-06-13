@@ -1,0 +1,11 @@
+[Unit]
+Description=TikTok 待发货同步
+After=network-online.target
+OnFailure=data-onfailure@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/code/crossborder-ops-data-hub
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/.local/bin/uv run python -m flows.sync_fulfillments
+TimeoutStartSec=600
