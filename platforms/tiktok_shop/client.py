@@ -100,13 +100,19 @@ class TikTokShopClient(BaseAPIClient):
         return result
 
     def authenticate(self, auth_code: str) -> dict:
-        """使用授权码获取access_token
+        """使用授权码获取access_token，并按已授权店铺落库（含 shop_cipher）。
+
+        关键：/api/v2/token/get **不返回** shop_cipher / shop_id（实测仅返回 token、
+        granted_scopes、open_id、seller_name、seller_base_region、user_type）。shop_cipher
+        必须用 GET /authorization/202309/shops 单独取。因此换完 token 后调 get-authorized-shops，
+        按返回的 region/shop_id/cipher 给每个店各落一行；不再依赖 token/get 返回 shop 信息，
+        也不再退化成 country=GLOBAL|shop=_ 无 cipher 的占位行。
 
         Args:
             auth_code: OAuth授权码
 
         Returns:
-            Token响应数据
+            Token响应数据（/api/v2/token/get 原始返回）
         """
         logger.info(f"[authenticate] 开始用授权码换取Token, auth_code={auth_code[:20]}...")
         result = self._auth_get(
@@ -117,9 +123,44 @@ class TikTokShopClient(BaseAPIClient):
             },
         )
         self._apply_token_payload(result)
-        logger.info(f"[authenticate] Token换取成功, shop_cipher={self.shop_cipher}")
-        self.save_token(token_payload=result.get("data"))
+        payload = result.get("data") or {}
+        logger.info(f"[authenticate] Token换取成功, granted_scopes={payload.get('granted_scopes')}")
+
+        shops = self.get_authorized_shops()
+        if shops:
+            for sh in shops:
+                self.country = sh.get("region") or self.country
+                self.shop_id = str(sh["id"]) if sh.get("id") is not None else self.shop_id
+                self.shop_cipher = sh.get("cipher")
+                self.save_token(token_payload=payload)
+            logger.info(
+                f"[authenticate] 已为 {len(shops)} 个授权店铺保存 token（含 cipher）: "
+                f"{[str(s.get('id')) for s in shops]}"
+            )
+        else:
+            # 兜底：get-authorized-shops 未返回店铺（异常/无授权店）。按 seller_base_region 存，
+            # 仍无 cipher——记 warning，提示需排查（否则 finance/order 等接口会缺 cipher）。
+            self.country = payload.get("seller_base_region") or self.country
+            logger.warning(
+                "[authenticate] get-authorized-shops 未返回店铺，按 seller_base_region=%s 兜底存"
+                "（无 shop_cipher，后续需 cipher 的接口会失败，请排查授权）",
+                self.country,
+            )
+            self.save_token(token_payload=payload)
         return result
+
+    def get_authorized_shops(self) -> list:
+        """GET /authorization/202309/shops —— 取该 token 下已授权店铺（含 shop_cipher）。
+
+        token/get 不返回 shop_cipher/shop_id，靠本接口补全（header 带 access_token，无需 cipher）。
+        返回 [{id, region, name, cipher, ...}]；调用失败或无店返回 []。
+        """
+        try:
+            result = self.request("GET", "/authorization/202309/shops")
+        except Exception as exc:
+            logger.warning(f"[get_authorized_shops] 调用失败: {exc}")
+            return []
+        return (result.get("data") or {}).get("shops") or []
 
     def save_token(self, platform: Optional[str] = None, token_payload: Optional[dict] = None):
         """保存token到数据库，包含shop_cipher"""
