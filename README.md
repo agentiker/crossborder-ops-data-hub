@@ -175,10 +175,13 @@ prefect deploy --name tiktok-inventory-sync  # 部署单个任务
 | `data-sync-inventory.timer` | `flows.sync_inventory` | 每小时 `*:17` |
 | `data-sync-orders.timer`    | `flows.sync_orders`    | 每小时 `*:23` |
 | `data-refresh-tokens.timer` | `flows.refresh_tokens` | 每 6h `00,06,12,18:41` |
+| `data-scan-alerts.timer`    | `flows.scan_fulfillment_alerts` | 每 30 分 `*:10,40`（待发货超时告警） |
 
 - unit 文件：`~/.config/systemd/user/`（**用户级，不用 sudo**；linger 已开，登出仍跑）
 - 每个 service：`Type=oneshot` + `WorkingDirectory=~/code/crossborder-ops-data-hub`
   + `ExecStart=/home/guopeixin/.local/bin/uv run python -m flows.<X>`，`Persistent=true`（补跑错过的）
+
+> 📋 **主动推送（日报 + 待发货超时告警）的完整运维口径**——openclaw cron 改/加日报、告警 timer 首次部署、配置在哪改、文案同步、已知坑——见 **[docs/proactive-push-ops.md](docs/proactive-push-ops.md)**。
 
 ### 常用命令（在服务器上，或 `ssh hp '...'`）
 
