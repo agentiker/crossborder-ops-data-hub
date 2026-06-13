@@ -446,3 +446,27 @@ class FulfillmentAlertState(Base):
             f"<FulfillmentAlertState(state_key={self.state_key}, "
             f"last_reported_overdue={self.last_reported_overdue})>"
         )
+
+
+class StockAlertState(Base):
+    """低库存/断货告警的去重状态（每「收件人 × 范围」一行，记上次已上报的风险 SKU 集合）。
+
+    监控巡检高频跑（默认每 30 分钟），但只在「有新 SKU 跌入风险」时才推送，避免同一批低库存
+    SKU 反复刷屏（去重判定见 services/stock_alerts.build_decision）。reported_skus 存 JSON 数组，
+    SKU 补货恢复后自动移出集合，将来再次跌入会重新提醒。
+    state_key = alert_type|account_id|scope_key（scope_key 空串=全量范围），一行一收件人范围。
+    """
+
+    __tablename__ = "stock_alert_state"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    state_key = Column(String(300), nullable=False, unique=True, index=True)
+    alert_type = Column(String(64), nullable=False, default="stock_low", index=True)
+    account_id = Column(String(64), index=True)  # ecom-app / ecom-app-gtl
+    scope_key = Column(String(64), nullable=True)  # None/空 = 全量范围
+    reported_skus = Column(Text, nullable=False, default="[]")  # 上次已推送的风险 SKU（JSON 数组）
+    last_sent_at = Column(DateTime)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<StockAlertState(state_key={self.state_key})>"

@@ -13,7 +13,7 @@ from analytics.profit_alerts import (
     build_profit_scope_key,
     calculate_gross_profit,
 )
-from models.base_models import Alert, DailyProfit, FulfillmentAlertState
+from models.base_models import Alert, DailyProfit, FulfillmentAlertState, StockAlertState
 
 
 def upsert_daily_profit(session, record: ProfitRecordInput) -> DailyProfit:
@@ -167,6 +167,66 @@ def upsert_fulfillment_alert_state(
         result = existing
     else:
         result = FulfillmentAlertState(**values)
+        session.add(result)
+    session.flush()
+    return result
+
+
+def get_stock_alert_state(
+    session, *, alert_type: str, account_id: Optional[str], scope_key: Optional[str]
+) -> Optional[StockAlertState]:
+    """读某收件人范围的低库存去重状态；无则返回 None（调用方按空集合处理）。"""
+    state_key = build_alert_state_key(
+        alert_type=alert_type, account_id=account_id, scope_key=scope_key
+    )
+    return session.query(StockAlertState).filter_by(state_key=state_key).first()
+
+
+def get_stock_reported_skus(state: Optional[StockAlertState]) -> list[str]:
+    """从状态行反序列化已报 SKU 集合（容错：解析失败按空集合）。"""
+    import json
+
+    if state is None or not state.reported_skus:
+        return []
+    try:
+        data = json.loads(state.reported_skus)
+    except (ValueError, TypeError):
+        return []
+    return [str(s) for s in data] if isinstance(data, list) else []
+
+
+def upsert_stock_alert_state(
+    session,
+    *,
+    alert_type: str,
+    account_id: Optional[str],
+    scope_key: Optional[str],
+    reported_skus: list[str],
+    mark_sent: bool = False,
+) -> StockAlertState:
+    """写回低库存去重游标（reported_skus 序列化为 JSON）。mark_sent=True 时刷新 last_sent_at。"""
+    import json
+    from datetime import datetime, timezone
+
+    state_key = build_alert_state_key(
+        alert_type=alert_type, account_id=account_id, scope_key=scope_key
+    )
+    existing = session.query(StockAlertState).filter_by(state_key=state_key).first()
+    values = {
+        "state_key": state_key,
+        "alert_type": alert_type,
+        "account_id": account_id,
+        "scope_key": scope_key,
+        "reported_skus": json.dumps(sorted(reported_skus)),
+    }
+    if mark_sent:
+        values["last_sent_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
+    if existing:
+        for key, value in values.items():
+            setattr(existing, key, value)
+        result = existing
+    else:
+        result = StockAlertState(**values)
         session.add(result)
     session.flush()
     return result

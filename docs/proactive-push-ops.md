@@ -8,7 +8,7 @@
 | 链路 | 过 LLM？ | 调度 | 投递 | 配置在哪 |
 |------|---------|------|------|---------|
 | **日报** | ✅ 过（要解读+建议） | **openclaw cron**（agentTurn） | cron `announce` 自动发飞书 | 在 hp 用 `openclaw cron` 命令 |
-| **待发货超时告警** | ❌ 不过（确定性） | **systemd timer** `data-scan-alerts` | `openclaw message send` 直投 | repo 代码 + service 文件 |
+| **监控告警**（待发货超时 + 低库存/断货） | ❌ 不过（确定性） | **systemd timer** `data-scan-alerts` | `openclaw message send` 直投 | repo 代码 + service 文件 |
 
 > 为什么分两套：cron job 必经 agent/LLM，适合要解读的日报；告警要阈值/去重/稳定文案、每跑必准，走 Data Hub 确定性判定 + `openclaw message send`（0-LLM、走本地 gateway RPC `127.0.0.1:18789`，不出网、不受 TikTok 出口 IP / WARP 坑影响）。
 
@@ -32,17 +32,27 @@ cd ~/code/crossborder-ops-data-hub
 
 ---
 
-## A. 待发货超时告警（systemd timer，Data Hub 侧）
+## A. 监控告警（systemd timer，Data Hub 侧）
 
 ### A1. 部署了什么
 
-| timer | 跑的 flow | 周期 |
-|-------|-----------|------|
-| `data-scan-alerts.timer` | `flows.scan_fulfillment_alerts` | 每 30 分钟 `*:10,40` |
+| timer | 跑的 flow | 周期 | 覆盖规则 |
+|-------|-----------|------|---------|
+| `data-scan-alerts.timer` | `flows.scan_fulfillment_alerts` | 每 30 分钟 `*:10,40` | ① 待发货超时 ② 低库存/断货 |
 
-- 代码：`services/fulfillment_alerts.py`（判定+文案+去重，纯函数）、`flows/scan_fulfillment_alerts.py`（编排+投递）、`models.FulfillmentAlertState`（去重游标表）。
+> 一个 flow 跑两条规则，每个收件人每轮各自独立判定/去重/投递（互不影响）。文件名沿用 `scan_fulfillment_alerts` 以免动 timer，现已是「告警总巡检」。
+
+**① 待发货超时**
+- 代码：`services/fulfillment_alerts.py`（判定+文案+去重，纯函数）、`models.FulfillmentAlertState`（去重游标表）。
 - 去重规则：超时单数 `overdue` **从 0→非0 或较上次上报增加**才推；持平/下降不复读；清零归零游标。
-- 静默：默认 `23:00–08:30 Asia/Shanghai` 不推（`core/config.alert_quiet_*`）。
+
+**② 低库存/断货**
+- 代码：`services/stock_metrics.py`（可售天数=库存÷日均销速、分桶，取数）、`services/stock_alerts.py`（判定+文案，纯函数）、`models.StockAlertState`（去重游标表，存已报 SKU 集合 JSON）。
+- 口径：只统计仍有销量(velocity>0)的 SKU；库存 0 且有销量=断货、可售<`critical_days`=告急、<`warning_days`=预警；销速看近 `velocity_window_days` 天。
+- 去重规则：按**风险 SKU 集合**——有新 SKU 跌入风险才推；老 SKU 持续低库存不复读；SKU 补货恢复后再次跌入会重报。
+- config 旋钮（`core/config.py`，可 `.env` 覆盖）：`stock_cover_critical_days`(3) / `stock_cover_warning_days`(7) / `stock_velocity_window_days`(7)。
+
+- 编排+投递：`flows/scan_fulfillment_alerts.py`。静默：默认 `23:00–08:30 Asia/Shanghai` 不推（`core/config.alert_quiet_*`，两条规则共用）。
 
 ### A2. 首次部署步骤（hp）
 
@@ -53,7 +63,7 @@ git pull
 
 # 1) 建去重表（create_all 只建不存在的表，安全幂等）
 /home/guopeixin/.local/bin/uv run python -c "from core.db import init_db; init_db()"
-/home/guopeixin/.local/bin/uv run python -c "from core.db import engine; from sqlalchemy import inspect; print('fulfillment_alert_state' in inspect(engine).get_table_names())"  # 应 True
+/home/guopeixin/.local/bin/uv run python -c "from core.db import engine; from sqlalchemy import inspect; t=inspect(engine).get_table_names(); print('fulfillment_alert_state' in t, 'stock_alert_state' in t)"  # 应 True True
 
 # 2) dry-run 验证（不实发，只打印判定/文案）
 /home/guopeixin/.local/bin/uv run python -c "from flows.scan_fulfillment_alerts import scan_fulfillment_alerts_flow; scan_fulfillment_alerts_flow(dry_run=True)"
@@ -100,7 +110,9 @@ systemctl --user list-timers data-scan-alerts.timer --no-pager
 | 收件人（account + open_id + scope） | `flows/scan_fulfillment_alerts.py` 顶部 `RECIPIENTS` |
 | 静默时段 | `core/config.py` `alert_quiet_start/end/tz`（或 `.env` 覆盖） |
 | 巡检频率 | `~/.config/systemd/user/data-scan-alerts.timer` 的 `OnCalendar=` → `daemon-reload && restart` |
-| 临界阈值（小时） | `.env` `FULFILLMENT_WARNING_HOURS`（默认 24） |
+| 待发货临界阈值（小时） | `.env` `FULFILLMENT_WARNING_HOURS`（默认 24） |
+| 库存告急/预警阈值（可售天数） | `.env` `STOCK_COVER_CRITICAL_DAYS`(3) / `STOCK_COVER_WARNING_DAYS`(7) |
+| 库存销速窗口（天） | `.env` `STOCK_VELOCITY_WINDOW_DAYS`（默认 7） |
 | openclaw 路径 | service 的 `OPENCLAW_BIN`（或 `.env`） |
 
 ### A4. 运维命令

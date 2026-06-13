@@ -298,7 +298,8 @@ uvicorn web.app:app --host 0.0.0.0 --port 8000
 
 | 端点 | 说明 |
 |------|------|
-| `GET /api/data/inventory` | 库存列表 + 低库存（支持平台/国家/店铺过滤） |
+| `GET /api/data/inventory` | 库存列表 + 低库存（静态阈值，支持平台/国家/店铺过滤） |
+| `GET /api/data/inventory/low-stock` | 断货/低库存风险（按可售天数=库存÷日均销速；只列仍有销量的 SKU） |
 | `GET /api/data/products` | 商品目录（状态过滤，用于上下架/滞销分析） |
 | `GET /api/data/orders/summary` | 订单汇总（GMV/订单量/销量/客单价） |
 | `GET /api/data/orders/trend` | 销售趋势（按天 GMV/单量/销量，无单日补 0） |

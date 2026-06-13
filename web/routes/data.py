@@ -14,6 +14,7 @@ from services.fulfillment_metrics import get_pending_fulfillments
 from services.order_metrics import get_gmv_summary, get_gmv_trend, get_top_skus
 from services.scope_binding import get_binding, set_binding
 from services.scope_resolution import ScopeError, ScopeFilters, list_scopes, resolve_filters
+from services.stock_metrics import get_stock_risk
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -293,6 +294,34 @@ class OverviewResponse(BaseModel):
     orders: OverviewOrders
 
 
+class LowStockItem(BaseModel):
+    sku_id: str
+    product_name: Optional[str] = None
+    shop_id: Optional[str] = None
+    available_stock: int
+    daily_velocity: float  # 近期日均销量
+    days_of_cover: float  # 可售天数 = 可用库存 ÷ 日均销速
+    bucket: str  # stockout / critical / warning
+
+
+class LowStockBuckets(BaseModel):
+    stockout: int = 0
+    critical: int = 0
+    warning: int = 0
+    total: int = 0
+
+
+class LowStockResponse(BaseModel):
+    items: list[LowStockItem]
+    buckets: LowStockBuckets
+    snapshot_at: Optional[str] = None  # 库存快照同步时间，印尼当地 UTC+7
+    critical_days: int
+    warning_days: int
+    velocity_window_days: int
+    scope: Optional[str] = None
+    caliber: Optional[str] = None
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 
@@ -348,6 +377,53 @@ async def get_inventory(
         )
     finally:
         session.close()
+
+
+LOW_STOCK_CALIBER = (
+    "可售天数 = 可用库存 ÷ 日均销速；日均销速 = 近 N 天已付款销量 ÷ N（默认 N=7）。"
+    "只统计仍有销量(velocity>0)的 SKU：库存为 0 且近期有销量记『断货』，可售<critical_days 记『告急』，"
+    "<warning_days 记『预警』；无销量的死货/下架 SKU 不计入。库存按 SKU 跨店聚合（与销速口径对齐）。"
+)
+
+
+@router.get("/inventory/low-stock", response_model=LowStockResponse, operation_id="ops_low_stock")
+async def get_low_stock(
+    platform: Optional[str] = Query(None, description="平台标识，如 tiktok_shop / shopee"),
+    country: Optional[str] = Query(None, description="国家/地区，如 ID / GLOBAL"),
+    shop_id: Optional[str] = Query(None, description="店铺ID"),
+    scope_id: Optional[str] = Query(None, description="业务范围 scope_key（命名店铺集合）"),
+    shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
+    critical_days: Optional[int] = Query(None, description="告急阈值：可售天数低于此值记『告急』（默认 3）"),
+    warning_days: Optional[int] = Query(None, description="预警阈值：可售天数低于此值记『预警』（默认 7）"),
+    open_id: Optional[str] = Query(None, description="飞书用户 open_id（ou_xxx，用于自动应用会话默认范围）"),
+):
+    """低库存 / 断货风险（按可售天数）。只列仍卖得动却快断货的 SKU，断货排最前。
+
+    口径随响应 caliber 字段返回。与 ops_inventory 的静态阈值（库存<10）不同，本端点用
+    可售天数 = 可用库存 ÷ 日均销速，能识别『库存看着不少但卖得快、即将断货』的爆款；
+    无销量的死货不打扰。利润/ROI 本期未上线，不在此端点。
+    """
+    scope = _resolve_scope(
+        scope_id=scope_id, platform=platform, country=country,
+        shop_id=shop_id, shop_ids=shop_ids, open_id=open_id,
+    )
+    risk = get_stock_risk(
+        platform=scope.platform,
+        country=scope.country,
+        shop_ids=scope.shop_ids or None,
+        critical_days=critical_days,
+        warning_days=warning_days,
+    )
+    return LowStockResponse(
+        items=[LowStockItem(**i) for i in risk["items"]],
+        buckets=LowStockBuckets(**risk["buckets"]),
+        snapshot_at=risk["snapshot_at"],
+        critical_days=risk["critical_days"],
+        warning_days=risk["warning_days"],
+        velocity_window_days=risk["velocity_window_days"],
+        scope=scope.display_text,
+        caliber=LOW_STOCK_CALIBER,
+    )
 
 
 PROFIT_NOT_READY = (

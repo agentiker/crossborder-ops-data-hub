@@ -36,7 +36,7 @@ async def health():
 # fastapi-mcp 用 ASGITransport 进程内调用底层路由（无额外 HTTP 跳），并复用
 # /api/data 的 require_internal_token 依赖。openclaw 在 MCP 请求头携带
 # X-Internal-Token，经 headers 白名单转发到底层依赖完成鉴权。
-# include_operations 白名单仅暴露 9 个 ops_* live 工具；profit/alerts（503）不暴露。
+# include_operations 白名单仅暴露 10 个 ops_* live 工具；profit/alerts（503）不暴露。
 # scope binding 只暴露写工具 ops_set_scope_binding；读由数据端点服务端自动注入，不再单列 GET 工具。
 mcp = FastApiMCP(
     app,
@@ -44,6 +44,7 @@ mcp = FastApiMCP(
     include_operations=[
         "ops_overview",
         "ops_inventory",
+        "ops_low_stock",
         "ops_products",
         "ops_orders_summary",
         "ops_orders_trend",

@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     # openclaw CLI 可执行文件（监控用它直投飞书，0 经 LLM）。生产环境用绝对路径覆盖，
     # 避免 flow 进程 PATH 找不到 nvm node 下的 openclaw（见 plan「部署注意」）。
     openclaw_bin: str = "openclaw"
+    # 低库存/断货预警阈值（可售天数 = 可用库存 ÷ 日均销速）。可经 .env 覆盖。
+    # 可售 < critical_days 记"告急"；critical_days ~ warning_days 记"预警"；库存 0 且有销量记"断货"。
+    # 销速按近 velocity_window_days 天的已付款销量折算日均；销速为 0（无销量）的 SKU 不计入预警。
+    stock_cover_critical_days: int = 3
+    stock_cover_warning_days: int = 7
+    stock_velocity_window_days: int = 7
 
     class Config:
         env_file = ".env"

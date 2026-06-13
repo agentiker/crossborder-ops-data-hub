@@ -1,0 +1,139 @@
+"""低库存 / 断货预警指标（确定性：可售天数 = 可用库存 ÷ 日均销速）。
+
+数据源：
+- inventory 快照表（available_stock 按 sku_id 跨仓/店聚合）。
+- 已付款订单销量（order_metrics.get_units_by_sku，近 velocity_window_days 天）折算日均销速。
+
+口径（与业务确认）：
+- 日均销速 daily_velocity = 窗口内已付款销量 ÷ velocity_window_days。
+- 可售天数 days_of_cover = available_stock ÷ daily_velocity。
+- **只盯卖得动的**：daily_velocity == 0（窗口内无销量）的 SKU 不计入预警（死货/下架另议）。
+- 分桶：stockout（库存 0 且有销量）> critical（可售 < critical_days）> warning（< warning_days）。
+- 可售天数按 sku_id 跨店聚合（与销速 sku 粒度对齐）；展示店取该 SKU 库存最多的店。
+
+公式全部在此用确定性 Python 实现，AI 仅解释结果（不进 HTTP 层、不重算）。
+"""
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+from typing import Optional
+
+from core.config import settings
+from core.db import SessionLocal
+from core.timezone import OFFSET, business_today
+from models.base_models import Inventory
+from services.order_metrics import get_units_by_sku
+
+
+def _classify(available: int, cover: Optional[float], critical_days: int, warning_days: int) -> Optional[str]:
+    """返回风险桶名；正常（库存充足）返回 None。仅对有销量的 SKU 调用。"""
+    if available <= 0:
+        return "stockout"
+    if cover is None:
+        return None
+    if cover < critical_days:
+        return "critical"
+    if cover < warning_days:
+        return "warning"
+    return None
+
+
+def get_stock_risk(
+    *,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
+    critical_days: Optional[int] = None,
+    warning_days: Optional[int] = None,
+    velocity_window_days: Optional[int] = None,
+) -> dict:
+    """返回低库存/断货风险 SKU + 分桶计数 + 快照时间（供 AI 解释 / 主动推送）。
+
+    items 仅含有销量(velocity>0)且落入风险桶的 SKU，按 days_of_cover 升序（断货排最前）。
+    """
+    critical_days = critical_days or settings.stock_cover_critical_days
+    warning_days = warning_days or settings.stock_cover_warning_days
+    velocity_window_days = velocity_window_days or settings.stock_velocity_window_days
+
+    # 销速窗口：近 velocity_window_days 天（含今天），按印尼业务日。
+    end_d = business_today()
+    start_d = end_d - timedelta(days=velocity_window_days - 1)
+    units_by_sku = get_units_by_sku(
+        start_date=start_d,
+        end_date=end_d,
+        platform=platform,
+        country=country,
+        shop_ids=shop_ids,
+    )
+
+    # 库存按 sku_id 聚合（跨仓/店求和），记展示店（库存最多的店）与商品名、最新快照时间。
+    session = SessionLocal()
+    try:
+        query = session.query(Inventory)
+        if platform:
+            query = query.filter(Inventory.platform == platform)
+        if country:
+            query = query.filter(Inventory.country == country)
+        if shop_ids:
+            query = query.filter(Inventory.shop_id.in_(shop_ids))
+        rows = query.all()
+    finally:
+        session.close()
+
+    agg: dict[str, dict] = {}
+    snapshot_at: Optional[datetime] = None
+    for r in rows:
+        sku_id = r.sku_id
+        if not sku_id:
+            continue
+        stock = r.available_stock or 0
+        entry = agg.setdefault(
+            sku_id,
+            {"available": 0, "product_name": r.product_name, "top_shop": None, "top_shop_stock": -1},
+        )
+        entry["available"] += stock
+        if r.product_name and not entry["product_name"]:
+            entry["product_name"] = r.product_name
+        if stock > entry["top_shop_stock"]:
+            entry["top_shop_stock"] = stock
+            entry["top_shop"] = r.shop_id
+        if r.synced_at is not None and (snapshot_at is None or r.synced_at > snapshot_at):
+            snapshot_at = r.synced_at
+
+    buckets = {"stockout": 0, "critical": 0, "warning": 0, "total": 0}
+    items: list[dict] = []
+    for sku_id, entry in agg.items():
+        units = units_by_sku.get(sku_id, 0)
+        if units <= 0:
+            continue  # 只盯卖得动的：无销量 SKU 不计入预警
+        daily_velocity = units / velocity_window_days
+        available = entry["available"]
+        cover = (available / daily_velocity) if daily_velocity > 0 else None
+        bucket = _classify(available, cover, critical_days, warning_days)
+        if bucket is None:
+            continue
+        buckets[bucket] += 1
+        buckets["total"] += 1
+        items.append(
+            {
+                "sku_id": sku_id,
+                "product_name": entry["product_name"],
+                "shop_id": entry["top_shop"],
+                "available_stock": available,
+                "daily_velocity": round(daily_velocity, 2),
+                "days_of_cover": round(cover, 1) if cover is not None else 0.0,
+                "bucket": bucket,
+            }
+        )
+
+    # 断货（cover=0）排最前，其余按可售天数升序。
+    items.sort(key=lambda i: i["days_of_cover"])
+
+    return {
+        "items": items,
+        "buckets": buckets,
+        "snapshot_at": (snapshot_at + OFFSET).isoformat() if snapshot_at else None,
+        "critical_days": critical_days,
+        "warning_days": warning_days,
+        "velocity_window_days": velocity_window_days,
+    }

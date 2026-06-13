@@ -149,6 +149,42 @@ def get_top_skus(
         session.close()
 
 
+def get_units_by_sku(
+    *,
+    start_date: date,
+    end_date: date,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_id: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
+) -> dict[str, int]:
+    """窗口内各 SKU 的已付款销量（line_item 条数），返回 {sku_id: units}。
+
+    口径同 get_top_skus（已付款订单、销量=line_item 条数），但不排序/不截断，
+    供低库存预警折算日均销速用。无销量的 SKU 不在返回中。
+    """
+    start_dt, end_dt = _paid_window(start_date, end_date)
+    session = SessionLocal()
+    try:
+        query = (
+            session.query(
+                OrderLineItem.sku_id,
+                func.count(OrderLineItem.line_item_id),
+            )
+            .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
+            .filter(
+                OrderHeader.paid_time.isnot(None),
+                OrderHeader.paid_time >= start_dt,
+                OrderHeader.paid_time <= end_dt,
+            )
+        )
+        query = _scope_filters(query, OrderHeader, platform, country, shop_id, shop_ids)
+        query = query.group_by(OrderLineItem.sku_id)
+        return {sku_id: int(units or 0) for sku_id, units in query.all() if sku_id}
+    finally:
+        session.close()
+
+
 def get_gmv_trend(
     *,
     start_date: date,
