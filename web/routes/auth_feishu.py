@@ -73,7 +73,7 @@ async def callback(
         httponly=True,
         secure=cfg.cookie_secure,
         samesite="lax",
-        path="/board",
+        path="/",  # 全站共享登录态：/board 看板与 /app 对话、/api/* 同源 cookie（plan/15）
     )
     return resp
 
@@ -83,7 +83,7 @@ async def logout():
     """登出：清登录 cookie，回 /board（随即触发重新登录）。"""
     cfg = settings.feishu_oauth
     resp = RedirectResponse(_HOME, status_code=302)
-    resp.delete_cookie(key=cfg.cookie_name, path="/board")
+    resp.delete_cookie(key=cfg.cookie_name, path="/")
     return resp
 
 
