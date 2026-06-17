@@ -4,9 +4,12 @@ from fastapi import Depends, FastAPI
 from fastapi_mcp import FastApiMCP
 
 from web.routes.auth import router as auth_router
+from web.routes.auth_feishu import router as auth_feishu_router
+from web.routes.board import router as board_router
 from web.routes.dashboard import router as dashboard_router
 from web.routes.data import router as data_router
 from web.security import require_internal_token
+from web.web_security import register_web_auth_handlers
 
 app = FastAPI(
     title="Crossborder Ops Data Hub",
@@ -15,8 +18,13 @@ app = FastAPI(
 )
 
 app.include_router(auth_router, prefix="/auth", tags=["认证"])
-# 看板 demo：仅本机预览，不带 internal token（靠 127.0.0.1 绑定保护），不纳入 OpenAPI/MCP
+# 看板 demo（plan/13）：仅本机预览，不带 internal token（靠 127.0.0.1 绑定保护），不纳入 OpenAPI/MCP
 app.include_router(dashboard_router, tags=["看板"])
+# 独立运营看板（plan/14）：飞书 OAuth 登录态 + user_authz 权限闸；公网经 cloudflared 只放行 /board*。
+# 不带 internal token（鉴权靠登录 cookie），include_in_schema=False 故不入 OpenAPI/MCP。
+app.include_router(auth_feishu_router, prefix="/board/auth/feishu", tags=["看板登录"])
+app.include_router(board_router, tags=["运营看板"])
+register_web_auth_handlers(app)  # 装 WebAuthRedirect→302 / WebAuthForbidden→403 页
 app.include_router(
     data_router,
     prefix="/api/data",
