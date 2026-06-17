@@ -47,6 +47,24 @@ def require_web_user(request: Request) -> UserPermission:
     return perm
 
 
+def require_web_user_api(request: Request) -> UserPermission:
+    """API 版鉴权依赖（plan/15 Web 对话端）：未登录/未授权返回 JSON 错误而非 302/HTML。
+
+    SPA 用 fetch 调 /api/* 时，302 跳登录会被透明跟随成 HTML 破坏 JSON 解析；故 API
+    统一返回 401（未登录，前端据此跳 /board/auth/feishu/login）/ 403（已登录未授角色）。
+    鉴权口径与 require_web_user 完全一致（同一 cookie + 同一 user_roles 真相）。
+    """
+    cfg = settings.feishu_oauth
+    raw = request.cookies.get(cfg.cookie_name, "")
+    open_id = verify_session_cookie(raw) if raw else None
+    if not open_id:
+        raise HTTPException(status_code=401, detail="未登录")
+    perm = get_user_permission(open_id)
+    if perm is None:
+        raise HTTPException(status_code=403, detail=f"open_id={open_id} 未获授权")
+    return perm
+
+
 def register_web_auth_handlers(app) -> None:
     """把上面两个异常装成响应（在 web/app.py 调用一次）。"""
 

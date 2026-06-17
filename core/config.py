@@ -62,6 +62,28 @@ class FeishuOAuthConfig(BaseModel):
     enforce_dialog_authz: bool = False
 
 
+class LLMConfig(BaseModel):
+    """Web 对话端自建 agent 的大模型 Provider 配置（可配置，国外/国内通用，见 plan/15）。
+
+    抽象一层 Provider，按 `provider` 分发到两类适配器（services/llm）：
+    - "openai"：OpenAI 兼容族——国外 OpenAI，国内 DeepSeek / 通义千问(Qwen) /
+      智谱 GLM / Kimi(Moonshot) / 豆包(火山方舟) / 百度千帆 / 硅基流动等，只换
+      base_url + api_key + model 即可切换（它们都提供 /chat/completions 兼容端点）。
+    - "anthropic"：Claude，独立协议（/v1/messages）。
+
+    网络现实：国内模型从国内服务器直连无需代理；Anthropic/OpenAI 需出口可达
+    （见记忆 tiktok-api-direct-connect 的网关坑）。可配置正好按部署环境切。
+    零新依赖：用已有 requests 直接打 HTTP（含 SSE 流式），不引入 SDK。
+    """
+    provider: str = "openai"  # openai（兼容族）/ anthropic
+    base_url: str = ""  # API 根地址；openai 兼容族如 https://api.deepseek.com/v1
+    api_key: str = ""  # 对应 provider 的密钥
+    model: str = ""  # 模型名，如 deepseek-chat / qwen-plus / claude-... / gpt-...
+    temperature: float = 0.3  # 问数场景偏确定性，默认低温
+    max_tool_steps: int = 6  # agent loop 单轮最多连续工具调用步数（防失控）
+    request_timeout_seconds: int = 120  # 单次 LLM 请求超时
+
+
 class Settings(BaseSettings):
     """全局配置"""
     db: DatabaseConfig = DatabaseConfig()
@@ -69,6 +91,7 @@ class Settings(BaseSettings):
     api: APIConfig = APIConfig()
     dashboard: DashboardConfig = DashboardConfig()
     feishu_oauth: FeishuOAuthConfig = FeishuOAuthConfig()
+    llm: LLMConfig = LLMConfig()
     scheduler_interval_minutes: int = 60
     # 业务归日时区偏移（小时）。印尼 WIB 固定 UTC+7（无夏令时）。
     # 订单 paid_time 存 naive UTC，GMV/趋势/单品按此偏移归到当地"自然日"。

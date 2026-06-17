@@ -187,6 +187,47 @@ class UserRole(Base):
         )
 
 
+class WebConversation(Base):
+    """Web 对话端的会话（plan/15 Phase A）：左侧会话列表的一项。
+
+    归属人 open_id（飞书 OAuth 登录身份），权限/隔离都以它为准——查询/列表只返回
+    自己的会话。与飞书侧 openclaw 对话是两套 runtime，但共用同一权限闸 user_authz +
+    同一批 ops_* 取数端点（见 plan/15「两套 runtime 共用数据+权限底座」）。
+    """
+
+    __tablename__ = "web_conversations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    open_id = Column(String(64), nullable=False, index=True)  # 归属人，飞书 ou_xxx
+    title = Column(String(200), nullable=False, default="新会话")  # 列表展示名（首条消息自动生成/可改）
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), index=True)
+
+    def __repr__(self):
+        return f"<WebConversation(id={self.id}, open_id={self.open_id})>"
+
+
+class WebMessage(Base):
+    """Web 对话端的单条消息（plan/15 Phase A）。
+
+    role=user/assistant 存文本；tool_calls_json 记本轮调了哪些 ops_* 工具+参数+结果摘要，
+    用于刷新重放「AI 当时查了哪些数据」与排查口径。tool 角色的中间结果不单独落库
+    （并入 assistant 的 tool_calls_json），保持会话历史精简。
+    """
+
+    __tablename__ = "web_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    conversation_id = Column(Integer, nullable=False, index=True)  # → web_conversations.id
+    role = Column(String(16), nullable=False)  # user / assistant
+    content = Column(Text, nullable=False, default="")
+    tool_calls_json = Column(JSON, nullable=True)  # [{name, arguments, ok}], 可空
+    created_at = Column(DateTime, server_default=func.now(), index=True)
+
+    def __repr__(self):
+        return f"<WebMessage(conv={self.conversation_id}, role={self.role})>"
+
+
 class PlatformToken(Base):
     """Platform token persisted per platform account scope."""
 

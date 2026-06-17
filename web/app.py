@@ -1,11 +1,15 @@
 """FastAPI application entry point."""
 
+import os
+
 from fastapi import Depends, FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi_mcp import FastApiMCP
 
 from web.routes.auth import router as auth_router
 from web.routes.auth_feishu import router as auth_feishu_router
 from web.routes.board import router as board_router
+from web.routes.chat import router as chat_router
 from web.routes.dashboard import router as dashboard_router
 from web.routes.data import router as data_router
 from web.security import require_internal_token
@@ -24,6 +28,10 @@ app.include_router(dashboard_router, tags=["看板"])
 # 不带 internal token（鉴权靠登录 cookie），include_in_schema=False 故不入 OpenAPI/MCP。
 app.include_router(auth_feishu_router, prefix="/board/auth/feishu", tags=["看板登录"])
 app.include_router(board_router, tags=["运营看板"])
+# Web 对话端（plan/15 Phase A）：自建 agent + 会话 API（/api/chat、/api/conversations、/api/me）。
+# 鉴权用飞书 OAuth 登录 cookie（require_web_user_api，未登录返 401），不带 internal token，
+# include_in_schema=False 故不入 OpenAPI/MCP（避免被 openclaw 当工具调用）。
+app.include_router(chat_router, tags=["Web对话"])
 register_web_auth_handlers(app)  # 装 WebAuthRedirect→302 / WebAuthForbidden→403 页
 app.include_router(
     data_router,
@@ -41,6 +49,15 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# ── Web 对话端 SPA 同源托管（plan/15 Phase A）──────────────────────────────────
+# 构建产物 frontend/dist 挂在 /app 下（html=True → /app 直出 index.html，SPA 资源在
+# /app/assets/*，与 vite base=/app/ 对齐）。鉴权由 SPA 调 /api/me 触发（401 跳飞书登录），
+# 故静态资源本身无需鉴权。dist 不存在（未构建）时跳过挂载，不影响后端启动。
+_SPA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
+if os.path.isdir(_SPA_DIR):
+    app.mount("/app", StaticFiles(directory=_SPA_DIR, html=True), name="spa")
 
 
 # ── MCP 服务（方案 C：同进程暴露只读数据工具给 openclaw） ──────────────────────
