@@ -19,12 +19,18 @@ grace-period: 30s
 
 ingress:
   # 安全面：隧道按 hostname 整体透传，无法像 nginx 按 location 过滤；用 path 正则
-  # 复刻 plan/14「只放行 /board」——/api/data、/dashboard、/docs 等一律不经公网可达
+  # 复刻 plan/14「白名单放行」——/api/data、/dashboard、/docs 等一律不经公网可达
   # （openclaw 调 /api/data 走本机 127.0.0.1 直连，不经隧道）。
+  # plan/15：放行 /board（看板+飞书登录）与 /app（Web 对话 SPA，同源托管）。
   - hostname: board.agenticker.cc
-    path: "^/board($|/)"
+    path: "^/(board|app)($|/)"
     service: http://127.0.0.1:8000
-  # 同 hostname 下非 /board 路径 → 404（挡住 swagger/旧看板/内部端点）。
+  # plan/15：Web 对话端 API，仅放行 chat/conversations/me 三组（均经飞书登录 cookie 鉴权，
+  # 未登录返 401）；/api/data 内部端点不在此列，公网不可达。
+  - hostname: board.agenticker.cc
+    path: "^/api/(me|chat|conversations)($|/)"
+    service: http://127.0.0.1:8000
+  # 同 hostname 下其余路径 → 404（挡住 swagger/旧看板/内部端点/api/data）。
   - hostname: board.agenticker.cc
     service: http_status:404
   # 兜底：其余 hostname 一律 404，避免隧道沦为开放反代。
