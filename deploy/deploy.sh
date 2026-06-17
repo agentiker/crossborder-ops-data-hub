@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Data Hub 生产部署（systemd user timer）。在目标机仓库根或任意处跑：
-#   ./deploy/deploy.sh [--pull] [--sync-skill] [--restart-web] [--restart-gateway] [--dry-run]
+#   ./deploy/deploy.sh [--pull] [--sync-skill] [--restart-web] [--restart-gateway] [--restart-tunnel] [--dry-run]
 #
 # 做什么（幂等）：
 #   1) （--pull）git pull
@@ -22,12 +22,13 @@ UNIT_DST="$HOME/.config/systemd/user"
 ENV_FILE="$REPO_DIR/.env"
 UV="$(command -v uv 2>/dev/null || echo "$HOME/.local/bin/uv")"
 
-PULL=0; SYNC_SKILL=0; RESTART_WEB=0; RESTART_GW=0; DRY=0
+PULL=0; SYNC_SKILL=0; RESTART_WEB=0; RESTART_GW=0; RESTART_TUNNEL=0; DRY=0
 for a in "$@"; do case "$a" in
   --pull) PULL=1 ;;
   --sync-skill) SYNC_SKILL=1 ;;
   --restart-web) RESTART_WEB=1 ;;
   --restart-gateway) RESTART_GW=1 ;;
+  --restart-tunnel) RESTART_TUNNEL=1 ;;
   --dry-run) DRY=1 ;;
   *) echo "未知参数：$a" >&2; exit 2 ;;
 esac; done
@@ -69,10 +70,14 @@ for t in "$UNIT_SRC"/*.timer; do
   run systemctl --user enable --now "$(basename "$t")"
 done
 run systemctl --user enable data-hub.service
+# 看板公网入口隧道（plan/14）：enable 开机自启；首次/更新靠 --restart-tunnel 拉起，
+# 与 data-hub 同风格（不自动 start，避免对外动作被部署脚本静默触发）。
+run systemctl --user enable cloudflared-board.service
 
 [ "$SYNC_SKILL" -eq 1 ] && run "$REPO_DIR/scripts/sync-skill.sh"
 [ "$RESTART_WEB" -eq 1 ] && run systemctl --user restart data-hub.service
 [ "$RESTART_GW" -eq 1 ] && run systemctl --user restart openclaw-gateway
+[ "$RESTART_TUNNEL" -eq 1 ] && run systemctl --user restart cloudflared-board.service
 
 echo
 [ "$DRY" -eq 1 ] || systemctl --user list-timers 'data-*' --no-pager

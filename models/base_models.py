@@ -148,6 +148,45 @@ class ConversationScopeBinding(Base):
         )
 
 
+class UserRole(Base):
+    """单租户内分角色的硬权限上限（plan/14 方案 B 的数据层统一权限闸真相源）。
+
+    open_id→role + allowed_scope_key：boss 看全部数据；operator 被钉死在
+    allowed_scope_key 且**不可越界**（区别于 ConversationScopeBinding 的"默认范围记忆"
+    可越界）。本表是 services/user_authz 的唯一真相，覆盖三处：看板网站 /board、
+    对话侧 web/routes/data.py::_resolve_scope（所有 ops_* 工具）、主动推送（按收件人
+    open_id 的 allowed_scope 裁内容）。越界拦截复用 scope_resolution.resolve_filters。
+
+    open_id 是 per-app 的，以选定飞书 app（建议 ecom-app）为准。主键
+    (channel, account_id, open_id) 与 ConversationScopeBinding 对齐，account_id 列保留
+    作多 app 真隔离的扩展位（plan/09）。先单 allowed_scope_key（YAGNI），将来多范围
+    上限再扩成 JSON 数组。boss 忽略 allowed_scope_key；单租户阶段不引入 tenant_id。
+    """
+
+    __tablename__ = "user_roles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    channel = Column(String(16), nullable=False, default="feishu", index=True)
+    account_id = Column(String(64), nullable=False, index=True)  # ecom-app / ecom-app-gtl
+    open_id = Column(String(64), nullable=False, index=True)  # 飞书用户 ou_xxx
+    role = Column(String(16), nullable=False)  # boss / operator
+    allowed_scope_key = Column(String(64), nullable=True)  # operator 的硬上限；boss 忽略
+    note = Column(String(200), nullable=True)  # 备注（如姓名/岗位），运维可读
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("channel", "account_id", "open_id", name="uq_user_role"),
+    )
+
+    def __repr__(self):
+        return (
+            f"<UserRole(open_id={self.open_id}, role={self.role}, "
+            f"allowed_scope_key={self.allowed_scope_key})>"
+        )
+
+
 class PlatformToken(Base):
     """Platform token persisted per platform account scope."""
 

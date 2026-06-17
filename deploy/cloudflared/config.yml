@@ -1,0 +1,31 @@
+# Cloudflare 命名隧道配置：把内网 hp 的 data-hub（127.0.0.1:8000）暴露成
+# https://board.agenticker.cc（plan/14 独立运营看板入口）。
+#
+# 区别于 plan/13 的临时隧道（cloudflared tunnel --url，每次重启换域名）：
+# 命名隧道域名固定，Cloudflare 边缘自动提供 https 证书（无需 certbot）。
+#
+# 隧道 board（UUID 5599e6a5-9000-456c-bdf1-a55352c69025）由 cloudflared tunnel create 生成；
+# board.agenticker.cc 的 CNAME 由 cloudflared tunnel route dns board board.agenticker.cc 自动写入 Cloudflare。
+#
+# Cloudflare SSL 模式建议 Full（边缘到 hp 走隧道本身已加密，勿用 Full(strict) 以免要求源站证书）。
+tunnel: board
+credentials-file: /home/guopeixin/.cloudflared/5599e6a5-9000-456c-bdf1-a55352c69025.json
+
+# hp 出口对 argotunnel 的 TCP/HTTP2(7844) 通道被挡，仅 QUIC(UDP) 可达（见部署验证日志）。
+# 强制只走 QUIC，避免反复尝试不可用的 TCP 回退；保活/重试放宽以扛 UDP 抖动。
+protocol: quic
+retries: 5
+grace-period: 30s
+
+ingress:
+  # 安全面：隧道按 hostname 整体透传，无法像 nginx 按 location 过滤；用 path 正则
+  # 复刻 plan/14「只放行 /board」——/api/data、/dashboard、/docs 等一律不经公网可达
+  # （openclaw 调 /api/data 走本机 127.0.0.1 直连，不经隧道）。
+  - hostname: board.agenticker.cc
+    path: "^/board($|/)"
+    service: http://127.0.0.1:8000
+  # 同 hostname 下非 /board 路径 → 404（挡住 swagger/旧看板/内部端点）。
+  - hostname: board.agenticker.cc
+    service: http_status:404
+  # 兜底：其余 hostname 一律 404，避免隧道沦为开放反代。
+  - service: http_status:404

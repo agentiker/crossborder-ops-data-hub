@@ -41,12 +41,34 @@ class DashboardConfig(BaseModel):
     token_ttl_seconds: int = 1800  # token 默认有效期（30 分钟）
 
 
+class FeishuOAuthConfig(BaseModel):
+    """独立运营看板的飞书 OAuth v2 网页免登 + 登录态配置（方案 B，见 plan/14）。
+
+    浏览器跳飞书授权（飞书客户端内自动免登）→ 回调拿一次性 token 取 `open_id` 即丢弃，
+    登录态由独立无状态 HMAC 签名 cookie 承载（同构 web/signed_link.py，不建 session 表）。
+    `open_id` 是 per-app 的：看板 OAuth 与运营对话必须同一飞书 app（建议 ecom-app），
+    user_roles 存的 open_id 才能三处串起来。
+    """
+    app_id: str = ""  # 选定统一飞书 app 的 client_id（需用户提供，见 Phase 0）
+    app_secret: str = ""  # 对应 client_secret
+    redirect_uri: str = ""  # 回调地址，须在飞书后台 redirect_uri 白名单中
+    session_secret: str = ""  # 登录态 cookie 的 HMAC-SHA256 签名密钥（独立于 dashboard.link_secret）
+    session_ttl_seconds: int = 604800  # 登录态有效期，默认 7 天
+    cookie_name: str = "board_session"  # 登录态 cookie 名
+    cookie_secure: bool = True  # Set-Cookie 是否带 Secure（生产 HTTPS 必须 True，本机调试可 False）
+    # 对话侧 fail-closed 硬闸灰度开关（防自锁，见 plan/14 Phase 6）：
+    # 先 False 部署 → CLI 登记 boss/operator → 确认无误再置 True。
+    # False 时 web/routes/data.py::_resolve_scope 维持旧行为（未登记 open_id 不拒）。
+    enforce_dialog_authz: bool = False
+
+
 class Settings(BaseSettings):
     """全局配置"""
     db: DatabaseConfig = DatabaseConfig()
     tiktok: TikTokConfig
     api: APIConfig = APIConfig()
     dashboard: DashboardConfig = DashboardConfig()
+    feishu_oauth: FeishuOAuthConfig = FeishuOAuthConfig()
     scheduler_interval_minutes: int = 60
     # 业务归日时区偏移（小时）。印尼 WIB 固定 UTC+7（无夏令时）。
     # 订单 paid_time 存 naive UTC，GMV/趋势/单品按此偏移归到当地"自然日"。
