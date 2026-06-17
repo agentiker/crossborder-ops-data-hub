@@ -254,6 +254,9 @@ class ScopeBindingResponse(BaseModel):
 class DashboardLinkResponse(BaseModel):
     url: str  # 完整看板链接（public_base_url + /dashboard?t=<token>）
     expires_in: int  # token 有效期（秒）
+    # 现成的飞书 markdown 片段：把可点击文字 + 有效期包好，agent 原样发即可。
+    # 飞书卡片 lark_md 原生渲染 [文字](url) 成蓝色可点击链接，避免裸贴一长串带 token 的 URL。
+    markdown: str
 
 
 class SetScopeBindingRequest(BaseModel):
@@ -777,8 +780,9 @@ async def get_dashboard_link(
 ):
     """签发一条带签名 token 的看板链接，用户点开即看自己范围内的运营看板。
 
-    用户问「看板 / 数据大盘 / 趋势图」时调用，把返回的 url 原样发给用户。看板范围由 open_id
-    的会话默认范围（binding）锁定，token 短时效（默认 30 分钟）后失效，需重新获取。
+    用户问「看板 / 数据大盘 / 趋势图」时调用，**把返回的 `markdown` 字段原样发给用户**
+    （已是飞书可点击链接格式，别贴裸 `url`——那是一长串带 token 的丑字符串）。看板范围由
+    open_id 的会话默认范围（binding）锁定，token 短时效（默认 30 分钟）后失效，需重新获取。
     """
     base = settings.dashboard.public_base_url
     if not base:
@@ -789,7 +793,9 @@ async def get_dashboard_link(
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     url = base.rstrip("/") + "/dashboard?t=" + token
+    mins = max(1, ttl // 60)
+    markdown = f"📊 [打开运营看板]({url})\n（链接 {mins} 分钟内有效，过期重新获取即可）"
     # 审计日志：弱模型理论上可能把 A 的链接签给 B（软隔离根本局限），靠短时效 + 此日志缓解。
     logger.info("dashboard link issued: open_id=%s ttl=%ss", open_id, ttl)
-    return DashboardLinkResponse(url=url, expires_in=ttl)
+    return DashboardLinkResponse(url=url, expires_in=ttl, markdown=markdown)
 
