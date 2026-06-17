@@ -117,6 +117,8 @@ class AnthropicProvider(LLMProvider):
         with resp:
             if resp.status_code != 200:
                 raise LLMError(f"Anthropic 返回 {resp.status_code}：{resp.text[:500]}")
+            # 同 openai_compat：requests 对 text/event-stream 默认 ISO-8859-1，强制 UTF-8。
+            resp.encoding = "utf-8"
             for raw in resp.iter_lines(decode_unicode=True):
                 if not raw or not raw.startswith("data:"):
                     continue

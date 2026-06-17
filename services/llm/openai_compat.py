@@ -110,6 +110,9 @@ class OpenAICompatProvider(LLMProvider):
             if resp.status_code != 200:
                 body = resp.text[:500]
                 raise LLMError(f"OpenAI 兼容返回 {resp.status_code}：{body}")
+            # requests 对 text/event-stream（text/* 且无 charset）默认按 ISO-8859-1 解码，
+            # 会把 UTF-8 中文打成乱码；强制 UTF-8 后再 iter_lines(decode_unicode=True)。
+            resp.encoding = "utf-8"
             for raw in resp.iter_lines(decode_unicode=True):
                 if not raw or not raw.startswith("data:"):
                     continue
