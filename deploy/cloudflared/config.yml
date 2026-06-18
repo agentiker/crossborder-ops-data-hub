@@ -25,10 +25,10 @@ ingress:
   - hostname: board.agenticker.cc
     path: "^/(board|app)($|/)"
     service: http://127.0.0.1:8000
-  # plan/15：Web 对话端 API，仅放行 chat/conversations/me 三组（均经飞书登录 cookie 鉴权，
-  # 未登录返 401）；/api/data 内部端点不在此列，公网不可达。
+  # plan/15：Web 对话端 API，放行 chat/conversations/me + admin（角色管理，boss-only 守卫）；
+  # 均经飞书登录 cookie 鉴权，未登录 401；/api/data 内部端点不在此列，公网不可达。
   - hostname: board.agenticker.cc
-    path: "^/api/(me|chat|conversations)($|/)"
+    path: "^/api/(me|chat|conversations|admin)($|/)"
     service: http://127.0.0.1:8000
   # 同 hostname 下其余路径 → 404（挡住 swagger/旧看板/内部端点/api/data）。
   - hostname: board.agenticker.cc
