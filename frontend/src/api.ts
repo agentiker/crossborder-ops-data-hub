@@ -37,8 +37,52 @@ async function getJSON<T>(url: string): Promise<T> {
   return r.json();
 }
 
+// ── 看板数据（plan/15 UI 地基 · Board 垂直切片）──
+// 复用 board.py 既有的 cookie 鉴权 JSON 端点 /board/data（同源带 cookie），
+// 而非内部令牌守卫的 /api/data/*。范围由后端按登录身份夹紧，前端不传 scope。
+export interface TrendPoint {
+  date: string;
+  gmv: number;
+  order_count: number;
+  units_sold: number;
+}
+
+export interface BoardData {
+  scope: string;
+  period: string;
+  overview: {
+    orders: {
+      gmv: number;
+      order_count: number;
+      units_sold: number;
+      avg_order_value: number;
+    };
+    inventory: { sku_count?: number; total_stock?: number; low_stock_count?: number };
+  };
+  trend: { points: TrendPoint[]; window_label?: string; start_date?: string; end_date?: string };
+  low: { items: unknown[]; buckets: { stockout: number; critical: number; warning: number } };
+  fulfillment: {
+    buckets: { total: number; overdue: number; critical: number; normal: number };
+    snapshot_at?: string;
+  };
+}
+
+// ── 角色管理（plan/15 Phase C · 只读，boss-only；CRUD 留 Phase C）──
+export interface RoleRow {
+  open_id: string;
+  role: string;
+  allowed_scope_key: string | null;
+  note: string | null;
+  is_active: boolean;
+  account_id: string;
+  channel: string;
+}
+
 export const api = {
   me: () => getJSON<Me>("/api/me"),
+  boardData: (period: string) =>
+    getJSON<BoardData>(`/board/data?period=${encodeURIComponent(period)}`),
+  adminRoles: () => getJSON<{ items: RoleRow[] }>("/api/admin/roles"),
   conversations: () => getJSON<{ items: ConversationItem[] }>("/api/conversations"),
   conversation: (id: number) =>
     getJSON<{ id: number; title: string; messages: Message[] }>(

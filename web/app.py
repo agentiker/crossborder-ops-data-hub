@@ -5,6 +5,7 @@ import os
 from fastapi import Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi_mcp import FastApiMCP
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from web.routes.admin import router as admin_router
 from web.routes.auth import router as auth_router
@@ -56,13 +57,26 @@ async def health():
     return {"status": "ok"}
 
 
-# ── Web 对话端 SPA 同源托管（plan/15 Phase A）──────────────────────────────────
+# ── Web 对话端 SPA 同源托管（plan/15 Phase A + UI 地基）─────────────────────────
 # 构建产物 frontend/dist 挂在 /app 下（html=True → /app 直出 index.html，SPA 资源在
 # /app/assets/*，与 vite base=/app/ 对齐）。鉴权由 SPA 调 /api/me 触发（401 跳飞书登录），
 # 故静态资源本身无需鉴权。dist 不存在（未构建）时跳过挂载，不影响后端启动。
+class _SPAStaticFiles(StaticFiles):
+    """SPA 深链回退：未命中的子路径（如 /app/board 刷新）返回 index.html，
+    交给前端 react-router（basename=/app）接管，避免客户端路由刷新 404。"""
+
+    async def get_response(self, path, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404:
+                return await super().get_response("index.html", scope)
+            raise
+
+
 _SPA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
 if os.path.isdir(_SPA_DIR):
-    app.mount("/app", StaticFiles(directory=_SPA_DIR, html=True), name="spa")
+    app.mount("/app", _SPAStaticFiles(directory=_SPA_DIR, html=True), name="spa")
 
 
 # ── MCP 服务（方案 C：同进程暴露只读数据工具给 openclaw） ──────────────────────

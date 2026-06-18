@@ -1,0 +1,135 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  设计 token 真相源（plan/15 UI 地基）。双主题、HSL 通道值驱动（shadcn 约定）。
+  :root = 浅色「日光账册」；.dark = 深色「深色座舱」。改色只动这里。
+*/
+@layer base {
+  :root {
+    --background: 240 20% 98.5%;   /* #FAFAFB 冷白纸面 */
+    --foreground: 223 45% 16%;     /* #16203A 墨蓝 */
+    --card: 0 0% 100%;
+    --card-foreground: 223 45% 16%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 223 45% 16%;
+    --primary: 176 82% 30%;        /* #0E8C84 深青 teal */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 16% 95%;
+    --secondary-foreground: 223 40% 22%;
+    --muted: 220 16% 95%;
+    --muted-foreground: 220 10% 42%;
+    --accent: 176 45% 93%;         /* teal 极浅底 */
+    --accent-foreground: 176 82% 22%;
+    --destructive: 0 72% 48%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 16% 90%;
+    --input: 220 16% 87%;
+    --ring: 176 82% 34%;
+    --radius: 0.625rem;
+
+    /* 业务语义色 */
+    --positive: 152 56% 38%;       /* 涨：克制的绿 */
+    --negative: 0 72% 50%;         /* 跌 */
+    --success: 152 56% 38%;
+    --warning: 32 88% 44%;
+  }
+
+  .dark {
+    --background: 228 22% 9%;      /* #12141C 炭蓝 */
+    --foreground: 210 20% 96%;
+    --card: 228 18% 12%;
+    --card-foreground: 210 20% 96%;
+    --popover: 228 18% 13%;
+    --popover-foreground: 210 20% 96%;
+    --primary: 228 100% 72%;       /* #6E8BFF periwinkle */
+    --primary-foreground: 228 45% 12%;
+    --secondary: 228 14% 18%;
+    --secondary-foreground: 210 20% 92%;
+    --muted: 228 14% 17%;
+    --muted-foreground: 220 12% 64%;
+    --accent: 228 30% 21%;
+    --accent-foreground: 210 20% 95%;
+    --destructive: 0 80% 68%;      /* 珊瑚红，仅告警 */
+    --destructive-foreground: 228 45% 12%;
+    --border: 228 14% 20%;
+    --input: 228 14% 23%;
+    --ring: 228 100% 72%;
+
+    --positive: 152 52% 54%;
+    --negative: 0 80% 68%;
+    --success: 152 52% 54%;
+    --warning: 38 92% 60%;
+  }
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-feature-settings: "rlig" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@layer utilities {
+  /* 招牌：所有指标/金额走等宽数字，对齐成账册感 */
+  .tabnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+}
+
+/* assistant Markdown 渲染（marked 输出，无法用 Tailwind 类，故走 token 化裸样式） */
+.md { line-height: 1.65; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p { margin: 0.5rem 0; }
+.md h1, .md h2, .md h3 { margin: 0.9rem 0 0.5rem; font-weight: 600; line-height: 1.3; }
+.md h1 { font-size: 1.15rem; }
+.md h2 { font-size: 1.05rem; }
+.md h3 { font-size: 1rem; }
+.md ul, .md ol { margin: 0.5rem 0; padding-left: 1.25rem; }
+.md li { margin: 0.15rem 0; }
+.md a { color: hsl(var(--primary)); text-decoration: underline; text-underline-offset: 2px; }
+.md code {
+  background: hsl(var(--muted));
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.md pre {
+  background: hsl(var(--muted));
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--radius);
+  overflow-x: auto;
+}
+.md pre code { background: none; padding: 0; }
+.md table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.6rem 0;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+.md th, .md td {
+  border: 1px solid hsl(var(--border));
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+.md th { background: hsl(var(--muted)); color: hsl(var(--muted-foreground)); font-weight: 600; }
+.md blockquote {
+  border-left: 3px solid hsl(var(--border));
+  margin: 0.6rem 0;
+  padding-left: 0.8rem;
+  color: hsl(var(--muted-foreground));
+}
