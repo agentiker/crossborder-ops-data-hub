@@ -75,6 +75,7 @@
 ## 🛠️ Skill 开发与编写规范 (Agent Skill Specifications)
 
 - 在本项目中，任何时候只要需要“新建、修改、审查或优化 Skill（技能）”，必须严格执行./openclaw-skills/README.md 中定义的《Skill 开发与编写规范》。
+- 复杂任务使用git worktree功能，交给子agent去处理，避免主agent撑满上下文
 
 ## 开发材料
 - 接口原始文档在./material/目录下，分别是：
