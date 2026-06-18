@@ -25,7 +25,7 @@ export function PageHeader({ title, scope, period, updatedAt, actions, className
   return (
     <div className={cn("flex flex-wrap items-center justify-between gap-3", className)}>
       <div className="min-w-0">
-        <h1 className="text-lg font-semibold tracking-tight">{title}</h1>
+        <h1 className="font-display text-xl font-semibold tracking-tight">{title}</h1>
         {(scope || period || updatedAt) && (
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
             {scope && <Eyebrow k="范围" v={scope} />}

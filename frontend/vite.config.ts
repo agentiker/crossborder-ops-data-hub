@@ -3,7 +3,10 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 // 同源托管：构建产物挂在 FastAPI 的 /app 下，故 base=/app/。
-// 开发时 dev server 把 /api、/board 代理到本地 FastAPI（8000），免 CORS。
+// 开发时 dev server 把 /api、/board 代理到本地 FastAPI（默认 8000）；
+// 可用 VITE_API_PROXY 覆盖代理目标，避开本机其它占用 8000 的项目。
+const apiTarget = process.env.VITE_API_PROXY ?? "http://127.0.0.1:8000";
+
 export default defineConfig({
   base: "/app/",
   plugins: [react()],
@@ -17,8 +20,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": "http://127.0.0.1:8000",
-      "/board": "http://127.0.0.1:8000",
+      "/api": apiTarget,
+      "/board": apiTarget,
     },
   },
 });

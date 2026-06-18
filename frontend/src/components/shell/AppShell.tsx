@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { Outlet, useOutletContext } from "react-router-dom";
 import { api, type Me } from "@/api";
-import { SideNav } from "./SideNav";
 import { TopBar } from "./TopBar";
 
 export interface ShellContext {
@@ -15,34 +14,27 @@ export function useMe(): Me | null {
 
 export function AppShell() {
   const [me, setMe] = useState<Me | null>(null);
-  const [drawer, setDrawer] = useState(false);
 
   useEffect(() => {
     // 401 由 api 层跳飞书登录；这里只管成功态。
     api.me().then(setMe).catch(() => {});
   }, []);
 
+  // 导航上移到顶部：外壳只剩 TopBar + 内容区；左列由对话页自带会话列表承载。
   return (
-    <div className="flex h-full">
-      <aside className="hidden shrink-0 md:block">
-        <SideNav me={me} />
-      </aside>
-
-      {drawer && (
-        <div className="fixed inset-0 z-40 md:hidden">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setDrawer(false)} />
-          <div className="absolute left-0 top-0 h-full animate-fade-in">
-            <SideNav me={me} onNavigate={() => setDrawer(false)} />
-          </div>
-        </div>
-      )}
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar me={me} onMenu={() => setDrawer(true)} />
-        <main className="min-h-0 flex-1 overflow-hidden">
+    <div className="flex h-full flex-col">
+      <TopBar me={me} />
+      <main className="min-h-0 flex-1 overflow-hidden">
+        <Suspense
+          fallback={
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              加载中…
+            </div>
+          }
+        >
           <Outlet context={{ me } satisfies ShellContext} />
-        </main>
-      </div>
+        </Suspense>
+      </main>
     </div>
   );
 }

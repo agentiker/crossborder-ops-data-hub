@@ -3,37 +3,54 @@
 @tailwind utilities;
 
 /*
-  设计 token 真相源（plan/15 UI 地基）。双主题、HSL 通道值驱动（shadcn 约定）。
-  :root = 浅色「日光账册」；.dark = 深色「深色座舱」。改色只动这里。
+  自托管中文衬线 display 字体（Noto Serif SC，600）。子集仅含本应用 display 用到的
+  汉字 + 基础 ASCII（构建期由 scripts 经 Google Fonts text= 生成，~90KB woff2），
+  display:swap 先用系统宋体兜底、字体到位后替换，不阻塞首屏。详见 docs/。
+*/
+@font-face {
+  font-family: "Noto Serif SC";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./assets/fonts/noto-serif-sc-600.woff2") format("woff2");
+}
+
+/*
+  设计 token 真相源（plan/15 · 按 StoreClaw 改 UI）。双主题、HSL 通道值驱动（shadcn 约定）。
+  :root = 浅色「暖纸面」（对齐 StoreClaw 暖近白 + 暗墨主按钮）；.dark = 深色「深色座舱」。改色只动这里。
 */
 @layer base {
   :root {
-    --background: 240 20% 98.5%;   /* #FAFAFB 冷白纸面 */
-    --foreground: 223 45% 16%;     /* #16203A 墨蓝 */
-    --card: 0 0% 100%;
-    --card-foreground: 223 45% 16%;
+    /* 衬线 display 字体栈：中文系统宋体优先，零 webfont。用于 wordmark / 问候 / 标题 */
+    --font-serif: "Noto Serif SC", "Songti SC", "STSong", Georgia, "Times New Roman", serif;
+
+    --background: 40 33% 98%;      /* #FBFAF8 暖近白纸面 */
+    --foreground: 34 9% 11%;       /* #1F1D1A 暖墨近黑 */
+    --card: 0 0% 100%;             /* 纯白卡片 */
+    --card-foreground: 34 9% 11%;
     --popover: 0 0% 100%;
-    --popover-foreground: 223 45% 16%;
-    --primary: 176 82% 30%;        /* #0E8C84 深青 teal */
-    --primary-foreground: 0 0% 100%;
-    --secondary: 220 16% 95%;
-    --secondary-foreground: 223 40% 22%;
-    --muted: 220 16% 95%;
-    --muted-foreground: 220 10% 42%;
-    --accent: 176 45% 93%;         /* teal 极浅底 */
-    --accent-foreground: 176 82% 22%;
+    --popover-foreground: 34 9% 11%;
+    --primary: 34 9% 11%;          /* 暗墨主按钮（StoreClaw 签名，取代原 teal） */
+    --primary-foreground: 40 33% 98%;
+    --secondary: 40 18% 94%;       /* #F2F0EC 暖浅灰 */
+    --secondary-foreground: 34 9% 16%;
+    --muted: 40 18% 94%;
+    --muted-foreground: 36 6% 40%; /* #6B6862 暖中灰 */
+    --accent: 43 18% 91%;          /* #ECEAE4 nav 选中暖灰底 */
+    --accent-foreground: 34 9% 11%;
     --destructive: 0 72% 48%;
     --destructive-foreground: 0 0% 100%;
-    --border: 220 16% 90%;
-    --input: 220 16% 87%;
-    --ring: 176 82% 34%;
-    --radius: 0.625rem;
+    --border: 40 16% 89%;          /* #E7E4DD 极浅暖灰 */
+    --input: 40 14% 85%;
+    --ring: 36 8% 25%;             /* 暗墨焦点环（白底上可见） */
+    --radius: 0.75rem;             /* StoreClaw 大圆角 */
 
-    /* 业务语义色 */
-    --positive: 152 56% 38%;       /* 涨：克制的绿 */
+    /* 业务语义色（仅 delta/告警用，克制不装饰） */
+    --positive: 152 52% 36%;       /* 涨：克制的绿 */
     --negative: 0 72% 50%;         /* 跌 */
-    --success: 152 56% 38%;
-    --warning: 32 88% 44%;
+    --success: 152 52% 36%;
+    --warning: 32 84% 44%;
+    --gold: 38 58% 46%;            /* 时段 pill 的 ✦ 暖金唯一点缀 */
   }
 
   .dark {
@@ -43,24 +60,25 @@
     --card-foreground: 210 20% 96%;
     --popover: 228 18% 13%;
     --popover-foreground: 210 20% 96%;
-    --primary: 228 100% 72%;       /* #6E8BFF periwinkle */
-    --primary-foreground: 228 45% 12%;
+    --primary: 40 30% 95%;         /* 暗底上的亮按钮（与浅色暗墨按钮反相一致） */
+    --primary-foreground: 34 9% 12%;
     --secondary: 228 14% 18%;
     --secondary-foreground: 210 20% 92%;
     --muted: 228 14% 17%;
     --muted-foreground: 220 12% 64%;
-    --accent: 228 30% 21%;
+    --accent: 228 18% 20%;
     --accent-foreground: 210 20% 95%;
     --destructive: 0 80% 68%;      /* 珊瑚红，仅告警 */
     --destructive-foreground: 228 45% 12%;
     --border: 228 14% 20%;
     --input: 228 14% 23%;
-    --ring: 228 100% 72%;
+    --ring: 40 20% 78%;
 
     --positive: 152 52% 54%;
     --negative: 0 80% 68%;
     --success: 152 52% 54%;
     --warning: 38 92% 60%;
+    --gold: 40 70% 64%;
   }
 }
 
@@ -85,6 +103,10 @@
   .tabnum {
     font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum" 1;
+  }
+  /* 衬线 display：wordmark / 首页问候 / 页面标题（系统宋体，零 webfont） */
+  .font-display {
+    font-family: var(--font-serif);
   }
 }
 

@@ -47,8 +47,43 @@ export interface TrendPoint {
   units_sold: number;
 }
 
+export interface TopSku {
+  sku_id?: string;
+  product_name?: string;
+  sku_name?: string;
+  units_sold: number;
+  gmv?: number;
+}
+
+export interface LowStockItem {
+  sku_id: string;
+  product_name?: string;
+  bucket: "stockout" | "critical" | "warning";
+  available_stock: number;
+  daily_velocity: number;
+  days_of_cover: number;
+}
+
+export interface PendingItem {
+  order_id: string | number;
+  shop_id?: string | number;
+  first_product_name?: string;
+  item_count: number;
+  total_amount: number;
+  bucket?: string;
+}
+
+export interface ScopeOption {
+  key: string;
+  label: string;
+}
+
 export interface BoardData {
   scope: string;
+  scope_key: string;
+  can_switch: boolean;
+  scopes: ScopeOption[];
+  role: string;
   period: string;
   overview: {
     orders: {
@@ -60,8 +95,13 @@ export interface BoardData {
     inventory: { sku_count?: number; total_stock?: number; low_stock_count?: number };
   };
   trend: { points: TrendPoint[]; window_label?: string; start_date?: string; end_date?: string };
-  low: { items: unknown[]; buckets: { stockout: number; critical: number; warning: number } };
+  top: { items: TopSku[] };
+  low: {
+    items: LowStockItem[];
+    buckets: { stockout: number; critical: number; warning: number };
+  };
   fulfillment: {
+    items: PendingItem[];
     buckets: { total: number; overdue: number; critical: number; normal: number };
     snapshot_at?: string;
   };
@@ -80,8 +120,10 @@ export interface RoleRow {
 
 export const api = {
   me: () => getJSON<Me>("/api/me"),
-  boardData: (period: string) =>
-    getJSON<BoardData>(`/board/data?period=${encodeURIComponent(period)}`),
+  boardData: (period: string, scope = "") =>
+    getJSON<BoardData>(
+      `/board/data?period=${encodeURIComponent(period)}&scope=${encodeURIComponent(scope)}`,
+    ),
   adminRoles: () => getJSON<{ items: RoleRow[] }>("/api/admin/roles"),
   conversations: () => getJSON<{ items: ConversationItem[] }>("/api/conversations"),
   conversation: (id: number) =>

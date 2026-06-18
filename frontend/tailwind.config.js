@@ -57,6 +57,11 @@ export default {
           "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB",
           "system-ui", "sans-serif",
         ],
+        // 衬线 display：自托管 Noto Serif SC 优先，系统宋体兜底（与 --font-serif 对齐）
+        serif: [
+          "Noto Serif SC", "Songti SC", "STSong",
+          "Georgia", "Times New Roman", "serif",
+        ],
       },
       keyframes: {
         "accordion-down": {
