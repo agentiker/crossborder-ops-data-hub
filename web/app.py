@@ -6,6 +6,7 @@ from fastapi import Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi_mcp import FastApiMCP
 
+from web.routes.admin import router as admin_router
 from web.routes.auth import router as auth_router
 from web.routes.auth_feishu import router as auth_feishu_router
 from web.routes.board import router as board_router
@@ -32,6 +33,10 @@ app.include_router(board_router, tags=["运营看板"])
 # 鉴权用飞书 OAuth 登录 cookie（require_web_user_api，未登录返 401），不带 internal token，
 # include_in_schema=False 故不入 OpenAPI/MCP（避免被 openclaw 当工具调用）。
 app.include_router(chat_router, tags=["Web对话"])
+# 角色权限可配置 admin API（plan/15 Phase C，boss-only）：管理 user_roles 真相源。
+# 鉴权用飞书 OAuth 登录 cookie + boss 守卫（require_boss），不带 internal token，
+# include_in_schema=False 故不入 OpenAPI/MCP（避免被 openclaw 当工具调用）。
+app.include_router(admin_router)
 register_web_auth_handlers(app)  # 装 WebAuthRedirect→302 / WebAuthForbidden→403 页
 app.include_router(
     data_router,

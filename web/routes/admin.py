@@ -1,0 +1,195 @@
+"""角色权限可配置 admin API（plan/15 Phase C，boss-only）。
+
+把本地 CLI scripts/user_admin 的 list/set(upsert)/deactivate 三段业务规则原样搬到
+HTTP 端，给 Web 对话端的老板在浏览器里管理 user_roles（services/user_authz 的真相源），
+免登服务器跑 CLI。校验口径与 cmd_set 完全一致：
+- operator 必须给 allowed_scope_key，且须能通过 expand_scope（未知/停用 scope → 400）；
+- boss 忽略 scope_key（存 None）；
+- upsert：有则更新、无则创建；account_id 默认 ecom-app、channel 默认 feishu。
+
+鉴权：boss-only。复用 require_web_user_api 拿登录 open_id（未登录 401），再查
+user_authz 确认 role==boss，否则 403（与既有 AuthzError/ScopeError→403 约定一致）。
+"""
+
+from __future__ import annotations
+
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+
+from core.db import SessionLocal
+from models.base_models import UserRole
+from services.scope_resolution import ScopeError, expand_scope
+from services.user_authz import UserPermission, get_user_permission
+from web.web_security import require_web_user_api
+
+router = APIRouter(prefix="/api/admin", tags=["管理"])
+
+
+# ── boss-only 守卫 ─────────────────────────────────────────────────────────────
+
+
+def require_boss(perm: UserPermission = Depends(require_web_user_api)) -> UserPermission:
+    """boss-only 依赖：先过登录闸（require_web_user_api：未登录 401、未授角色 403），
+    再确认是 boss，否则 403（operator/未登记一律拒绝管理权限表）。"""
+    if perm is None or perm.role != "boss":
+        raise HTTPException(status_code=403, detail="仅 boss 可管理用户角色")
+    return perm
+
+
+# ── 请求/响应模型 ──────────────────────────────────────────────────────────────
+
+
+class RoleOut(BaseModel):
+    open_id: str
+    role: str
+    allowed_scope_key: Optional[str]
+    note: Optional[str]
+    is_active: bool
+    account_id: str
+    channel: str
+
+
+class RoleListOut(BaseModel):
+    items: list[RoleOut]
+
+
+class RoleUpsertIn(BaseModel):
+    open_id: str
+    role: str  # boss / operator
+    scope_key: Optional[str] = None  # operator 必填且须 active；boss 忽略
+    note: Optional[str] = None
+    account_id: str = "ecom-app"
+    channel: str = "feishu"
+
+
+class RoleDeactivateIn(BaseModel):
+    open_id: str
+    account_id: str = "ecom-app"
+    channel: str = "feishu"
+
+
+# ── 路由 ───────────────────────────────────────────────────────────────────────
+
+
+@router.get("/roles", response_model=RoleListOut, include_in_schema=False)
+async def list_roles(_: UserPermission = Depends(require_boss)):
+    """列出所有 user_roles（结构化 JSON）。对应 CLI cmd_list。"""
+    session = SessionLocal()
+    try:
+        rows = (
+            session.query(UserRole)
+            .order_by(UserRole.account_id, UserRole.role, UserRole.open_id)
+            .all()
+        )
+        items = [
+            RoleOut(
+                open_id=r.open_id,
+                role=r.role,
+                allowed_scope_key=r.allowed_scope_key,
+                note=r.note,
+                is_active=r.is_active,
+                account_id=r.account_id,
+                channel=r.channel,
+            )
+            for r in rows
+        ]
+        return RoleListOut(items=items)
+    finally:
+        session.close()
+
+
+@router.post("/roles", response_model=RoleOut, include_in_schema=False)
+async def upsert_role(body: RoleUpsertIn, _: UserPermission = Depends(require_boss)):
+    """创建/更新一个用户角色（upsert）。校验照搬 CLI cmd_set。"""
+    if body.role not in ("boss", "operator"):
+        raise HTTPException(status_code=400, detail="role 仅支持 boss / operator")
+
+    scope_key = (body.scope_key or "").strip() or None
+    if body.role == "operator":
+        if not scope_key:
+            raise HTTPException(
+                status_code=400, detail="operator 必须指定 scope_key（不可越界的硬上限）"
+            )
+        # 校验：未知/停用 scope 直接拒，绝不落脏权限。
+        try:
+            expand_scope(scope_key)
+        except ScopeError as e:
+            raise HTTPException(status_code=400, detail=f"scope 校验失败：{e}") from e
+    else:  # boss 看全部，忽略 scope（存 None）
+        scope_key = None
+
+    session = SessionLocal()
+    try:
+        row = (
+            session.query(UserRole)
+            .filter(
+                UserRole.channel == body.channel,
+                UserRole.account_id == body.account_id,
+                UserRole.open_id == body.open_id,
+            )
+            .first()
+        )
+        if row is None:
+            row = UserRole(
+                channel=body.channel,
+                account_id=body.account_id,
+                open_id=body.open_id,
+                role=body.role,
+                allowed_scope_key=scope_key,
+                note=body.note,
+                is_active=True,
+            )
+            session.add(row)
+        else:
+            row.role = body.role
+            row.allowed_scope_key = scope_key
+            if body.note is not None:
+                row.note = body.note
+            row.is_active = True
+        session.commit()
+        return RoleOut(
+            open_id=row.open_id,
+            role=row.role,
+            allowed_scope_key=row.allowed_scope_key,
+            note=row.note,
+            is_active=row.is_active,
+            account_id=row.account_id,
+            channel=row.channel,
+        )
+    finally:
+        session.close()
+
+
+@router.post("/roles/deactivate", response_model=RoleOut, include_in_schema=False)
+async def deactivate_role(body: RoleDeactivateIn, _: UserPermission = Depends(require_boss)):
+    """停用一个用户角色（is_active=False）。未找到返 404。对应 CLI cmd_deactivate。"""
+    session = SessionLocal()
+    try:
+        row = (
+            session.query(UserRole)
+            .filter(
+                UserRole.channel == body.channel,
+                UserRole.account_id == body.account_id,
+                UserRole.open_id == body.open_id,
+            )
+            .first()
+        )
+        if row is None:
+            raise HTTPException(
+                status_code=404, detail=f"未找到用户角色：{body.open_id}"
+            )
+        row.is_active = False
+        session.commit()
+        return RoleOut(
+            open_id=row.open_id,
+            role=row.role,
+            allowed_scope_key=row.allowed_scope_key,
+            note=row.note,
+            is_active=row.is_active,
+            account_id=row.account_id,
+            channel=row.channel,
+        )
+    finally:
+        session.close()
