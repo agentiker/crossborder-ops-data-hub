@@ -27,13 +27,39 @@ function gotoLogin() {
   window.location.href = LOGIN_PATH;
 }
 
+// 把 FastAPI 的 {detail: "..."} 反解出来再抛；后端中文错误能直接展示给 boss。
+async function extractError(r: Response): Promise<string> {
+  try {
+    const body = await r.json();
+    if (body && typeof body.detail === "string") return body.detail;
+  } catch {
+    // 非 JSON 响应（如 502），落回 HTTP 状态
+  }
+  return `HTTP ${r.status}`;
+}
+
 async function getJSON<T>(url: string): Promise<T> {
   const r = await fetch(url, { credentials: "same-origin" });
   if (r.status === 401) {
     gotoLogin();
     throw new Error("unauthenticated");
   }
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  if (!r.ok) throw new Error(await extractError(r));
+  return r.json();
+}
+
+async function postJSON<T>(url: string, body: unknown, method = "POST"): Promise<T> {
+  const r = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify(body),
+  });
+  if (r.status === 401) {
+    gotoLogin();
+    throw new Error("unauthenticated");
+  }
+  if (!r.ok) throw new Error(await extractError(r));
   return r.json();
 }
 
@@ -107,7 +133,7 @@ export interface BoardData {
   };
 }
 
-// ── 角色管理（plan/15 Phase C · 只读，boss-only；CRUD 留 Phase C）──
+// ── 角色管理（plan/15 Phase C · boss-only CRUD）──
 export interface RoleRow {
   open_id: string;
   role: string;
@@ -118,6 +144,20 @@ export interface RoleRow {
   channel: string;
 }
 
+export interface AdminScopeOption {
+  scope_key: string;
+  scope_name: string;
+}
+
+export interface RoleUpsertBody {
+  open_id: string;
+  role: "boss" | "operator";
+  scope_key?: string | null;
+  note?: string | null;
+  account_id?: string;
+  channel?: string;
+}
+
 export const api = {
   me: () => getJSON<Me>("/api/me"),
   boardData: (period: string, scope = "") =>
@@ -125,6 +165,10 @@ export const api = {
       `/board/data?period=${encodeURIComponent(period)}&scope=${encodeURIComponent(scope)}`,
     ),
   adminRoles: () => getJSON<{ items: RoleRow[] }>("/api/admin/roles"),
+  adminScopes: () => getJSON<{ items: AdminScopeOption[] }>("/api/admin/scopes"),
+  adminUpsertRole: (body: RoleUpsertBody) => postJSON<RoleRow>("/api/admin/roles", body),
+  adminDeactivateRole: (open_id: string, account_id = "ecom-app", channel = "feishu") =>
+    postJSON<RoleRow>("/api/admin/roles/deactivate", { open_id, account_id, channel }),
   conversations: () => getJSON<{ items: ConversationItem[] }>("/api/conversations"),
   conversation: (id: number) =>
     getJSON<{ id: number; title: string; messages: Message[] }>(

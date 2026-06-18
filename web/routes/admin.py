@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from core.db import SessionLocal
 from models.base_models import UserRole
-from services.scope_resolution import ScopeError, expand_scope
+from services.scope_resolution import ScopeError, expand_scope, list_scopes
 from services.user_authz import UserPermission, get_user_permission
 from web.web_security import require_web_user_api
 
@@ -68,6 +68,15 @@ class RoleDeactivateIn(BaseModel):
     open_id: str
     account_id: str = "ecom-app"
     channel: str = "feishu"
+
+
+class ScopeOptionOut(BaseModel):
+    scope_key: str
+    scope_name: str
+
+
+class ScopeListOut(BaseModel):
+    items: list[ScopeOptionOut]
 
 
 # ── 路由 ───────────────────────────────────────────────────────────────────────
@@ -160,6 +169,15 @@ async def upsert_role(body: RoleUpsertIn, _: UserPermission = Depends(require_bo
         )
     finally:
         session.close()
+
+
+@router.get("/scopes", response_model=ScopeListOut, include_in_schema=False)
+async def list_admin_scopes(_: UserPermission = Depends(require_boss)):
+    """boss 选择 operator 数据范围时的可选项；纯只读，复用 services.list_scopes()。"""
+    return ScopeListOut(items=[
+        ScopeOptionOut(scope_key=s["scope_key"], scope_name=s["scope_name"])
+        for s in list_scopes()
+    ])
 
 
 @router.post("/roles/deactivate", response_model=RoleOut, include_in_schema=False)

@@ -17,9 +17,10 @@ interface Props<T> {
   rowKey: (row: T, index: number) => string | number;
   empty?: ReactNode;
   className?: string;
+  rowClassName?: (row: T, index: number) => string;
 }
 
-export function DataTable<T>({ columns, rows, rowKey, empty = "暂无数据", className }: Props<T>) {
+export function DataTable<T>({ columns, rows, rowKey, empty = "暂无数据", className, rowClassName }: Props<T>) {
   return (
     <div className={cn("overflow-hidden rounded-lg border", className)}>
       <table className="w-full text-sm">
@@ -51,7 +52,13 @@ export function DataTable<T>({ columns, rows, rowKey, empty = "暂无数据", cl
             </tr>
           ) : (
             rows.map((row, i) => (
-              <tr key={rowKey(row, i)} className="border-b last:border-0 hover:bg-muted/40">
+              <tr
+                key={rowKey(row, i)}
+                className={cn(
+                  "border-b last:border-0 hover:bg-muted/40",
+                  rowClassName?.(row, i),
+                )}
+              >
                 {columns.map((c) => (
                   <td
                     key={c.key}

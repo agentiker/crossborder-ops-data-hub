@@ -208,3 +208,28 @@ def test_boss_deactivate_not_found_404(_db):
     _login(BOSS)
     r = TestClient(app).post("/api/admin/roles/deactivate", json={"open_id": "ou_missing"})
     assert r.status_code == 404
+
+
+# ── scopes 列表（Phase C 前端用）─────────────────────────────────────────────
+
+
+def test_boss_list_scopes(_db, monkeypatch):
+    monkeypatch.setattr(admin_mod, "list_scopes", lambda: [
+        {"scope_key": "tts-id-all", "scope_name": "印尼TikTok全部店"},
+        {"scope_key": "tts-id-shop-1", "scope_name": "印尼店一"},
+    ])
+    _login(BOSS)
+    r = TestClient(app).get("/api/admin/scopes")
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert {i["scope_key"] for i in items} == {"tts-id-all", "tts-id-shop-1"}
+    assert items[0]["scope_name"]  # 不为空
+
+
+def test_operator_list_scopes_forbidden(_db):
+    _login(OPER)
+    assert TestClient(app).get("/api/admin/scopes").status_code == 403
+
+
+def test_unauth_list_scopes_401():
+    assert TestClient(app).get("/api/admin/scopes").status_code == 401
