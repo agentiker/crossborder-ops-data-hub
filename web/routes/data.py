@@ -332,6 +332,23 @@ class LowStockResponse(BaseModel):
     caliber: Optional[str] = None
 
 
+class DashboardSummaryResponse(BaseModel):
+    """看板聚合响应：一次请求拿齐各卡片数据，供 SPA 看板一次取数、少跑 round-trip。
+
+    各卡片字段与 web/routes/board::_collect 收集的块一一对应。单个卡片取数失败时该字段置
+    None、并在 errors 里记一条 {card: 错误信息}，不让整体 500（看板宁愿少一块也别整页挂）。
+    """
+
+    scope: Optional[str] = None  # 本次查询范围 display_text
+    period: Optional[str] = None  # 趋势/榜单时间窗口
+    overview: Optional[OverviewResponse] = None
+    orders_trend: Optional[TrendResponse] = None
+    top_skus: Optional[TopSkuResponse] = None
+    low_stock: Optional[LowStockResponse] = None
+    fulfillments_pending: Optional[PendingFulfillmentsResponse] = None
+    errors: dict[str, str] = {}  # card_name -> 错误信息（取数失败的卡片）
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 
@@ -798,4 +815,74 @@ async def get_dashboard_link(
     # 审计日志：弱模型理论上可能把 A 的链接签给 B（软隔离根本局限），靠短时效 + 此日志缓解。
     logger.info("dashboard link issued: open_id=%s ttl=%ss", open_id, ttl)
     return DashboardLinkResponse(url=url, expires_in=ttl, markdown=markdown)
+
+
+@router.get(
+    "/dashboard/summary",
+    response_model=DashboardSummaryResponse,
+    operation_id="ops_dashboard_summary",
+)
+async def get_dashboard_summary(
+    platform: Optional[str] = Query(None, description="平台标识，如 tiktok_shop / shopee"),
+    country: Optional[str] = Query(None, description="国家/地区，如 ID / GLOBAL"),
+    shop_id: Optional[str] = Query(None, description="店铺ID"),
+    scope_id: Optional[str] = Query(None, description="业务范围 scope_key（命名店铺集合）"),
+    shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
+    start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD（趋势/榜单窗口）"),
+    end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD（趋势/榜单窗口）"),
+    period: Optional[str] = Query(None, description="相对时间窗口（按印尼时区、周一起算）：today/yesterday/this_week/last_week/last_7d/last_30d/this_month。与 start_date/end_date 二选一，显式日期优先。"),
+    open_id: Optional[str] = Query(None, description="飞书用户 open_id（ou_xxx，用于自动应用会话默认范围）"),
+):
+    """看板聚合端点：一次返回各卡片数据（概览/订单趋势/Top SKU/低库存/待发货）。
+
+    供 SPA 看板一次取数、少跑多次 round-trip。进程内直接复用各 ops_* 端点函数（不走 HTTP 自调），
+    范围/权限沿用与其它 data.py 端点完全一致的解析（scope_id / shop_ids / open_id 等）。
+    单个卡片取数失败不整体 500：该卡片置 None，并在 errors 里记一条 {card: 错误信息}。
+    时间窗口（period 或 start_date/end_date）只作用于趋势/榜单卡片，与 trend/summary 用法对齐。
+    """
+    # 共用的公共范围参数（与各 ops_* 端点同名同序传入），避免各卡片重复书写。
+    common = dict(
+        platform=platform, country=country, shop_id=shop_id,
+        scope_id=scope_id, shop_ids=shop_ids, open_id=open_id,
+    )
+    result = DashboardSummaryResponse(period=period, errors={})
+
+    # 各卡片独立 await + 容错：单卡抛错只记录、不影响其它卡片与整体响应码。
+    async def _safe(card: str, coro):
+        try:
+            return await coro
+        except Exception as exc:  # noqa: BLE001 — 单卡兜底，错误下放到 errors 字段
+            logger.warning("dashboard summary card failed: card=%s err=%s", card, exc)
+            result.errors[card] = str(exc)
+            return None
+
+    result.overview = await _safe("overview", get_overview(**common))
+    result.orders_trend = await _safe(
+        "orders_trend",
+        get_orders_trend(start_date=start_date, end_date=end_date, period=period, **common),
+    )
+    result.top_skus = await _safe(
+        "top_skus",
+        get_orders_top_skus(
+            start_date=start_date, end_date=end_date, period=period, limit=10, **common
+        ),
+    )
+    result.low_stock = await _safe(
+        "low_stock",
+        get_low_stock(critical_days=None, warning_days=None, **common),
+    )
+    result.fulfillments_pending = await _safe(
+        "fulfillments_pending",
+        get_fulfillments_pending(warning_hours=None, limit=50, **common),
+    )
+
+    # 范围 display_text：取任一成功卡片的 scope（各卡片范围一致）。
+    for card in (result.overview, result.orders_trend, result.top_skus,
+                 result.low_stock, result.fulfillments_pending):
+        if card is not None:
+            result.scope = getattr(card, "scope", None) if hasattr(card, "scope") else card.get("scope")
+            if result.scope:
+                break
+
+    return result
 
