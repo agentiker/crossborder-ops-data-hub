@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import * as echarts from "echarts/core";
-import { BarChart, LineChart } from "echarts/charts";
+import { BarChart, FunnelChart, GaugeChart, LineChart, PieChart } from "echarts/charts";
 import { GridComponent, LegendComponent, TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
-import { useTheme } from "@/theme";
 
-// 按需注册（tree-shake）：只引看板用到的折线/条形 + 网格/提示/图例 + Canvas 渲染。
+// 按需注册（tree-shake）：看板用到的折线/条形/环图/仪表盘/漏斗 + 网格/提示/图例 + Canvas 渲染。
 echarts.use([
   LineChart,
   BarChart,
+  PieChart,
+  GaugeChart,
+  FunnelChart,
   GridComponent,
   TooltipComponent,
   LegendComponent,
@@ -27,28 +29,27 @@ export interface ChartTokens {
 
 function readTokens(): ChartTokens {
   const s = getComputedStyle(document.documentElement);
-  const v = (n: string) => {
+  // HSL 通道值（shadcn 基础色）需 hsl() 包裹
+  const hsl = (n: string) => {
     const raw = s.getPropertyValue(n).trim();
     return raw ? `hsl(${raw})` : "#888";
   };
+  // 半透明真值（StoreClaw 前景/描边）直接取用，不能再包 hsl()
+  const raw = (n: string) => s.getPropertyValue(n).trim() || "#888";
   return {
-    text: v("--foreground"),
-    sub: v("--muted-foreground"),
-    grid: v("--border"),
-    primary: v("--primary"),
-    positive: v("--positive"),
-    negative: v("--negative"),
-    warning: v("--warning"),
+    text: raw("--foreground"),
+    sub: hsl("--muted-foreground"),
+    grid: raw("--border"),
+    primary: hsl("--primary"),
+    positive: hsl("--positive"),
+    negative: hsl("--negative"),
+    warning: hsl("--warning"),
   };
 }
 
-// 随主题变化重算 token 颜色（系列/坐标轴/文字用）；切主题后 CSS 变量已更新再读取。
+// 单浅色主题：token 颜色一次读定（系列/坐标轴/文字用），无主题切换需重算。
 export function useChartTokens(): ChartTokens {
-  const { theme } = useTheme();
-  const [tok, setTok] = useState<ChartTokens>(() => readTokens());
-  useEffect(() => {
-    setTok(readTokens());
-  }, [theme]);
+  const [tok] = useState<ChartTokens>(() => readTokens());
   return tok;
 }
 

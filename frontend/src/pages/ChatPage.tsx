@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Sparkles, Wrench } from "lucide-react";
-import { api, sendChat, type ConversationItem, type Message } from "@/api";
-import { ConversationList } from "@/components/chat/ConversationList";
-import { Markdown } from "@/components/Markdown";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { useNavigate, useParams } from "react-router-dom";
+import { api, sendChat, type Message, type ThinkingStep } from "@/api";
+import { useMe, useShell } from "@/components/shell/AppShell";
+import { WelcomeScreen } from "@/components/chat/WelcomeScreen";
+import { ChatInput } from "@/components/chat/ChatInput";
+import { QuickActions } from "@/components/chat/QuickActions";
+import { ChatMessage, type ThinkingStep as ForkStep } from "@/components/chat/ChatMessage";
 
 // ops_* 工具的中文展示名（与后端 agent_tools 对齐）。
 const TOOL_LABELS: Record<string, string> = {
@@ -16,110 +17,146 @@ const TOOL_LABELS: Record<string, string> = {
   ops_fulfillments_pending: "待发货",
 };
 
-// 建议 chips（首页命令栏）。
+// 建议 chips（首页命令栏，横滚）。
 const PRESETS = [
   "最近 7 天整体经营情况怎么样？",
   "近 30 天卖得最好的 10 个商品",
   "现在有多少待发货订单，有超时的吗？",
+  "有哪些 SKU 快断货了？",
 ];
 
-// 首页 2 张真实快捷卡：点击直接在控制台发起对话（展示 agent 取数）。
-const QUICK_CARDS = [
-  {
-    title: "今日经营简报",
-    desc: "GMV、订单数、待发货一眼看全",
-    q: "今天的 GMV、订单数和待发货情况怎么样？",
-  },
-  {
-    title: "断货风险速览",
-    desc: "哪些 SKU 快卖断了、该补货了",
-    q: "有哪些 SKU 快断货了？",
-  },
-];
+// ── 数据适配层（解耦薄壳，将来换 agent 框架后端只动这里）──
+// 当前 SSE 的 tool 事件只有 {name,label,done}；fork ChatMessage 吃 {type,label,detail?,status}。
+// 我方 6 个工具全是 ops_* 取数调用 → type 一律归 'api'（Database 绿标，语义如实）；
+// detail 无真实来源故留空（不造假）；status 由 done 降级映射。
+function adaptSteps(steps?: ThinkingStep[]): ForkStep[] {
+  return (steps || []).map((s) => ({
+    type: "api" as const,
+    label: s.label,
+    status: s.done ? ("done" as const) : ("running" as const),
+  }));
+}
 
-// 按本机时刻给时段名 + 问候语（StoreClaw 时段 pill）。
-function timeOfDay(): { period: string; greeting: string } {
-  const h = new Date().getHours();
-  if (h < 5) return { period: "夜深", greeting: "夜深了，看看今天的生意" };
-  if (h < 8) return { period: "清晨", greeting: "早，先看看昨天的收成" };
-  if (h < 11) return { period: "上午", greeting: "上午好，今天想看哪块数据" };
-  if (h < 13) return { period: "午后", greeting: "午间好，店铺跑得怎么样" };
-  if (h < 18) return { period: "下午", greeting: "下午好，盯一眼经营节奏" };
-  if (h < 23) return { period: "傍晚", greeting: "傍晚好，盘点今天这一单单" };
-  return { period: "夜深", greeting: "夜深了，看看今天的生意" };
+// 客户端如实计时 → fork 的「Worked for…」折叠标题文案。
+function fmtWorked(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `用时 ${s} 秒`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return r ? `用时 ${m} 分 ${r} 秒` : `用时 ${m} 分`;
+}
+
+// 助手消息的折叠标题：有真实耗时→用时；仅有历史步骤无耗时→中性「运行过程」（不编造时长）；无步骤→不显示折叠区。
+function workingLabel(steps?: ThinkingStep[], workedMs?: number): string | undefined {
+  if (workedMs != null) return fmtWorked(workedMs);
+  if (steps && steps.length) return "运行过程";
+  return undefined;
+}
+
+// 客户端逐条元信息（时间戳 + 助手真实耗时），与 messages 等长平行存放。
+interface MsgMeta {
+  ts?: string;
+  workedMs?: number;
+}
+
+function nowTs(): string {
+  return new Date().toLocaleString("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export function ChatPage() {
-  const [conversations, setConversations] = useState<ConversationItem[]>([]);
-  const [activeId, setActiveId] = useState<number | null>(null);
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const me = useMe();
+  const { refreshConversations } = useShell();
+  const convId = id ? Number(id) : null;
+
   const [messages, setMessages] = useState<Message[]>([]);
+  const [metas, setMetas] = useState<MsgMeta[]>([]);
+  const [convTitle, setConvTitle] = useState<string>("");
   const [liveText, setLiveText] = useState("");
-  const [toolStatus, setToolStatus] = useState<string | null>(null);
+  const [liveSteps, setLiveSteps] = useState<ThinkingStep[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [tod] = useState(timeOfDay);
+  const loadedRef = useRef<number | null>(null);
 
+  // 会话切换由 URL /c/:id 驱动；loadedRef 防止「发消息后导航到新 id」时重复加载。
   useEffect(() => {
-    refreshConversations();
-  }, []);
+    if (convId === null) {
+      if (loadedRef.current !== null) {
+        setMessages([]);
+        setMetas([]);
+        setConvTitle("");
+        setError(null);
+        loadedRef.current = null;
+      }
+      return;
+    }
+    if (loadedRef.current === convId) return;
+    loadedRef.current = convId;
+    setError(null);
+    api
+      .conversation(convId)
+      .then((d) => {
+        setMessages(d.messages);
+        setConvTitle(d.title || "");
+        // 历史消息没有客户端时间戳/耗时，留空即可。
+        setMetas(d.messages.map(() => ({})));
+      })
+      .catch(() => {
+        setMessages([]);
+        setMetas([]);
+      });
+  }, [convId]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages, liveText, toolStatus]);
-
-  function refreshConversations() {
-    api.conversations().then((r) => setConversations(r.items)).catch(() => {});
-  }
-
-  async function openConversation(id: number) {
-    if (streaming) return;
-    setActiveId(id);
-    setError(null);
-    setLiveText("");
-    try {
-      const detail = await api.conversation(id);
-      setMessages(detail.messages);
-    } catch {
-      setMessages([]);
-    }
-  }
-
-  function newConversation() {
-    if (streaming) return;
-    setActiveId(null);
-    setMessages([]);
-    setLiveText("");
-    setError(null);
-  }
-
-  async function deleteConversation(id: number) {
-    await api.remove(id);
-    if (id === activeId) newConversation();
-    refreshConversations();
-  }
+  }, [messages, liveText, liveSteps, streaming]);
 
   async function send(text: string) {
     if (streaming) return;
     setError(null);
     setMessages((m) => [...m, { role: "user", content: text }]);
+    setMetas((x) => [...x, { ts: nowTs() }]);
     setStreaming(true);
     setLiveText("");
-    setToolStatus(null);
+    setLiveSteps([]);
 
-    const convId = activeId;
+    const startedAt = Date.now();
     let acc = "";
+    let steps: ThinkingStep[] = [];
     try {
       for await (const ev of sendChat(text, convId)) {
         if (ev.type === "meta") {
-          if (activeId === null) setActiveId(ev.conversation_id);
+          if (!convTitle) setConvTitle(ev.title || "");
+          // 新会话：标记已加载并把 URL 切到该会话（loadedRef 防重载）。
+          if (convId === null) {
+            loadedRef.current = ev.conversation_id;
+            navigate(`/c/${ev.conversation_id}`, { replace: true });
+          }
         } else if (ev.type === "delta") {
           acc += ev.text;
           setLiveText(acc);
-          setToolStatus(null);
         } else if (ev.type === "tool") {
           const label = TOOL_LABELS[ev.name] || ev.name;
-          setToolStatus(ev.status === "running" ? `正在查询：${label}…` : null);
+          if (ev.status === "running") {
+            if (!steps.some((s) => s.name === ev.name && !s.done)) {
+              steps = [...steps, { name: ev.name, label, done: false }];
+            }
+          } else {
+            let marked = false;
+            steps = steps.map((s) =>
+              !marked && s.name === ev.name && !s.done
+                ? ((marked = true), { ...s, done: true })
+                : s,
+            );
+          }
+          setLiveSteps(steps);
         } else if (ev.type === "error") {
           setError(ev.message);
         }
@@ -128,199 +165,97 @@ export function ChatPage() {
       setError(String(e));
     }
 
-    setMessages((m) => [...m, { role: "assistant", content: acc }]);
+    steps = steps.map((s) => ({ ...s, done: true }));
+    // 客户端如实计时：流式开始→结束的真实耗时，仅当有工具步骤时才展示「用时」。
+    const workedMs = steps.length ? Date.now() - startedAt : undefined;
+    setMessages((m) => [
+      ...m,
+      { role: "assistant", content: acc, steps: steps.length ? steps : undefined },
+    ]);
+    setMetas((x) => [...x, { ts: nowTs(), workedMs }]);
     setLiveText("");
-    setToolStatus(null);
+    setLiveSteps([]);
     setStreaming(false);
     refreshConversations();
   }
 
   const isEmpty = messages.length === 0 && !streaming;
+  // 当前 Me 无姓名字段：boss 称「老板」，operator 用其范围标签；兜底「老板」。
+  const who = me?.is_boss ? "老板" : me?.scope_label?.trim() || "老板";
 
-  return (
-    <div className="flex h-full">
-      <ConversationList
-        conversations={conversations}
-        activeId={activeId}
-        onSelect={openConversation}
-        onNew={newConversation}
-        onDelete={deleteConversation}
-      />
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        {isEmpty ? (
-          // ── 首页命令栏 launcher ────────────────────────────────────────────
-          <div className="flex-1 overflow-y-auto">
-            <div className="mx-auto w-full max-w-2xl px-6 pb-16 pt-[14vh]">
-              <div className="inline-flex items-center gap-1.5 rounded-full border bg-card px-3 py-1 text-xs font-medium text-muted-foreground">
-                <Sparkles className="size-3.5 text-[hsl(var(--gold))]" />
-                {tod.period}
-              </div>
-
-              <h1 className="font-display mt-5 text-4xl font-semibold leading-[1.15] tracking-tight sm:text-[2.75rem]">
-                {tod.greeting}
-              </h1>
-              <p className="mt-2 text-sm text-muted-foreground">
-                问我店铺的 GMV、订单、爆款、库存与待发货——按你的权限范围答。
-              </p>
-
-              <div className="mt-6">
-                <Composer onSend={send} streaming={streaming} autoFocus size="home" />
-              </div>
-
-              <div className="mt-4 flex flex-wrap gap-2">
-                {PRESETS.map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => send(p)}
-                    className="rounded-full border bg-card px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-
-              <div className="mt-7 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {QUICK_CARDS.map((c) => (
-                  <button
-                    key={c.title}
-                    onClick={() => send(c.q)}
-                    className="group rounded-2xl border bg-card p-4 text-left transition-colors hover:border-foreground/30"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-display text-base font-semibold">{c.title}</span>
-                      <ArrowUp className="size-4 rotate-45 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground">{c.desc}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        ) : (
-          // ── 对话视图 ───────────────────────────────────────────────────────
-          <>
-            <div ref={scrollRef} className="flex-1 overflow-y-auto">
-              <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
-                {messages.map((m, i) => (
-                  <Bubble key={m.id ?? i} role={m.role} content={m.content} />
-                ))}
-
-                {streaming && (
-                  <div className="mb-8">
-                    {toolStatus && (
-                      <div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
-                        <Wrench className="size-3" />
-                        {toolStatus}
-                      </div>
-                    )}
-                    {liveText ? (
-                      <Markdown text={liveText} />
-                    ) : (
-                      !toolStatus && <span className="text-sm text-muted-foreground">思考中…</span>
-                    )}
-                  </div>
-                )}
-
-                {error && <div className="mb-6 text-sm text-destructive">⚠️ {error}</div>}
-              </div>
-            </div>
-
-            <div className="bg-background/80 px-4 pb-3 pt-1 backdrop-blur sm:px-6">
-              <div className="mx-auto max-w-3xl">
-                <Composer onSend={send} streaming={streaming} />
-                <p className="mt-2 text-center text-xs text-muted-foreground">
-                  AI 可能出错，请核对重要数据。
-                </p>
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// 命令栏输入（首页居中大号 / 对话底部 docked 同款）。自管 textarea，提交后清空。
-function Composer({
-  onSend,
-  streaming,
-  autoFocus,
-  size = "docked",
-}: {
-  onSend: (text: string) => void;
-  streaming: boolean;
-  autoFocus?: boolean;
-  size?: "home" | "docked";
-}) {
-  const ref = useRef<HTMLTextAreaElement>(null);
-
-  function submit() {
-    const el = ref.current;
-    if (!el) return;
-    const text = el.value.trim();
-    if (!text || streaming) return;
-    el.value = "";
-    el.style.height = "auto";
-    onSend(text);
-  }
-
-  return (
-    <div
-      className={cn(
-        "flex items-end gap-2 rounded-2xl border border-input bg-card shadow-sm transition-shadow focus-within:ring-2 focus-within:ring-ring",
-        size === "home" ? "px-3 py-2.5" : "px-3 py-2",
-      )}
-    >
-      <textarea
-        ref={ref}
-        rows={1}
-        autoFocus={autoFocus}
-        placeholder="问我店铺经营数据，Enter 发送，Shift+Enter 换行"
-        className={cn(
-          "max-h-40 flex-1 resize-none bg-transparent px-1.5 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none",
-          size === "home" && "text-base",
-        )}
-        onInput={(e) => {
-          const t = e.currentTarget;
-          t.style.height = "auto";
-          t.style.height = Math.min(t.scrollHeight, 160) + "px";
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            submit();
-          }
-        }}
-      />
-      <Button
-        size="icon"
-        className={cn("shrink-0 rounded-xl", size === "home" ? "h-10 w-10" : "h-9 w-9")}
-        disabled={streaming}
-        onClick={submit}
-        aria-label="发送"
-      >
-        <ArrowUp className="size-4" />
-      </Button>
-    </div>
-  );
-}
-
-function Bubble({ role, content }: { role: string; content: string }) {
-  const isUser = role === "user";
-  if (isUser) {
+  // ── 首页 launcher（空态）：照 fork App 的 chat 分支组合 WelcomeScreen + ChatInput + QuickActions ──
+  if (isEmpty) {
     return (
-      <div className="mb-8 flex justify-end">
-        <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-muted px-4 py-2.5 text-sm">
-          {content}
+      <section className="flex flex-col h-full">
+        <div className="flex-1 flex flex-col items-center justify-center pb-24 px-4 sm:px-6 md:px-8">
+          <div className="w-full max-w-[1038px] flex flex-col items-center">
+            <WelcomeScreen userName={who} />
+            <ChatInput onSend={send} disabled={streaming} />
+            <QuickActions presets={PRESETS} onPick={send} />
+            {error && <p className="mt-4 text-sm text-destructive">⚠️ {error}</p>}
+          </div>
         </div>
-      </div>
+      </section>
     );
   }
-  // 助手：无气泡裸文（StoreClaw 风）
+
+  // ── 会话视图：照 fork ChatPage 版式（h-[68px] 头 + max-w-4xl 消息区 gap-9 + sticky 输入）──
   return (
-    <div className="mb-8">
-      <Markdown text={content} />
-    </div>
+    <section className="flex flex-col h-full">
+      {/* Header */}
+      <header className="flex items-center justify-between gap-2 px-4 h-[68px] shrink-0 border-b border-border-shallow sticky z-50 top-0 bg-background-solid">
+        <div className="flex items-center gap-1 flex-1 min-w-0">
+          <div className="flex-1 flex flex-col justify-center min-w-0">
+            <h1 className="text-lg font-medium text-foreground leading-6 truncate">
+              {convTitle || "新对话"}
+            </h1>
+          </div>
+        </div>
+      </header>
+
+      {/* Messages */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-4xl px-0 py-3 pb-24 md:py-6 md:px-4 md:pb-32">
+          <div className="px-1.5 md:px-6">
+            <div className="flex flex-col gap-9 pb-20 pt-2 transition-[min-height] duration-500 ease-out mx-auto w-full max-w-4xl">
+              {messages.map((m, i) => (
+                <ChatMessage
+                  key={m.id ?? i}
+                  role={m.role === "user" ? "user" : "assistant"}
+                  content={m.content}
+                  timestamp={metas[i]?.ts}
+                  workingTime={
+                    m.role === "user" ? undefined : workingLabel(m.steps, metas[i]?.workedMs)
+                  }
+                  thinkingSteps={m.role === "user" ? undefined : adaptSteps(m.steps)}
+                />
+              ))}
+
+              {/* 流式进行中的助手回合 */}
+              {streaming && (
+                <ChatMessage
+                  role="assistant"
+                  content={liveText}
+                  workingTime={liveSteps.length ? "运行中…" : "思考中…"}
+                  thinkingSteps={adaptSteps(liveSteps)}
+                  isStreaming
+                  defaultThinkingOpen
+                />
+              )}
+
+              {error && <div className="px-2 text-sm text-destructive">⚠️ {error}</div>}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Input */}
+      <div className="sticky bottom-0 bg-background-solid px-4 pb-3 pt-1">
+        <ChatInput onSend={send} disabled={streaming} />
+        <p className="mt-2 text-center text-xs text-foreground-tertiary">
+          AI 可能出错，请核对重要数据。
+        </p>
+      </div>
+    </section>
   );
 }

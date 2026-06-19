@@ -16,6 +16,8 @@ import logging
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from core.timezone import previous_window, resolve_period
+from services.order_metrics import get_gmv_summary
 from services.scope_resolution import ScopeError, list_scopes
 from services.user_authz import AuthzError, UserPermission, resolve_authorized_scope
 from web.routes.data import (
@@ -33,6 +35,13 @@ router = APIRouter()
 
 def _asdict(obj):
     return obj.model_dump() if hasattr(obj, "model_dump") else obj
+
+
+def _pct(cur: float, prev: float):
+    """环比百分比（保留 1 位小数）。上期基准为 0（无可比）→ None，前端不渲染该行，不臆造。"""
+    if not prev:
+        return None
+    return round((cur - prev) / prev * 100, 1)
 
 
 def _scope_options(perm: UserPermission) -> list[dict]:
@@ -86,6 +95,32 @@ async def _collect(perm: UserPermission, period: str, requested_scope_key: str) 
     )
 
     overview = _asdict(overview)
+    # 环比：按所选 period 取当期 + 紧邻等长上期，把 overview.orders 统一成跟随 period 的当期口径，
+    # 并注入 change。（get_overview 的 orders 段固定为近 7 天、不随 period 变；这里对齐到当期。）
+    try:
+        cur_start, cur_end = resolve_period(period)
+    except ValueError:
+        cur_start, cur_end = resolve_period("last_30d")
+    prev_start, prev_end = previous_window(cur_start, cur_end)
+    shop_id_list = filters.shop_ids or None
+    cur = get_gmv_summary(
+        start_date=cur_start, end_date=cur_end,
+        platform=platform, country=country, shop_ids=shop_id_list,
+    )
+    prev = get_gmv_summary(
+        start_date=prev_start, end_date=prev_end,
+        platform=platform, country=country, shop_ids=shop_id_list,
+    )
+    overview["orders"] = {
+        "gmv": cur["gmv"], "order_count": cur["order_count"],
+        "units_sold": cur["units_sold"], "avg_order_value": cur["avg_order_value"],
+    }
+    overview["change"] = {
+        "gmv": _pct(cur["gmv"], prev["gmv"]),
+        "order_count": _pct(cur["order_count"], prev["order_count"]),
+        "units_sold": _pct(cur["units_sold"], prev["units_sold"]),
+        "avg_order_value": _pct(cur["avg_order_value"], prev["avg_order_value"]),
+    }
     return {
         "scope": filters.display_text,
         "scope_key": requested_scope_key or "",
