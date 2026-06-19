@@ -14,11 +14,19 @@ export interface ConversationItem {
   updated_at: string | null;
 }
 
+// 助手消息的「思考步骤」：工具调用轨迹。纯前端内存字段（流式时累积），不持久化到后端。
+export interface ThinkingStep {
+  name: string;
+  label: string;
+  done: boolean;
+}
+
 export interface Message {
   id?: number;
   role: string;
   content: string;
   tool_calls?: unknown;
+  steps?: ThinkingStep[];
 }
 
 const LOGIN_PATH = "/board/auth/feishu/login";

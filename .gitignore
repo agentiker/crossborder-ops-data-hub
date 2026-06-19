@@ -14,3 +14,6 @@ tmp/
 node_modules/
 frontend/dist/
 
+# 自托管字体二进制（许可合规，不入库）
+frontend/public/fonts/*.woff2
+
