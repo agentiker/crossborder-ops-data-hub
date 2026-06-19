@@ -276,9 +276,14 @@ class TikTokShopClient(BaseAPIClient):
         path: str,
         params: dict = None,
         data: dict = None,
-        max_retries: int = 2
+        max_retries: int = 2,
+        version: str = "202309",
     ) -> dict:
-        """TikTok request with access token header."""
+        """TikTok request with access token header.
+
+        version: 接口版本号（公共参数 version + 参与签名）。多数接口为 202309；
+        finance 部分端点须用 202501/202507（如 statement_transactions），故可覆盖。
+        """
         self._ensure_token()
 
         params = params or {}
@@ -290,7 +295,7 @@ class TikTokShopClient(BaseAPIClient):
             data=data,
             max_retries=max_retries,
         ) if not headers else self._request_with_headers(
-            method, path, params, data, headers, max_retries
+            method, path, params, data, headers, max_retries, version
         )
 
     def _request_with_headers(
@@ -301,12 +306,13 @@ class TikTokShopClient(BaseAPIClient):
         data: dict | None,
         headers: dict,
         max_retries: int,
+        version: str = "202309",
     ) -> dict:
         url = f"{self.base_url}{path}"
         params.update({
             "app_key": self.app_key,
             "timestamp": str(int(time.time())),
-            "version": "202309",
+            "version": version,
         })
         # data 为 {} 时也需序列化成 "{}" 并带 Content-Type（POST 空 body 合法，
         # 否则 TikTok 对缺失 Content-Type 的 POST 返回 415）；GET 时 data=None 不带 body。
@@ -485,6 +491,88 @@ class TikTokShopClient(BaseAPIClient):
                 sort_field=sort_field,
                 sort_order=sort_order,
             )
+            yield data
+            page_token = data.get("next_page_token")
+            if not page_token:
+                break
+
+    # ── 结算/财务（finance）────────────────────────────────────────────────
+
+    def iter_statements(
+        self,
+        *,
+        statement_time_ge: Optional[int] = None,
+        statement_time_lt: Optional[int] = None,
+        payment_status: Optional[str] = None,
+        page_size: int = 50,
+        sort_field: str = "statement_time",
+        sort_order: str = "DESC",
+    ):
+        """翻页拉取结算单列表（GET /finance/202309/statements）。
+
+        每页 yield data 段（含 statements[]、next_page_token）。每个 statement 含
+        id / statement_time / currency 等；id 用于下一步取交易明细。时间窗 statement_time_ge/lt
+        与分页、shop_cipher 均放 query（参与签名）。仅有 2023-07-01 之后数据。
+        """
+        page_token = None
+        while True:
+            params: dict = {
+                "page_size": page_size,
+                "sort_field": sort_field,
+                "sort_order": sort_order,
+            }
+            if self.shop_cipher:
+                params["shop_cipher"] = self.shop_cipher
+            if statement_time_ge is not None:
+                params["statement_time_ge"] = statement_time_ge
+            if statement_time_lt is not None:
+                params["statement_time_lt"] = statement_time_lt
+            if payment_status:
+                params["payment_status"] = payment_status
+            if page_token:
+                params["page_token"] = page_token
+            result = self.request(
+                "GET", "/finance/202309/statements", params=params, data=None,
+                version="202309",
+            )
+            data = result.get("data", {})
+            yield data
+            page_token = data.get("next_page_token")
+            if not page_token:
+                break
+
+    def iter_statement_transactions(
+        self,
+        statement_id: str,
+        *,
+        page_size: int = 50,
+        sort_field: str = "order_create_time",
+        sort_order: str = "ASC",
+    ):
+        """翻页拉取某结算单下的交易明细（GET /finance/202501/statements/{id}/statement_transactions）。
+
+        必须用 202501 版本：只有该版本的 transactions[].fee_tax_breakdown.fee 同时含三项广告费
+        （gmv_max_ad_fee_amount / tap_shop_ads_commission / affiliate_ads_commission_amount）；
+        202309/202507 缺前两项。每笔交易含 order_create_time（用于按业务日归集）、order_id。
+        sort_field 必填（仅支持 order_create_time）。GET 无 body，分页/shop_cipher 放 query。
+        """
+        page_token = None
+        while True:
+            params: dict = {
+                "page_size": page_size,
+                "sort_field": sort_field,
+                "sort_order": sort_order,
+            }
+            if self.shop_cipher:
+                params["shop_cipher"] = self.shop_cipher
+            if page_token:
+                params["page_token"] = page_token
+            result = self.request(
+                "GET",
+                f"/finance/202501/statements/{statement_id}/statement_transactions",
+                params=params, data=None, version="202501",
+            )
+            data = result.get("data", {})
             yield data
             page_token = data.get("next_page_token")
             if not page_token:

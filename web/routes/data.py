@@ -11,6 +11,7 @@ from core.config import settings
 from core.db import SessionLocal
 from core.timezone import PERIOD_KEYS, business_today, describe_window, resolve_period
 from models.base_models import Inventory, Product
+from services.ad_metrics import get_ad_spend_summary, get_roas
 from services.fulfillment_metrics import get_pending_fulfillments
 from services.order_metrics import get_gmv_summary, get_gmv_trend, get_top_skus
 from services.scope_binding import get_binding, set_binding
@@ -151,6 +152,18 @@ class OrderSummary(BaseModel):
     avg_order_value: float
     scope: Optional[str] = None
     caliber: Optional[str] = None
+
+
+class AdSpendSummary(BaseModel):
+    start_date: str
+    end_date: str
+    total_ad_spend: float
+    gmv_max_fee: float
+    tap_commission: float
+    affiliate_commission: float
+    gmv: float
+    roas: Optional[float] = None
+    currency: Optional[str] = None
 
 
 class TopSkuItem(BaseModel):
@@ -586,6 +599,58 @@ async def get_orders_summary(
         window_label=describe_window(sd, ed),
         scope=scope.display_text,
         caliber=ORDERS_CALIBER,
+    )
+
+
+@router.get("/ads/summary", response_model=AdSpendSummary, operation_id="ops_ad_spend_summary")
+async def get_ad_spend(
+    start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
+    period: Optional[str] = Query(None, description="相对时间窗口（按印尼时区、周一起算）：today/yesterday/this_week/last_week/last_7d/last_30d/this_month。相对时间优先用本参数，不要自己算日期；与 start_date/end_date 二选一，显式日期优先。"),
+    platform: Optional[str] = Query(None, description="平台标识，如 tiktok_shop / shopee"),
+    country: Optional[str] = Query(None, description="国家/地区，如 ID / GLOBAL"),
+    shop_id: Optional[str] = Query(None, description="店铺ID"),
+    scope_id: Optional[str] = Query(None, description="业务范围 scope_key（命名店铺集合）"),
+    shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
+    open_id: Optional[str] = Query(None, description="飞书用户 open_id（ou_xxx，用于自动应用会话默认范围）"),
+):
+    """广告消耗汇总 + ROAS，默认最近7天（结算口径，按印尼业务日）。
+
+    相对时间（今天/本周/近7天…）传 `period` 参数，服务端按印尼时区+周一起算，**不要自己算日期**。
+    口径：广告消耗为结算口径（fact_ad_spend_daily，含 GMV Max/TAP/联盟三项拆分）；
+    GMV 为已付款订单口径（同 ops_orders_summary）；ROAS=GMV÷广告消耗，广告费为 0 时 roas=None。
+    成交与结算口径不同，ROAS 仅作参考。
+    """
+    scope = _resolve_scope(
+        scope_id=scope_id, platform=platform, country=country,
+        shop_id=shop_id, shop_ids=shop_ids, open_id=open_id,
+    )
+    sd, ed = _resolve_window(start_date, end_date, period, default_back_days=7)
+
+    spend = get_ad_spend_summary(
+        start_date=sd,
+        end_date=ed,
+        platform=scope.platform,
+        country=scope.country,
+        shop_ids=scope.shop_ids,
+    )
+    roas = get_roas(
+        start_date=sd,
+        end_date=ed,
+        platform=scope.platform,
+        country=scope.country,
+        shop_ids=scope.shop_ids,
+    )
+    return AdSpendSummary(
+        start_date=spend["start_date"],
+        end_date=spend["end_date"],
+        total_ad_spend=spend["total_ad_spend"],
+        gmv_max_fee=spend["gmv_max_fee"],
+        tap_commission=spend["tap_commission"],
+        affiliate_commission=spend["affiliate_commission"],
+        gmv=roas["gmv"],
+        roas=roas["roas"],
+        currency=spend["currency"],
     )
 
 

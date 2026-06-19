@@ -334,6 +334,37 @@ class DailyProfit(Base):
         return f"<DailyProfit(scope_key={self.scope_key}, gross_profit={self.gross_profit})>"
 
 
+class FactAdSpendDaily(Base):
+    """每日广告消耗事实表（结算口径，三项广告费拆分 + 总额）。
+
+    数据源：TikTok Shop Finance 结算交易（202501 statement_transactions）的
+    fee_tax_breakdown.fee 三项广告费，按交易 order_create_time 归印尼业务日累加。
+    与 fact_profit_daily 解耦：避免和未来利润 flow 抢同一 scope_key 行。
+    """
+
+    __tablename__ = "fact_ad_spend_daily"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    metric_date = Column(Date, nullable=False, index=True)  # 印尼业务日（UTC+7 归日）
+    platform = Column(String(32), nullable=False, index=True)
+    country = Column(String(16), nullable=False, default="GLOBAL", index=True)
+    shop_id = Column(String(64), index=True)
+    seller_id = Column(String(64), index=True)
+    account_id = Column(String(64), index=True)
+    scope_key = Column(String(500), nullable=False, unique=True, index=True)
+    currency = Column(String(8))
+    gmv_max_fee = Column(Numeric(18, 4), nullable=False, default=0)  # GMV Max 广告费
+    tap_commission = Column(Numeric(18, 4), nullable=False, default=0)  # TAP 达人广告佣金
+    affiliate_commission = Column(Numeric(18, 4), nullable=False, default=0)  # 联盟广告佣金
+    total_ad_spend = Column(Numeric(18, 4), nullable=False, default=0)  # 三项之和
+    transaction_count = Column(Integer, default=0)
+    raw_response_id = Column(Integer, nullable=True)
+    calculated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<FactAdSpendDaily(scope_key={self.scope_key}, total_ad_spend={self.total_ad_spend})>"
+
+
 class Alert(Base):
     """Business alert generated from trusted metrics."""
 
