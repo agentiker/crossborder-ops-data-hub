@@ -1,13 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Loader2 } from "lucide-react";
 import { api, sendChat, type Message, type ThinkingStep } from "@/api";
 import { useMe, useShell } from "@/components/shell/AppShell";
-import { Markdown } from "@/components/Markdown";
 import { WelcomeScreen } from "@/components/chat/WelcomeScreen";
-import { Composer } from "@/components/chat/Composer";
-import { Bubble } from "@/components/chat/Bubble";
-import { ThinkingSteps } from "@/components/chat/ThinkingSteps";
+import { ChatInput } from "@/components/chat/ChatInput";
+import { QuickActions } from "@/components/chat/QuickActions";
+import { ChatMessage, type ThinkingStep as ForkStep } from "@/components/chat/ChatMessage";
 
 // ops_* 工具的中文展示名（与后端 agent_tools 对齐）。
 const TOOL_LABELS: Record<string, string> = {
@@ -27,22 +25,35 @@ const PRESETS = [
   "有哪些 SKU 快断货了？",
 ];
 
-// 首页 2 张真实快捷卡：点击直接发起对话（展示 agent 取数）。
-const QUICK_CARDS = [
-  {
-    title: "今日经营简报",
-    desc: "GMV、订单数、待发货一眼看全",
-    q: "今天的 GMV、订单数和待发货情况怎么样？",
-  },
-  {
-    title: "断货风险速览",
-    desc: "哪些 SKU 快卖断了、该补货了",
-    q: "有哪些 SKU 快断货了？",
-  },
-];
+// ── 数据适配层（解耦薄壳，将来换 agent 框架后端只动这里）──
+// 当前 SSE 的 tool 事件只有 {name,label,done}；fork ChatMessage 吃 {type,label,detail?,status}。
+// 我方 6 个工具全是 ops_* 取数调用 → type 一律归 'api'（Database 绿标，语义如实）；
+// detail 无真实来源故留空（不造假）；status 由 done 降级映射。
+function adaptSteps(steps?: ThinkingStep[]): ForkStep[] {
+  return (steps || []).map((s) => ({
+    type: "api" as const,
+    label: s.label,
+    status: s.done ? ("done" as const) : ("running" as const),
+  }));
+}
 
-// 客户端的逐条元信息（时间戳 + 助手真实耗时），与 messages 等长平行存放。
-// Message 类型是全局共享冻结文件，不动它；这些纯展示字段放这里。
+// 客户端如实计时 → fork 的「Worked for…」折叠标题文案。
+function fmtWorked(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `用时 ${s} 秒`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return r ? `用时 ${m} 分 ${r} 秒` : `用时 ${m} 分`;
+}
+
+// 助手消息的折叠标题：有真实耗时→用时；仅有历史步骤无耗时→中性「运行过程」（不编造时长）；无步骤→不显示折叠区。
+function workingLabel(steps?: ThinkingStep[], workedMs?: number): string | undefined {
+  if (workedMs != null) return fmtWorked(workedMs);
+  if (steps && steps.length) return "运行过程";
+  return undefined;
+}
+
+// 客户端逐条元信息（时间戳 + 助手真实耗时），与 messages 等长平行存放。
 interface MsgMeta {
   ts?: string;
   workedMs?: number;
@@ -66,6 +77,7 @@ export function ChatPage() {
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [metas, setMetas] = useState<MsgMeta[]>([]);
+  const [convTitle, setConvTitle] = useState<string>("");
   const [liveText, setLiveText] = useState("");
   const [liveSteps, setLiveSteps] = useState<ThinkingStep[]>([]);
   const [streaming, setStreaming] = useState(false);
@@ -79,6 +91,7 @@ export function ChatPage() {
       if (loadedRef.current !== null) {
         setMessages([]);
         setMetas([]);
+        setConvTitle("");
         setError(null);
         loadedRef.current = null;
       }
@@ -91,7 +104,8 @@ export function ChatPage() {
       .conversation(convId)
       .then((d) => {
         setMessages(d.messages);
-        // 历史消息没有客户端时间戳/耗时，留空即可（hover 时不显示时间，仅复制）。
+        setConvTitle(d.title || "");
+        // 历史消息没有客户端时间戳/耗时，留空即可。
         setMetas(d.messages.map(() => ({})));
       })
       .catch(() => {
@@ -102,7 +116,7 @@ export function ChatPage() {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages, liveText, liveSteps]);
+  }, [messages, liveText, liveSteps, streaming]);
 
   async function send(text: string) {
     if (streaming) return;
@@ -119,6 +133,7 @@ export function ChatPage() {
     try {
       for await (const ev of sendChat(text, convId)) {
         if (ev.type === "meta") {
+          if (!convTitle) setConvTitle(ev.title || "");
           // 新会话：标记已加载并把 URL 切到该会话（loadedRef 防重载）。
           if (convId === null) {
             loadedRef.current = ev.conversation_id;
@@ -165,65 +180,82 @@ export function ChatPage() {
   }
 
   const isEmpty = messages.length === 0 && !streaming;
+  // 当前 Me 无姓名字段：boss 称「老板」，operator 用其范围标签；兜底「老板」。
+  const who = me?.is_boss ? "老板" : me?.scope_label?.trim() || "老板";
 
+  // ── 首页 launcher（空态）：照 fork App 的 chat 分支组合 WelcomeScreen + ChatInput + QuickActions ──
+  if (isEmpty) {
+    return (
+      <section className="flex flex-col h-full">
+        <div className="flex-1 flex flex-col items-center justify-center pb-24 px-4 sm:px-6 md:px-8">
+          <div className="w-full max-w-[1038px] flex flex-col items-center">
+            <WelcomeScreen userName={who} />
+            <ChatInput onSend={send} disabled={streaming} />
+            <QuickActions presets={PRESETS} onPick={send} />
+            {error && <p className="mt-4 text-sm text-destructive">⚠️ {error}</p>}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // ── 会话视图：照 fork ChatPage 版式（h-[68px] 头 + max-w-4xl 消息区 gap-9 + sticky 输入）──
   return (
-    <div className="flex h-full flex-col">
-      {isEmpty ? (
-        <WelcomeScreen
-          scopeLabel={me?.scope_label}
-          presets={PRESETS}
-          quickCards={QUICK_CARDS}
-          onSend={send}
-          streaming={streaming}
-        />
-      ) : (
-        <>
-          <div ref={scrollRef} className="flex-1 overflow-y-auto">
-            <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
+    <section className="flex flex-col h-full">
+      {/* Header */}
+      <header className="flex items-center justify-between gap-2 px-4 h-[68px] shrink-0 border-b border-border-shallow sticky z-50 top-0 bg-background-solid">
+        <div className="flex items-center gap-1 flex-1 min-w-0">
+          <div className="flex-1 flex flex-col justify-center min-w-0">
+            <h1 className="text-lg font-medium text-foreground leading-6 truncate">
+              {convTitle || "新对话"}
+            </h1>
+          </div>
+        </div>
+      </header>
+
+      {/* Messages */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-4xl px-0 py-3 pb-24 md:py-6 md:px-4 md:pb-32">
+          <div className="px-1.5 md:px-6">
+            <div className="flex flex-col gap-9 pb-20 pt-2 transition-[min-height] duration-500 ease-out mx-auto w-full max-w-4xl">
               {messages.map((m, i) => (
-                <Bubble
+                <ChatMessage
                   key={m.id ?? i}
-                  role={m.role}
+                  role={m.role === "user" ? "user" : "assistant"}
                   content={m.content}
-                  steps={m.steps}
-                  ts={metas[i]?.ts}
-                  workedMs={metas[i]?.workedMs}
+                  timestamp={metas[i]?.ts}
+                  workingTime={
+                    m.role === "user" ? undefined : workingLabel(m.steps, metas[i]?.workedMs)
+                  }
+                  thinkingSteps={m.role === "user" ? undefined : adaptSteps(m.steps)}
                 />
               ))}
 
+              {/* 流式进行中的助手回合 */}
               {streaming && (
-                <div className="mb-8">
-                  {liveSteps.length > 0 && <ThinkingSteps steps={liveSteps} live />}
-                  {liveText ? (
-                    <div className="text-sm leading-7">
-                      <Markdown text={liveText} />
-                      <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse bg-foreground align-middle" />
-                    </div>
-                  ) : (
-                    liveSteps.length === 0 && (
-                      <span className="inline-flex items-center gap-2 text-sm text-foreground-tertiary">
-                        <Loader2 className="size-3.5 animate-spin" />
-                        思考中…
-                      </span>
-                    )
-                  )}
-                </div>
+                <ChatMessage
+                  role="assistant"
+                  content={liveText}
+                  workingTime={liveSteps.length ? "运行中…" : "思考中…"}
+                  thinkingSteps={adaptSteps(liveSteps)}
+                  isStreaming
+                  defaultThinkingOpen
+                />
               )}
 
-              {error && <div className="mb-6 text-sm text-destructive">⚠️ {error}</div>}
+              {error && <div className="px-2 text-sm text-destructive">⚠️ {error}</div>}
             </div>
           </div>
+        </div>
+      </div>
 
-          <div className="bg-background/80 px-4 pb-3 pt-1 backdrop-blur sm:px-6">
-            <div className="mx-auto max-w-3xl">
-              <Composer onSend={send} streaming={streaming} />
-              <p className="mt-2 text-center text-xs text-foreground-tertiary">
-                AI 可能出错，请核对重要数据。
-              </p>
-            </div>
-          </div>
-        </>
-      )}
-    </div>
+      {/* Input */}
+      <div className="sticky bottom-0 bg-background-solid px-4 pb-3 pt-1">
+        <ChatInput onSend={send} disabled={streaming} />
+        <p className="mt-2 text-center text-xs text-foreground-tertiary">
+          AI 可能出错，请核对重要数据。
+        </p>
+      </div>
+    </section>
   );
 }

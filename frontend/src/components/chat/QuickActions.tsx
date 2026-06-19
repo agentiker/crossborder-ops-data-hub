@@ -1,84 +1,108 @@
-import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Lightbulb } from "lucide-react";
+import { useRef, useState, useEffect } from "react";
+import {
+  Sparkles,
+  Search,
+  Package,
+  PenTool,
+  Store,
+  BarChart3,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 
-// 首页建议 chips：横滚 + 左右渐变遮罩 + hover 箭头（照搬 fork QuickActions 的滚动交互）。
-// 点击即发起对话（走真 send）。
-export function QuickActions({
-  presets,
-  onPick,
-}: {
+// 照搬 forkStoreClaw/src/components/Chat/QuickActions.tsx：
+// max-w-[820px] 横滚区、hover 浮现左右箭头（bg-white shadow-md）、两侧渐隐遮罩 1:1；
+// 仅 ①数据接线：chips 换成中文建议问题、点击直接发起对话（不再是「分类筛选」，故无常驻 active 态）。
+const ICONS = [Sparkles, Search, Package, PenTool, Store, BarChart3];
+
+interface QuickActionsProps {
   presets: string[];
-  onPick: (text: string) => void;
-}) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [canLeft, setCanLeft] = useState(false);
-  const [canRight, setCanRight] = useState(false);
+  onPick?: (label: string) => void;
+}
 
-  const check = () => {
-    const el = scrollRef.current;
-    if (!el) return;
-    setCanLeft(el.scrollLeft > 5);
-    setCanRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 5);
+export function QuickActions({ presets, onPick }: QuickActionsProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const checkScroll = () => {
+    if (scrollRef.current) {
+      const { scrollLeft, scrollWidth, clientWidth } = scrollRef.current;
+      setCanScrollLeft(scrollLeft > 5);
+      setCanScrollRight(scrollLeft < scrollWidth - clientWidth - 5);
+    }
   };
 
   useEffect(() => {
-    check();
+    checkScroll();
     const el = scrollRef.current;
-    if (!el) return;
-    el.addEventListener("scroll", check, { passive: true });
-    window.addEventListener("resize", check);
-    return () => {
-      el.removeEventListener("scroll", check);
-      window.removeEventListener("resize", check);
-    };
+    if (el) {
+      el.addEventListener("scroll", checkScroll, { passive: true });
+      window.addEventListener("resize", checkScroll);
+      return () => {
+        el.removeEventListener("scroll", checkScroll);
+        window.removeEventListener("resize", checkScroll);
+      };
+    }
   }, []);
 
-  const scrollBy = (dir: "left" | "right") => {
-    scrollRef.current?.scrollBy({ left: dir === "left" ? -200 : 200, behavior: "smooth" });
+  const scroll = (direction: "left" | "right") => {
+    if (scrollRef.current) {
+      const amount = direction === "left" ? -200 : 200;
+      scrollRef.current.scrollBy({ left: amount, behavior: "smooth" });
+    }
   };
 
   return (
-    <div className="group relative">
-      {canLeft && (
-        <button
-          onClick={() => scrollBy("left")}
-          className="absolute left-0 top-1/2 z-10 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-card text-foreground-secondary opacity-0 shadow-md transition-opacity hover:text-foreground group-hover:opacity-100"
-          aria-label="向左滚动"
-        >
-          <ChevronLeft className="size-4" />
-        </button>
-      )}
-
-      <div ref={scrollRef} className="flex items-center gap-2 overflow-x-auto py-1 scrollbar-hide">
-        <Lightbulb className="size-3.5 shrink-0 text-foreground-tertiary" />
-        {presets.map((p) => (
+    <div className="relative mx-auto w-full max-w-[820px]">
+      <div className="relative group">
+        {/* Left arrow */}
+        {canScrollLeft && (
           <button
-            key={p}
-            onClick={() => onPick(p)}
-            className="shrink-0 whitespace-nowrap rounded-full border border-border bg-card px-3.5 py-1.5 text-xs text-foreground-secondary transition-colors hover:border-foreground/30 hover:text-foreground"
+            onClick={() => scroll("left")}
+            className="absolute left-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 flex items-center justify-center rounded-full bg-white shadow-md border border-border text-foreground-secondary hover:text-foreground transition-opacity opacity-0 group-hover:opacity-100"
           >
-            {p}
+            <ChevronLeft size={16} />
           </button>
-        ))}
+        )}
+
+        {/* Scrollable container */}
+        <div ref={scrollRef} className="flex gap-2 overflow-x-auto py-2 px-1 scrollbar-hide">
+          {presets.map((label, i) => {
+            const Icon = ICONS[i % ICONS.length];
+            return (
+              <button
+                key={label}
+                onClick={() => onPick?.(label)}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3.5 py-2 text-sm font-medium transition-colors duration-200 border-border text-foreground hover:border-border-deep"
+              >
+                <span className="-mx-0.5 inline-flex size-4 items-center justify-center [&_svg]:size-full [&_svg]:shrink-0">
+                  <Icon size={16} />
+                </span>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Right arrow */}
+        {canScrollRight && (
+          <button
+            onClick={() => scroll("right")}
+            className="absolute right-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 flex items-center justify-center rounded-full bg-white shadow-md border border-border text-foreground-secondary hover:text-foreground transition-opacity opacity-0 group-hover:opacity-100"
+          >
+            <ChevronRight size={16} />
+          </button>
+        )}
+
+        {/* Fade edges */}
+        {canScrollLeft && (
+          <div className="absolute left-0 top-0 bottom-0 w-12 bg-gradient-to-r from-background-solid to-transparent pointer-events-none" />
+        )}
+        {canScrollRight && (
+          <div className="absolute right-0 top-0 bottom-0 w-12 bg-gradient-to-l from-background-solid to-transparent pointer-events-none" />
+        )}
       </div>
-
-      {canRight && (
-        <button
-          onClick={() => scrollBy("right")}
-          className="absolute right-0 top-1/2 z-10 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-card text-foreground-secondary opacity-0 shadow-md transition-opacity hover:text-foreground group-hover:opacity-100"
-          aria-label="向右滚动"
-        >
-          <ChevronRight className="size-4" />
-        </button>
-      )}
-
-      {/* 渐变遮罩：暗示可继续横滚 */}
-      {canLeft && (
-        <div className="pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-background to-transparent" />
-      )}
-      {canRight && (
-        <div className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-background to-transparent" />
-      )}
     </div>
   );
 }

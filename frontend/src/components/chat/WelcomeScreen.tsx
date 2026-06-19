@@ -1,93 +1,73 @@
-import { useState } from "react";
-import { ArrowUp } from "lucide-react";
-import { Composer } from "./Composer";
-import { QuickActions } from "./QuickActions";
+import { useState, useEffect } from "react";
 
-// 按本机时刻给时段名 + 氛围标签 + 问候 + emoji（StoreClaw 式时段徽标 ● 两段式）。
-function timeOfDay(): { period: string; tag: string; greeting: string; emoji: string } {
-  const h = new Date().getHours();
-  if (h < 5) return { period: "夜深", tag: "夜猫子档", greeting: "夜深了，看看今天的生意", emoji: "🌙" };
-  if (h < 8) return { period: "清晨", tag: "醒得早", greeting: "早，先看看昨天的收成", emoji: "🌅" };
-  if (h < 11) return { period: "上午", tag: "开工时段", greeting: "上午好，今天想看哪块数据", emoji: "☀️" };
-  if (h < 13) return { period: "午后", tag: "午间小憩", greeting: "午间好，店铺跑得怎么样", emoji: "🍵" };
-  if (h < 18) return { period: "下午", tag: "下午场", greeting: "下午好，盯一眼经营节奏", emoji: "📊" };
-  if (h < 23) return { period: "傍晚", tag: "收工盘点", greeting: "傍晚好，盘点今天这一单单", emoji: "🌆" };
-  return { period: "夜深", tag: "夜猫子档", greeting: "夜深了，看看今天的生意", emoji: "🌙" };
+// 照搬 forkStoreClaw/src/components/Chat/WelcomeScreen.tsx：
+// 版式/动画/入场延迟序列（badge 0.3s · emoji 0.2s · 副标题 0.4s）1:1；
+// 仅 ②文案中文化（问候/时段/副标题），称呼由调用方按权限范围传入。
+interface WelcomeScreenProps {
+  userName?: string;
 }
 
-// 首页命令栏 launcher：时段徽标 + 问候 + 输入框 + 横滚 chips + 两张快捷卡。
-// 入场动画照搬 fork：badge 0.3s / 标题 0s / emoji 0.2s / 副标题 0.4s 依次 fade-up。
-export function WelcomeScreen({
-  scopeLabel,
-  presets,
-  quickCards,
-  onSend,
-  streaming,
-}: {
-  scopeLabel?: string;
-  presets: string[];
-  quickCards: { title: string; desc: string; q: string }[];
-  onSend: (text: string) => void;
-  streaming: boolean;
-}) {
-  const [tod] = useState(timeOfDay);
-  // 当前 Me 没有姓名，用 scope_label 当称呼；缺省就只问候不带名字。
-  const who = scopeLabel?.trim();
+function getGreeting(): { text: string; emoji: string; period: string; subtitle: string } {
+  const hour = new Date().getHours();
+
+  if (hour >= 6 && hour < 12) {
+    return { text: "早上好", emoji: "☀️", period: "上午 · 元气满满", subtitle: "新的一天，先看看店铺整体表现吧。" };
+  } else if (hour >= 12 && hour < 18) {
+    return { text: "下午好", emoji: "🌤️", period: "下午 · 专注时段", subtitle: "想盯哪块数据？订单、爆款还是库存。" };
+  } else if (hour >= 18 && hour < 22) {
+    return { text: "晚上好", emoji: "🌙", period: "夜间 · 收尾复盘", subtitle: "复盘一下今天的经营，明天更从容。" };
+  } else {
+    return { text: "又熬夜了", emoji: "(._.)", period: "深夜 · 夜猫子", subtitle: "夜深了，有什么想查的尽管问。" };
+  }
+}
+
+export function WelcomeScreen({ userName = "老板" }: WelcomeScreenProps) {
+  const [greeting, setGreeting] = useState(getGreeting());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setGreeting(getGreeting());
+    }, 60000); // 每分钟刷新一次时段
+
+    return () => clearInterval(timer);
+  }, []);
 
   return (
-    <div className="flex-1 overflow-y-auto">
-      <div className="mx-auto w-full max-w-2xl px-6 pb-16 pt-[14vh]">
-        <span
-          className="inline-flex animate-fade-up items-center gap-2 rounded-full border border-border-shallow bg-card px-3 py-1 text-xs font-medium tracking-[0.02em] text-foreground-secondary"
-          style={{ animationDelay: "0.3s" }}
-        >
-          <span className="relative flex size-2">
-            <span className="inline-flex size-full rounded-full bg-positive animate-pulse-dot" />
-          </span>
-          {tod.period} · {tod.tag}
-        </span>
+    <div className="text-center pb-5">
+      {/* Status badge */}
+      <div
+        className="inline-flex items-center gap-1.5 bg-fill-default rounded-full px-3 py-1 text-xs text-foreground-tertiary mb-3.5 tracking-[0.02em] animate-fade-up"
+        style={{ animationDelay: "0.3s" }}
+      >
+        <span className="size-1.5 rounded-full bg-green-500 inline-block animate-pulse-slow"></span>
+        {greeting.period}
+      </div>
 
-        <h1 className="mt-5 animate-fade-up text-4xl font-bold leading-[1.15] tracking-tight sm:text-[2.75rem]">
-          {tod.greeting}
-          {who ? <span className="text-foreground-secondary">，{who}</span> : null}
-          <span
-            className="ml-2 inline-block origin-bottom animate-fade-up animate-wiggle"
-            style={{ animationDelay: "0.2s" }}
-          >
-            {tod.emoji}
-          </span>
+      {/* Greeting */}
+      <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 mb-2.5 px-3">
+        <h1 className="text-[22px] sm:text-[26px] md:text-[32px] leading-tight font-bold text-foreground tracking-[-0.01em] animate-fade-up break-words">
+          {greeting.text}，{userName}
         </h1>
-
-        <p
-          className="mt-2 animate-fade-up text-sm text-foreground-secondary"
-          style={{ animationDelay: "0.4s" }}
+        <span
+          role="img"
+          aria-hidden="true"
+          className="text-[20px] sm:text-[22px] md:text-[26px] inline-block origin-bottom animate-fade-up animate-wiggle cursor-default select-none"
+          style={{ animationDelay: "0.2s" }}
         >
-          问我店铺的 GMV、订单、爆款、库存与待发货——按你的权限范围答。
+          {greeting.emoji}
+        </span>
+      </div>
+
+      {/* Subtitle */}
+      <div className="overflow-hidden relative px-3 animate-fade-up" style={{ animationDelay: "0.4s" }}>
+        <p className="text-[14px] sm:text-[15px] md:text-[17px] text-foreground-secondary leading-6 sm:leading-6 md:leading-7 transition-[opacity,transform] duration-300 opacity-100 translate-y-0">
+          <span className="relative inline-block max-w-full break-words">
+            <span className="invisible inline-flex">{greeting.subtitle}</span>
+            <span className="absolute left-0 top-0 inline-flex items-baseline flex-wrap">
+              {greeting.subtitle}
+            </span>
+          </span>
         </p>
-
-        <div className="mt-6">
-          <Composer onSend={onSend} streaming={streaming} autoFocus size="home" />
-        </div>
-
-        <div className="mt-4">
-          <QuickActions presets={presets} onPick={onSend} />
-        </div>
-
-        <div className="mt-7 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {quickCards.map((c) => (
-            <button
-              key={c.title}
-              onClick={() => onSend(c.q)}
-              className="group rounded-2xl border border-border-shallow bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-border hover:shadow-md"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-base font-semibold">{c.title}</span>
-                <ArrowUp className="size-4 rotate-45 text-foreground-tertiary transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
-              </div>
-              <p className="mt-1 text-xs text-foreground-secondary">{c.desc}</p>
-            </button>
-          ))}
-        </div>
       </div>
     </div>
   );

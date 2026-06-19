@@ -14,7 +14,11 @@ export default {
         },
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
-        background: "hsl(var(--background))",
+        // background-solid 别名供 fork 的 bg-background-solid / from-background-solid 解析
+        background: {
+          DEFAULT: "hsl(var(--background))",
+          solid: "hsl(var(--background))",
+        },
         // StoreClaw 前景三级：半透明叠加真值（var() 直引）
         foreground: {
           DEFAULT: "var(--foreground)",
@@ -22,8 +26,10 @@ export default {
           tertiary: "var(--foreground-tertiary)",
         },
         // StoreClaw 填充层（bg-fill / bg-fill-deep…）：半透明叠加真值（var() 直引）
+        // default 别名供 fork 的 bg-fill-default / hover:bg-fill-default 原样解析
         fill: {
           DEFAULT: "var(--fill)",
+          default: "var(--fill)",
           shallow: "var(--fill-shallow)",
           deep: "var(--fill-deep)",
         },
@@ -92,6 +98,11 @@ export default {
           "0%, 100%": { opacity: "1", transform: "scale(1)" },
           "50%": { opacity: "0.45", transform: "scale(0.85)" },
         },
+        // forkStoreClaw：欢迎页绿点呼吸（animate-pulse-slow，照搬 fork 关键帧值）
+        "pulse-slow": {
+          "0%, 100%": { opacity: "1", transform: "scale(1)" },
+          "50%": { opacity: "0.45", transform: "scale(0.8)" },
+        },
         // forkStoreClaw：入场上浮 + 问候 emoji 摆动
         "fade-up": {
           "0%": { opacity: "0", transform: "translateY(10px)" },
@@ -110,6 +121,7 @@ export default {
         "accordion-up": "accordion-up 0.2s ease-out",
         "fade-in": "fade-in 0.18s ease-out",
         "pulse-dot": "pulse-dot 2s ease-in-out infinite",
+        "pulse-slow": "pulse-slow 2s ease-in-out infinite",
         "fade-up": "fade-up 0.5s ease both",
         wiggle: "wiggle 3.5s ease-in-out infinite",
       },
