@@ -4,6 +4,8 @@ import {
   CalendarRange,
   ChevronDown,
   DollarSign,
+  Gauge,
+  Megaphone,
   Search,
   ShoppingCart,
   Store,
@@ -255,12 +257,15 @@ function MetricCard({
   icon,
   change,
   loading,
+  subtitle,
 }: {
   title: string;
   value: string;
   icon: ReactNode;
   change?: number | null;
   loading?: boolean;
+  // 可选副标注：广告卡用「结算口径」标口径、降级时用「暂无结算数据」提示，避免误导。
+  subtitle?: string;
 }) {
   const dir = change == null ? null : change > 0 ? "up" : change < 0 ? "down" : "flat";
   return (
@@ -270,6 +275,9 @@ function MetricCard({
         <span className="text-xs">{title}</span>
       </div>
       <div className="tabnum text-2xl font-bold text-foreground">{loading ? "…" : value}</div>
+      {!loading && subtitle && (
+        <div className="text-xs text-foreground-tertiary">{subtitle}</div>
+      )}
       {!loading && dir && (
         <div
           className={`flex items-center gap-1 text-xs ${
@@ -291,8 +299,13 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
   const t = useChartTokens();
   const [activeTab, setActiveTab] = useState<OverviewTab>("sales");
   const o = data?.overview.orders;
+  const ads = data?.overview.ads;
   const ch = data?.overview.change;
   const pts = data?.trend.points ?? [];
+  // 无结算数据降级：广告消耗 0/缺失 → 卡值「—」+「暂无结算数据」；roas 为 null → 「—」。
+  const hasAdSpend = !!ads && ads.total_ad_spend > 0;
+  const adCostValue = hasAdSpend ? fmtMoney(ads!.total_ad_spend) : "—";
+  const roasValue = ads && ads.roas != null ? `${ads.roas.toFixed(2)}×` : "—";
   const labels = pts.map((p) => p.date.slice(5));
 
   const axisX = (boundaryGap: boolean) => ({
@@ -406,11 +419,27 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
         }
       />
 
-      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-3">
         <MetricCard loading={loading} change={ch?.gmv} title="GMV（已付款）" value={fmtMoney(o?.gmv)} icon={<DollarSign size={14} />} />
         <MetricCard loading={loading} change={ch?.order_count} title="订单数" value={fmtInt(o?.order_count)} icon={<ShoppingCart size={14} />} />
         <MetricCard loading={loading} change={ch?.units_sold} title="销量" value={fmtInt(o?.units_sold)} icon={<TrendingUp size={14} />} />
         <MetricCard loading={loading} change={ch?.avg_order_value} title="客单价" value={fmtMoney(o?.avg_order_value)} icon={<Wallet size={14} />} />
+        <MetricCard
+          loading={loading}
+          change={hasAdSpend ? ch?.ad_cost : undefined}
+          title="广告消耗"
+          value={adCostValue}
+          subtitle={hasAdSpend ? "结算口径" : "暂无结算数据"}
+          icon={<Megaphone size={14} />}
+        />
+        <MetricCard
+          loading={loading}
+          change={ch?.roas}
+          title="ROAS"
+          value={roasValue}
+          subtitle="结算口径"
+          icon={<Gauge size={14} />}
+        />
       </div>
 
       {/* 演示 tab（流量/转化）走前端内置 demo 数据，不依赖后端 pts；真实 tab 仍按 pts 空态降级。 */}

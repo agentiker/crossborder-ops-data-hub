@@ -1,0 +1,7 @@
+[Unit]
+Description=每日两次跑 TikTok 广告消耗同步
+[Timer]
+OnCalendar=*-*-* 03,15:17:00
+Persistent=true
+[Install]
+WantedBy=timers.target

@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from core.timezone import previous_window, resolve_period
+from services.ad_metrics import get_ad_spend_summary, get_roas
 from services.order_metrics import get_gmv_summary
 from services.scope_resolution import ScopeError, list_scopes
 from services.user_authz import AuthzError, UserPermission, resolve_authorized_scope
@@ -111,15 +112,49 @@ async def _collect(perm: UserPermission, period: str, requested_scope_key: str) 
         start_date=prev_start, end_date=prev_end,
         platform=platform, country=country, shop_ids=shop_id_list,
     )
+    # 广告消耗（结算口径）：复用同一当期/上期窗口与 filters，各取一次摘要算环比；当期再取 ROAS。
+    # 无结算数据时 get_* 返回 0/None，不抛错；前端按 0/None 做降级展示。
+    cur_ads = get_ad_spend_summary(
+        start_date=cur_start, end_date=cur_end,
+        platform=platform, country=country, shop_ids=shop_id_list,
+    )
+    prev_ads = get_ad_spend_summary(
+        start_date=prev_start, end_date=prev_end,
+        platform=platform, country=country, shop_ids=shop_id_list,
+    )
+    cur_roas = get_roas(
+        start_date=cur_start, end_date=cur_end,
+        platform=platform, country=country, shop_ids=shop_id_list,
+    )
+    prev_roas = get_roas(
+        start_date=prev_start, end_date=prev_end,
+        platform=platform, country=country, shop_ids=shop_id_list,
+    )
     overview["orders"] = {
         "gmv": cur["gmv"], "order_count": cur["order_count"],
         "units_sold": cur["units_sold"], "avg_order_value": cur["avg_order_value"],
     }
+    overview["ads"] = {
+        "total_ad_spend": cur_ads["total_ad_spend"],
+        "roas": cur_roas["roas"],
+        "gmv_max_fee": cur_ads["gmv_max_fee"],
+        "tap_commission": cur_ads["tap_commission"],
+        "affiliate_commission": cur_ads["affiliate_commission"],
+        "currency": cur_ads["currency"],
+    }
+    # ROAS 环比：任一期 roas 为 None（该期无广告费）则不可比 → None，不臆造。
+    roas_change = (
+        _pct(cur_roas["roas"], prev_roas["roas"])
+        if cur_roas["roas"] is not None and prev_roas["roas"] is not None
+        else None
+    )
     overview["change"] = {
         "gmv": _pct(cur["gmv"], prev["gmv"]),
         "order_count": _pct(cur["order_count"], prev["order_count"]),
         "units_sold": _pct(cur["units_sold"], prev["units_sold"]),
         "avg_order_value": _pct(cur["avg_order_value"], prev["avg_order_value"]),
+        "ad_cost": _pct(cur_ads["total_ad_spend"], prev_ads["total_ad_spend"]),
+        "roas": roas_change,
     }
     return {
         "scope": filters.display_text,

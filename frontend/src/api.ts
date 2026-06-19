@@ -127,12 +127,23 @@ export interface BoardData {
       avg_order_value: number;
     };
     inventory: { total_sku?: number; total_stock?: number; low_stock_count?: number };
+    // 广告消耗（结算口径）：无结算数据时 total_ad_spend=0、roas=null，前端降级为「—」。
+    ads?: {
+      total_ad_spend: number;
+      roas: number | null;
+      gmv_max_fee: number;
+      tap_commission: number;
+      affiliate_commission: number;
+      currency?: string;
+    };
     // 环比：当期 vs 紧邻等长上期的百分比；上期无基准（为 0）时为 null，不渲染、不臆造。
     change?: {
       gmv: number | null;
       order_count: number | null;
       units_sold: number | null;
       avg_order_value: number | null;
+      ad_cost?: number | null;
+      roas?: number | null;
     };
   };
   trend: { points: TrendPoint[]; window_label?: string; start_date?: string; end_date?: string };

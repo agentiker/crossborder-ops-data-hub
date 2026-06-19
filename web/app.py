@@ -94,6 +94,7 @@ mcp = FastApiMCP(
         "ops_low_stock",
         "ops_products",
         "ops_orders_summary",
+        "ops_ad_spend_summary",
         "ops_orders_trend",
         "ops_top_skus",
         "ops_fulfillments_pending",
