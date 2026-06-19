@@ -44,6 +44,27 @@ export function ScheduledPage() {
 
   const activeCount = tasks.filter((t) => t.enabled).length;
 
+  // 模板区（空态钉底 / 列表态置于卡片下方，标记同一段 markup）。
+  const templateSection = (
+    <section>
+      <div className="mb-4 flex items-center justify-between pl-1">
+        <h3 className="text-base font-bold text-foreground">从模板开始</h3>
+        <button
+          onClick={() => setTemplatesOpen(true)}
+          className="inline-flex items-center gap-0.5 rounded-lg px-2 py-1 text-sm font-bold text-foreground transition-colors hover:bg-fill"
+        >
+          更多
+          <ArrowRight className="size-4" />
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-5">
+        {TEMPLATES.map((t) => (
+          <TemplateCard key={t.id} template={t} onUse={() => openCreate(t.draft)} />
+        ))}
+      </div>
+    </section>
+  );
+
   return (
     <div className="flex h-full flex-col">
       <header className="sticky top-0 z-50 flex h-[68px] shrink-0 items-center justify-between gap-2 border-b border-border-shallow bg-background px-4 sm:px-6">
@@ -55,26 +76,27 @@ export function ScheduledPage() {
             </span>
           )}
         </div>
-        {tasks.length > 0 && (
-          <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2">
+          {tasks.length > 0 && (
             <button
               onClick={() => setTemplatesOpen(true)}
               className="inline-flex h-8 items-center justify-center gap-1 rounded-lg border border-border px-3 text-sm text-foreground transition-colors hover:bg-fill"
             >
               从模板开始
             </button>
-            <Button size="sm" onClick={() => openCreate()}>
-              <Plus className="size-4" /> 新建任务
-            </Button>
-          </div>
-        )}
+          )}
+          {/* 照 fork：右上角「创建」按钮空态/列表态都常显 */}
+          <Button size="sm" onClick={() => openCreate()}>
+            <Plus className="size-4" /> 新建任务
+          </Button>
+        </div>
       </header>
 
       <div className="flex-1 overflow-y-auto p-4 sm:p-6">
-        <div className="mx-auto max-w-[1100px]">
-          {tasks.length === 0 ? (
-            // 空态 Hero
-            <div className="flex flex-col items-center gap-6 py-14 text-center">
+        {tasks.length === 0 ? (
+          // 空态：Hero 在剩余空间垂直居中，模板区 mt-auto 钉底（照 fork ScheduledPage 空态版式）
+          <div className="mx-auto flex h-full min-h-full max-w-[1100px] flex-col">
+            <div className="flex flex-1 flex-col items-center justify-center gap-6 text-center">
               <div className="max-w-md">
                 <h2 className="text-2xl font-bold tracking-tight text-foreground">
                   用一份每日简报开启每天
@@ -87,8 +109,11 @@ export function ScheduledPage() {
                 <Plus className="size-4" /> 创建定时任务
               </Button>
             </div>
-          ) : (
-            // 任务列表（照 fork：双列 flex-wrap）
+            <div className="mt-auto pt-10">{templateSection}</div>
+          </div>
+        ) : (
+          <div className="mx-auto max-w-[1100px]">
+            {/* 任务列表（照 fork：双列 flex-wrap） */}
             <div className="mb-10 flex flex-wrap gap-3">
               {tasks.map((t) => (
                 <TaskCard
@@ -99,27 +124,9 @@ export function ScheduledPage() {
                 />
               ))}
             </div>
-          )}
-
-          {/* 模板区 */}
-          <section>
-            <div className="mb-4 flex items-center justify-between pl-1">
-              <h3 className="text-base font-bold text-foreground">从模板开始</h3>
-              <button
-                onClick={() => setTemplatesOpen(true)}
-                className="inline-flex items-center gap-0.5 rounded-lg px-2 py-1 text-sm font-bold text-foreground transition-colors hover:bg-fill"
-              >
-                更多
-                <ArrowRight className="size-4" />
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-5">
-              {TEMPLATES.map((t) => (
-                <TemplateCard key={t.id} template={t} onUse={() => openCreate(t.draft)} />
-              ))}
-            </div>
-          </section>
-        </div>
+            {templateSection}
+          </div>
+        )}
       </div>
 
       {createOpen && (
