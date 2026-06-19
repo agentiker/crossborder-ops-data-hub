@@ -106,3 +106,16 @@ def resolve_period(period: str) -> tuple[date, date]:
     if period == "this_month":
         return t.replace(day=1), t
     raise ValueError(f"未知 period：{period!r}，可选 {', '.join(PERIOD_KEYS)}")
+
+
+def previous_window(start_date: date, end_date: date) -> tuple[date, date]:
+    """紧邻当期、等长的上一窗口（环比基准）。
+
+    含端点天数 N 的窗口 → 上一窗口为其前 N 天的闭区间。
+    例：近 30 天 [6/13, 7/12]（含端点 30 天）→ 上一窗口 [5/14, 6/12]。
+    口径中性、对所有 period 通用，不臆造自然周/月对齐（故前端文案统一「vs 上期」）。
+    """
+    length = (end_date - start_date).days + 1
+    prev_end = start_date - timedelta(days=1)
+    prev_start = prev_end - timedelta(days=length - 1)
+    return prev_start, prev_end

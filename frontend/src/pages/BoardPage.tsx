@@ -12,6 +12,17 @@ import {
 } from "lucide-react";
 import { api, type BoardData, type LowStockItem, type TopSku } from "@/api";
 import { EChart, useChartTokens } from "@/components/EChart";
+import {
+  DEMO_ORDERS,
+  DEMO_REFUNDS,
+  DEMO_RETURNS,
+  funnelOption,
+  ordersStackOption,
+  refundsOption,
+  returnReasonsOption,
+  returnsOption,
+  trafficOption,
+} from "@/components/board/demo-data";
 
 // 照搬 forkStoreClaw/src/components/Dashboard/* 的版式/卡片/分段 tab/图表观感（1:1）。
 // 三处按本项目落差替换并注释：
@@ -20,7 +31,8 @@ import { EChart, useChartTokens } from "@/components/EChart";
 //   ①数据缺口（不造假）：fork 的「转化漏斗 / 流量 UV·PV / 单品 7 天趋势 / 利润排序 / 环比涨跌 /
 //          退货·退款·平台拆分」后端无对应数据源 → 对应 tab/行降级或省略；底部满宽段换成我方真实的
 //          「待发货履约」（fork OrderTrends 的卡片骨架 + 我方履约数据）。
-//   ③品牌：图表主色走自有 token（墨绿 t.primary），不照搬 StoreClaw 的靛蓝 #6366f1。
+//   ③品牌：销售趋势线照搬 fork 的靛蓝 #6366f1（用户拍板 1:1 复刻彩色面积效果）；
+//          其余自创/降级区块（订单·销量、库存仪表盘/环图）走自有色系 token（绿 t.positive / 橙 t.warning）。
 
 const PERIODS: [string, string][] = [
   ["today", "今天"],
@@ -107,7 +119,7 @@ export function BoardPage() {
                 <HotProducts data={data} loading={loading} />
                 <InventoryHealth data={data} loading={loading} />
               </div>
-              <OrderFulfillment data={data} loading={loading} />
+              <OrderSection data={data} loading={loading} />
             </>
           )}
         </div>
@@ -131,6 +143,15 @@ function CardHead({ title, right }: { title: string; right?: ReactNode }) {
       <h3 className="text-base font-semibold text-foreground">{title}</h3>
       {right}
     </div>
+  );
+}
+
+// 演示数据徽章（琥珀 pill）：后端暂无数据源的演示模块在标题/Tab 旁标注，避免被误当真实数据。
+function DemoBadge() {
+  return (
+    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+      演示数据
+    </span>
   );
 }
 
@@ -226,18 +247,22 @@ function ChartEmpty({
 
 /* ── 经营概览（照 fork BusinessOverview：MetricCard 行 + 分段 tab + 趋势图）──── */
 
-// fork MetricCard：图标+标题 / 大数值 / 涨跌行。后端无环比数据 → 按「不造假」省略涨跌行（仅两行）。
+// fork MetricCard：图标+标题 / 大数值 / 涨跌行。涨跌行走后端真实环比（当期 vs 紧邻等长上期）：
+// 升=绿↑、降=红↓、持平=灰−；change 为 null/undefined（上期无基准或旧后端无该字段）时整行不渲染，不臆造。
 function MetricCard({
   title,
   value,
   icon,
+  change,
   loading,
 }: {
   title: string;
   value: string;
   icon: ReactNode;
+  change?: number | null;
   loading?: boolean;
 }) {
+  const dir = change == null ? null : change > 0 ? "up" : change < 0 ? "down" : "flat";
   return (
     <div className="flex flex-col gap-1 rounded-xl bg-fill-shallow p-4">
       <div className="flex items-center gap-2 text-foreground-tertiary">
@@ -245,16 +270,28 @@ function MetricCard({
         <span className="text-xs">{title}</span>
       </div>
       <div className="tabnum text-2xl font-bold text-foreground">{loading ? "…" : value}</div>
+      {!loading && dir && (
+        <div
+          className={`flex items-center gap-1 text-xs ${
+            dir === "up" ? "text-green-600" : dir === "down" ? "text-red-600" : "text-foreground-tertiary"
+          }`}
+        >
+          <span>{dir === "up" ? "↑" : dir === "down" ? "↓" : "−"}</span>
+          <span className="tabnum">{Math.abs(change as number).toFixed(1)}%</span>
+          <span className="text-foreground-tertiary">vs 上期</span>
+        </div>
+      )}
     </div>
   );
 }
 
-type OverviewTab = "sales" | "orders";
+type OverviewTab = "sales" | "orders" | "traffic" | "funnel";
 
 function BusinessOverview({ data, loading }: { data: BoardData | null; loading: boolean }) {
   const t = useChartTokens();
   const [activeTab, setActiveTab] = useState<OverviewTab>("sales");
   const o = data?.overview.orders;
+  const ch = data?.overview.change;
   const pts = data?.trend.points ?? [];
   const labels = pts.map((p) => p.date.slice(5));
 
@@ -277,7 +314,8 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
     textStyle: { color: t.text },
   };
 
-  // fork 的「销售趋势」：GMV 面积折线（主色走品牌墨绿，非 StoreClaw 靛蓝）。
+  // fork 的「销售趋势」：GMV 平滑面积折线。配色照搬 fork StoreClaw 的靛蓝 #6366f1
+  // （用户拍板：此处不走品牌墨绿，1:1 复刻 fork 的鲜亮彩色面积效果）。
   const salesOption = useMemo(
     () => ({
       tooltip: { trigger: "axis" as const, ...tip },
@@ -291,8 +329,8 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           smooth: true,
           showSymbol: false,
           data: pts.map((p) => p.gmv),
-          lineStyle: { color: t.primary, width: 3 },
-          itemStyle: { color: t.primary },
+          lineStyle: { color: "#6366f1", width: 3 },
+          itemStyle: { color: "#6366f1" },
           areaStyle: {
             color: {
               type: "linear" as const,
@@ -301,11 +339,10 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
               x2: 0,
               y2: 1,
               colorStops: [
-                { offset: 0, color: t.primary },
-                { offset: 1, color: "transparent" },
+                { offset: 0, color: "rgba(99,102,241,0.2)" },
+                { offset: 1, color: "rgba(99,102,241,0)" },
               ],
             },
-            opacity: 0.18,
           },
         },
       ],
@@ -351,23 +388,41 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
   const tabs: { id: OverviewTab; label: string }[] = [
     { id: "sales", label: "销售趋势" },
     { id: "orders", label: "订单 / 销量" },
+    { id: "traffic", label: "流量趋势" },
+    { id: "funnel", label: "转化漏斗" },
   ];
+  // traffic/funnel 为演示数据 tab（后端无源），选中时标注徽章、走 demo-data 的 option。
+  const isDemo = activeTab === "traffic" || activeTab === "funnel";
 
   return (
     <Card>
       <CardHead
         title="经营概览"
-        right={<TabPills tabs={tabs} value={activeTab} onChange={setActiveTab} />}
+        right={
+          <div className="flex items-center gap-2">
+            {isDemo && <DemoBadge />}
+            <TabPills tabs={tabs} value={activeTab} onChange={setActiveTab} />
+          </div>
+        }
       />
 
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <MetricCard loading={loading} title="GMV（已付款）" value={fmtMoney(o?.gmv)} icon={<DollarSign size={14} />} />
-        <MetricCard loading={loading} title="订单数" value={fmtInt(o?.order_count)} icon={<ShoppingCart size={14} />} />
-        <MetricCard loading={loading} title="销量" value={fmtInt(o?.units_sold)} icon={<TrendingUp size={14} />} />
-        <MetricCard loading={loading} title="客单价" value={fmtMoney(o?.avg_order_value)} icon={<Wallet size={14} />} />
+        <MetricCard loading={loading} change={ch?.gmv} title="GMV（已付款）" value={fmtMoney(o?.gmv)} icon={<DollarSign size={14} />} />
+        <MetricCard loading={loading} change={ch?.order_count} title="订单数" value={fmtInt(o?.order_count)} icon={<ShoppingCart size={14} />} />
+        <MetricCard loading={loading} change={ch?.units_sold} title="销量" value={fmtInt(o?.units_sold)} icon={<TrendingUp size={14} />} />
+        <MetricCard loading={loading} change={ch?.avg_order_value} title="客单价" value={fmtMoney(o?.avg_order_value)} icon={<Wallet size={14} />} />
       </div>
 
-      {loading || !pts.length ? (
+      {/* 演示 tab（流量/转化）走前端内置 demo 数据，不依赖后端 pts；真实 tab 仍按 pts 空态降级。 */}
+      {activeTab === "traffic" ? (
+        <div className="h-[220px]">
+          <EChart option={trafficOption(t)} height={220} />
+        </div>
+      ) : activeTab === "funnel" ? (
+        <div className="h-[220px]">
+          <EChart option={funnelOption(t)} height={220} />
+        </div>
+      ) : loading || !pts.length ? (
         <ChartEmpty loading={loading} empty="该时段暂无趋势数据" height={220} />
       ) : (
         <div className="h-[220px]">
@@ -520,7 +575,8 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
   const atRisk = stockout + critical + warning;
 
   // fork 的「库存健康度」仪表盘：我方用 (总SKU − 风险SKU) / 总SKU 真实派生。
-  const skuCount = inv?.sku_count ?? 0;
+  // 后端 get_overview 返回字段名是 total_sku（早前误读成 sku_count 导致恒为 0）。
+  const skuCount = inv?.total_sku ?? 0;
   const lowCount = inv?.low_stock_count ?? atRisk;
   const healthPct = skuCount > 0 ? Math.round(((skuCount - lowCount) / skuCount) * 100) : null;
 
@@ -763,8 +819,8 @@ function SortableTh({
   );
 }
 
-/* ── 待发货履约（照 fork OrderTrends 卡片骨架；fork 的退货/退款/平台拆分无数据源，
-      换成我方真实的待发货分桶 + 明细）─────────────────────────────────── */
+/* ── 订单与履约（满宽多 tab）：待发货=真实履约数据；下单/退货/退款=fork 演示数据
+      （后端暂无源，见 docs/board-data-backlog.md，演示 tab 标「演示数据」徽章）─────── */
 
 const PEND_BADGE: Record<string, { label: string; cls: string }> = {
   overdue: { label: "超时", cls: "bg-red-100 text-red-700" },
@@ -773,93 +829,162 @@ const PEND_BADGE: Record<string, { label: string; cls: string }> = {
   unknown: { label: "未知", cls: "bg-fill-default text-foreground-secondary" },
 };
 
-function OrderFulfillment({ data, loading }: { data: BoardData | null; loading: boolean }) {
+type OrderTab = "fulfillment" | "orders" | "returns" | "refunds";
+
+const ORDER_TABS: { id: OrderTab; label: string }[] = [
+  { id: "fulfillment", label: "待发货" },
+  { id: "orders", label: "下单趋势" },
+  { id: "returns", label: "退货分析" },
+  { id: "refunds", label: "退款分析" },
+];
+
+const sum = (a: number[]) => a.reduce((x, y) => x + y, 0);
+
+function OrderSection({ data, loading }: { data: BoardData | null; loading: boolean }) {
+  const t = useChartTokens();
+  const [tab, setTab] = useState<OrderTab>("fulfillment");
   const b = data?.fulfillment.buckets;
   const items = data?.fulfillment.items ?? [];
+  const isDemo = tab !== "fulfillment";
+  const returnRate = (sum(DEMO_RETURNS.rate) / DEMO_RETURNS.rate.length).toFixed(1);
 
   return (
     <Card>
       <CardHead
-        title="待发货订单"
+        title="订单与履约"
         right={
-          data?.fulfillment.snapshot_at ? (
-            <span className="text-xs text-foreground-tertiary">
-              快照 {data.fulfillment.snapshot_at}
-            </span>
-          ) : undefined
+          <div className="flex items-center gap-2">
+            {isDemo && <DemoBadge />}
+            <TabPills tabs={ORDER_TABS} value={tab} onChange={setTab} />
+          </div>
         }
       />
 
-      {/* 统计行（照 fork OrderTrends：行内 label/大数值组） */}
-      <div className="mb-4 flex flex-wrap gap-x-8 gap-y-3">
-        <Stat label="待发货合计" value={fmtInt(b?.total)} loading={loading} />
-        <Stat label="超时" value={fmtInt(b?.overdue)} tone="negative" loading={loading} />
-        <Stat label="临界" value={fmtInt(b?.critical)} tone="warning" loading={loading} />
-        <Stat label="正常" value={fmtInt(b?.normal)} loading={loading} />
-      </div>
-
-      <div className="overflow-hidden rounded-lg border border-border-shallow">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-fill-shallow">
-              <th className="px-3 py-2 text-left font-medium text-foreground-secondary">订单</th>
-              <th className="px-3 py-2 text-left font-medium text-foreground-secondary">店铺</th>
-              <th className="px-3 py-2 text-left font-medium text-foreground-secondary">商品</th>
-              <th className="px-3 py-2 text-center font-medium text-foreground-secondary">状态</th>
-              <th className="px-3 py-2 text-right font-medium text-foreground-secondary">件数</th>
-              <th className="px-3 py-2 text-right font-medium text-foreground-secondary">金额</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-foreground-tertiary">
-                  加载中…
-                </td>
-              </tr>
-            ) : items.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-foreground-tertiary">
-                  暂无待发货订单
-                </td>
-              </tr>
-            ) : (
-              items.map((r) => {
-                const badge = r.bucket ? PEND_BADGE[r.bucket] : null;
-                return (
-                  <tr
-                    key={String(r.order_id)}
-                    className="border-t border-border-shallow transition-colors hover:bg-fill-shallow"
-                  >
-                    <td className="px-3 py-2">
-                      <span className="font-mono text-xs text-foreground">
-                        {String(r.order_id).slice(-8)}
-                      </span>
+      {/* 待发货：真实履约数据（统计分桶 + 明细表） */}
+      {tab === "fulfillment" && (
+        <>
+          {data?.fulfillment.snapshot_at && (
+            <div className="mb-3 text-xs text-foreground-tertiary">
+              快照 {data.fulfillment.snapshot_at}
+            </div>
+          )}
+          <div className="mb-4 flex flex-wrap gap-x-8 gap-y-3">
+            <Stat label="待发货合计" value={fmtInt(b?.total)} loading={loading} />
+            <Stat label="超时" value={fmtInt(b?.overdue)} tone="negative" loading={loading} />
+            <Stat label="临界" value={fmtInt(b?.critical)} tone="warning" loading={loading} />
+            <Stat label="正常" value={fmtInt(b?.normal)} loading={loading} />
+          </div>
+          <div className="overflow-hidden rounded-lg border border-border-shallow">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-fill-shallow">
+                  <th className="px-3 py-2 text-left font-medium text-foreground-secondary">订单</th>
+                  <th className="px-3 py-2 text-left font-medium text-foreground-secondary">店铺</th>
+                  <th className="px-3 py-2 text-left font-medium text-foreground-secondary">商品</th>
+                  <th className="px-3 py-2 text-center font-medium text-foreground-secondary">状态</th>
+                  <th className="px-3 py-2 text-right font-medium text-foreground-secondary">件数</th>
+                  <th className="px-3 py-2 text-right font-medium text-foreground-secondary">金额</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan={6} className="px-3 py-8 text-center text-foreground-tertiary">
+                      加载中…
                     </td>
-                    <td className="px-3 py-2 text-foreground-secondary">{r.shop_id ?? "—"}</td>
-                    <td className="px-3 py-2 text-foreground">
-                      {(r.first_product_name || "—").slice(0, 20)}
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      {badge ? (
-                        <span
-                          className={"inline-flex rounded px-2 py-0.5 text-xs font-medium " + badge.cls}
-                        >
-                          {badge.label}
-                        </span>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-right text-foreground">{fmtInt(r.item_count)}</td>
-                    <td className="px-3 py-2 text-right text-foreground">{fmtMoney(r.total_amount)}</td>
                   </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
+                ) : items.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-3 py-8 text-center text-foreground-tertiary">
+                      暂无待发货订单
+                    </td>
+                  </tr>
+                ) : (
+                  items.map((r) => {
+                    const badge = r.bucket ? PEND_BADGE[r.bucket] : null;
+                    return (
+                      <tr
+                        key={String(r.order_id)}
+                        className="border-t border-border-shallow transition-colors hover:bg-fill-shallow"
+                      >
+                        <td className="px-3 py-2">
+                          <span className="font-mono text-xs text-foreground">
+                            {String(r.order_id).slice(-8)}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-foreground-secondary">{r.shop_id ?? "—"}</td>
+                        <td className="px-3 py-2 text-foreground">
+                          {(r.first_product_name || "—").slice(0, 20)}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          {badge ? (
+                            <span
+                              className={"inline-flex rounded px-2 py-0.5 text-xs font-medium " + badge.cls}
+                            >
+                              {badge.label}
+                            </span>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right text-foreground">{fmtInt(r.item_count)}</td>
+                        <td className="px-3 py-2 text-right text-foreground">{fmtMoney(r.total_amount)}</td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {/* 下单趋势：演示（按平台堆叠柱） */}
+      {tab === "orders" && (
+        <>
+          <div className="mb-4 flex flex-wrap gap-x-8 gap-y-3">
+            <Stat label="合计下单" value={fmtInt(sum(DEMO_ORDERS.shopify) + sum(DEMO_ORDERS.amazon) + sum(DEMO_ORDERS.tiktok))} />
+            <Stat label="Shopify" value={fmtInt(sum(DEMO_ORDERS.shopify))} />
+            <Stat label="Amazon" value={fmtInt(sum(DEMO_ORDERS.amazon))} />
+            <Stat label="TikTok Shop" value={fmtInt(sum(DEMO_ORDERS.tiktok))} />
+          </div>
+          <div className="h-[220px]">
+            <EChart option={ordersStackOption(t)} height={220} />
+          </div>
+        </>
+      )}
+
+      {/* 退货分析：演示（退货数/率双 Y + 原因环图，两列） */}
+      {tab === "returns" && (
+        <>
+          <div className="mb-4 flex flex-wrap gap-x-8 gap-y-3">
+            <Stat label="合计退货" value={fmtInt(sum(DEMO_RETURNS.count))} />
+            <Stat label="退货率" value={`${returnRate}%`} />
+            <Stat label="主要原因" value={DEMO_RETURNS.reasons[0].name} />
+          </div>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="h-[220px]">
+              <EChart option={returnsOption(t)} height={220} />
+            </div>
+            <div className="h-[220px]">
+              <EChart option={returnReasonsOption(t)} height={220} />
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* 退款分析：演示（退款金额面积 + 退款率虚线，月维度） */}
+      {tab === "refunds" && (
+        <>
+          <div className="mb-4 flex flex-wrap gap-x-8 gap-y-3">
+            <Stat label="累计退款" value={`$${fmtInt(sum(DEMO_REFUNDS.amount))}`} />
+            <Stat label="最新退款率" value={`${DEMO_REFUNDS.rate[DEMO_REFUNDS.rate.length - 1]}%`} />
+          </div>
+          <div className="h-[220px]">
+            <EChart option={refundsOption(t)} height={220} />
+          </div>
+        </>
+      )}
     </Card>
   );
 }

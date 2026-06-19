@@ -126,7 +126,14 @@ export interface BoardData {
       units_sold: number;
       avg_order_value: number;
     };
-    inventory: { sku_count?: number; total_stock?: number; low_stock_count?: number };
+    inventory: { total_sku?: number; total_stock?: number; low_stock_count?: number };
+    // 环比：当期 vs 紧邻等长上期的百分比；上期无基准（为 0）时为 null，不渲染、不臆造。
+    change?: {
+      gmv: number | null;
+      order_count: number | null;
+      units_sold: number | null;
+      avg_order_value: number | null;
+    };
   };
   trend: { points: TrendPoint[]; window_label?: string; start_date?: string; end_date?: string };
   top: { items: TopSku[] };
