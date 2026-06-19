@@ -272,6 +272,13 @@ class DashboardLinkResponse(BaseModel):
     markdown: str
 
 
+class ReportLinkResponse(BaseModel):
+    url: str  # 完整报告链接（public_base_url + /report/daily_brief?t=<token>&period=...）
+    expires_in: int  # token 有效期（秒）
+    # 现成的飞书 markdown 片段：把可点击文字 + 有效期包好，agent 原样发即可。
+    markdown: str
+
+
 class SetScopeBindingRequest(BaseModel):
     open_id: str
     scope_key: Optional[str] = None  # None/"" = 切换为全量
@@ -880,6 +887,43 @@ async def get_dashboard_link(
     # 审计日志：弱模型理论上可能把 A 的链接签给 B（软隔离根本局限），靠短时效 + 此日志缓解。
     logger.info("dashboard link issued: open_id=%s ttl=%ss", open_id, ttl)
     return DashboardLinkResponse(url=url, expires_in=ttl, markdown=markdown)
+
+
+@router.get(
+    "/report/link", response_model=ReportLinkResponse, operation_id="ops_report_link"
+)
+async def get_report_link(
+    open_id: str = Query(..., description="飞书用户 open_id"),
+    template_name: str = Query("daily_brief", description="报告模板名"),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    period: str = Query("last_7d", description="时间窗口: last_7d / last_30d / today"),
+):
+    """签发一条带签名 token 的经营报告链接，用户点开可查看可视化图表报告。
+
+    用户问「经营日报 / 报告 / 数据报告」时调用，**把返回的 `markdown` 字段原样发给用户**
+    （已是飞书可点击链接格式，别贴裸 `url`——那是一长串带 token 的丑字符串）。报告范围由
+    open_id 的会话默认范围（binding）锁定，token 短时效（默认 30 分钟）后失效，需重新获取。
+    """
+    base = settings.dashboard.public_base_url
+    if not base:
+        raise HTTPException(status_code=503, detail="DASHBOARD__PUBLIC_BASE_URL 未配置")
+    ttl = settings.dashboard.token_ttl_seconds
+    try:
+        token = make_token(open_id, ttl=ttl)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    url = base.rstrip("/") + "/report/" + template_name + "?t=" + token + "&period=" + period
+    if start_date and isinstance(start_date, str):
+        url += "&start_date=" + start_date
+    if end_date and isinstance(end_date, str):
+        url += "&end_date=" + end_date
+    mins = max(1, ttl // 60)
+    markdown = (
+        "📊 [查看经营日报]({url})\n> 链接 {mins} 分钟内有效，点击查看可视化报告"
+    ).format(url=url, mins=mins)
+    logger.info("report link issued: open_id=%s template=%s ttl=%ds", open_id, template_name, ttl)
+    return ReportLinkResponse(url=url, expires_in=ttl, markdown=markdown)
 
 
 @router.get(

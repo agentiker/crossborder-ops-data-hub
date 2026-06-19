@@ -14,6 +14,7 @@ from web.routes.board import router as board_router
 from web.routes.chat import router as chat_router
 from web.routes.dashboard import router as dashboard_router
 from web.routes.data import router as data_router
+from web.routes.report import router as report_router
 from web.security import require_internal_token
 from web.web_security import register_web_auth_handlers
 
@@ -26,6 +27,8 @@ app = FastAPI(
 app.include_router(auth_router, prefix="/auth", tags=["认证"])
 # 看板 demo（plan/13）：仅本机预览，不带 internal token（靠 127.0.0.1 绑定保护），不纳入 OpenAPI/MCP
 app.include_router(dashboard_router, tags=["看板"])
+# 经营报告 artifact（plan/16）：签名 token 鉴权 + echarts 可视化 HTML，飞书/WebUI 共用。
+app.include_router(report_router, tags=["经营报告"])
 # 独立运营看板（plan/14）：飞书 OAuth 登录态 + user_authz 权限闸；公网经 cloudflared 只放行 /board*。
 # 不带 internal token（鉴权靠登录 cookie），include_in_schema=False 故不入 OpenAPI/MCP。
 app.include_router(auth_feishu_router, prefix="/board/auth/feishu", tags=["看板登录"])
@@ -101,6 +104,7 @@ mcp = FastApiMCP(
         "ops_scopes",
         "ops_set_scope_binding",
         "ops_dashboard_link",
+        "ops_report_link",
     ],
     headers=["x-internal-token"],
 )

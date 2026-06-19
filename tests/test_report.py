@@ -1,0 +1,166 @@
+"""经营报告路由（web/routes/report）+ ops_report_link + agent tool 单测。
+
+覆盖：
+- report 路由 token 无效 -> 401
+- report 路由 token 有效 -> 200 + HTML 包含 echarts + __DATA__ 已替换
+- ops_report_link 端点返回结构 + URL 格式
+- agent_tool ops_report 返回 markdown
+"""
+from __future__ import annotations
+
+import pytest
+from fastapi.testclient import TestClient
+
+from core.config import settings
+from web.app import app
+from web.signed_link import make_token
+
+
+@pytest.fixture(autouse=True)
+def _set_secret(monkeypatch):
+    """确保签名密钥可用。"""
+    monkeypatch.setattr(settings.dashboard, "link_secret", "test-secret-for-report-12345")
+    monkeypatch.setattr(settings.dashboard, "token_ttl_seconds", 1800)
+    monkeypatch.setattr(settings.dashboard, "public_base_url", "https://board.example.com")
+
+
+@pytest.fixture(autouse=True)
+def _clear_overrides():
+    yield
+    app.dependency_overrides.clear()
+
+
+# ── Fake data collectors (monkeypatch _collect to avoid DB) ──────────
+
+_FAKE_REPORT_DATA = {
+    "scope": "全店",
+    "period_label": "近 7 天",
+    "generated_at": "2026-06-19 10:30",
+    "kpi": {
+        "gmv": {"value": 128450.5, "change": 12.4, "currency": "IDR"},
+        "orders": {"value": 1820, "change": 8.1},
+        "ad_spend": {"value": 18650.0, "change": 9.2, "currency": "IDR"},
+        "roas": {"value": 6.89, "change": 3.1},
+        "sku_count": 420,
+        "low_stock_count": 12,
+    },
+    "trend": {
+        "dates": ["06-13", "06-14", "06-15", "06-16", "06-17", "06-18", "06-19"],
+        "gmv": [12000, 14300, 11000, 15500, 18000, 16500, 19000],
+        "orders": [220, 250, 200, 280, 310, 290, 340],
+    },
+    "top_skus": [
+        {"name": "无线蓝牙耳机 Pro", "units": 820, "gmv": 41000},
+        {"name": "手机壳套装", "units": 650, "gmv": 13000},
+    ],
+    "low_stock": [
+        {"name": "无线蓝牙耳机 Pro", "stock": 0, "velocity": 28.0, "days": 0, "level": "stockout", "level_label": "断货"},
+        {"name": "手机壳套装", "stock": 5, "velocity": 10.0, "days": 0.5, "level": "critical", "level_label": "告急"},
+    ],
+}
+
+
+async def _fake_collect(open_id, start_date, end_date, period):
+    return _FAKE_REPORT_DATA
+
+
+# ── Report route tests ──────────────────────────────────────────────
+
+
+def test_report_invalid_token_401():
+    """token 无效 -> 401 + 错误页。"""
+    client = TestClient(app)
+    r = client.get("/report/daily_brief?t=invalid-token&period=last_7d")
+    assert r.status_code == 401
+    assert "链接已失效" in r.text
+
+
+def test_report_valid_token_200_html(monkeypatch):
+    """token 有效 -> 200 + HTML 包含 echarts + __DATA__ 已替换（无原始占位符）。"""
+    monkeypatch.setattr("web.routes.report._collect", _fake_collect)
+    token = make_token("ou_test_user", ttl=1800)
+    client = TestClient(app)
+    r = client.get(f"/report/daily_brief?t={token}&period=last_7d")
+    assert r.status_code == 200
+    assert "echarts" in r.text
+    assert "__DATA__" not in r.text  # 占位符已替换
+    assert "经营日报" in r.text
+    assert "128450" in r.text  # GMV value injected
+
+
+def test_report_invalid_template_404(monkeypatch):
+    """未知模板名 -> 404。"""
+    monkeypatch.setattr("web.routes.report._collect", _fake_collect)
+    token = make_token("ou_test_user", ttl=1800)
+    client = TestClient(app)
+    r = client.get(f"/report/nonexistent?t={token}&period=last_7d")
+    assert r.status_code == 404
+
+
+# ── ops_report_link endpoint tests ──────────────────────────────────
+
+
+def test_report_link_structure():
+    """ops_report_link 端点返回结构 + URL 格式。"""
+    from web.routes.data import get_report_link
+
+    result = _run(get_report_link(
+        open_id="ou_test_user",
+        template_name="daily_brief",
+        period="last_7d",
+    ))
+    assert result.url.startswith("https://board.example.com/report/daily_brief?t=")
+    assert "period=last_7d" in result.url
+    assert result.expires_in == 1800
+    assert "查看经营日报" in result.markdown
+    assert result.url in result.markdown
+
+
+def test_report_link_with_dates():
+    """ops_report_link 传 start_date/end_date 时 URL 包含这些参数。"""
+    from web.routes.data import get_report_link
+
+    result = _run(get_report_link(
+        open_id="ou_test_user",
+        template_name="daily_brief",
+        start_date="2026-06-01",
+        end_date="2026-06-15",
+        period="last_7d",
+    ))
+    assert "start_date=2026-06-01" in result.url
+    assert "end_date=2026-06-15" in result.url
+
+
+# ── agent_tool ops_report tests ─────────────────────────────────────
+
+
+def test_ops_report_tool_returns_markdown(monkeypatch):
+    """agent_tool ops_report 返回 markdown。"""
+    from services.user_authz import UserPermission
+    from web.agent_tools import run_tool
+
+    perm = UserPermission(
+        open_id="ou_test_user", role="boss", allowed_scope_key=None,
+        channel="feishu", account_id="ecom-app",
+    )
+    # Monkeypatch resolve_authorized_scope to avoid DB
+    from services.scope_resolution import ScopeFilters
+
+    monkeypatch.setattr(
+        "web.agent_tools.resolve_authorized_scope",
+        lambda p: ScopeFilters(platform=None, country=None, shop_ids=None, scope_key=None, display_text="全店"),
+    )
+
+    result = run_tool("ops_report", {"template_name": "daily_brief", "period": "last_7d"}, perm)
+    # run_tool returns the markdown string directly for ops_report
+    assert "查看经营日报" in result
+
+
+# ── helper ──────────────────────────────────────────────────────────
+
+import asyncio
+
+
+def _run(coro):
+    """Run async function synchronously (same pattern as agent_tools._run)."""
+    return asyncio.run(coro)

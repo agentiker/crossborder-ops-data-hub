@@ -23,7 +23,7 @@ ingress:
   # （openclaw 调 /api/data 走本机 127.0.0.1 直连，不经隧道）。
   # plan/15：放行 /board（看板+飞书登录）与 /app（Web 对话 SPA，同源托管）。
   - hostname: board.agenticker.cc
-    path: "^/(board|app)($|/)"
+    path: "^/(board|app|report)($|/)"
     service: http://127.0.0.1:8000
   # plan/15：Web 对话端 API，放行 chat/conversations/me + admin（角色管理，boss-only 守卫）；
   # 均经飞书登录 cookie 鉴权，未登录 401；/api/data 内部端点不在此列，公网不可达。

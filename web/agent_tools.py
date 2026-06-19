@@ -92,6 +92,18 @@ TOOL_SPECS: list[ToolSpec] = [
             "required": [],
         },
     ),
+    ToolSpec(
+        name="ops_report",
+        description="生成经营报告签名链接（可视化图表），可附加在回复中。问'经营日报/数据报告/可视化报告'时用。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "template_name": {"type": "string", "description": "报告模板: daily_brief", "default": "daily_brief"},
+                "period": {"type": "string", "description": "时间窗口: last_7d/last_30d/today", "default": "last_7d"},
+            },
+            "required": [],
+        },
+    ),
 ]
 
 TOOL_NAMES = {t.name for t in TOOL_SPECS}
@@ -151,6 +163,14 @@ def run_tool(name: str, arguments: dict, perm: UserPermission) -> dict:
         limit = int(args.get("limit") or 50)
         result = _run(get_fulfillments_pending(
             warning_hours=None, limit=limit, **common))
+    elif name == "ops_report":
+        from web.routes.data import get_report_link
+        template = args.get("template_name", "daily_brief")
+        period_val = args.get("period", "last_7d")
+        # ops_report 需要 open_id（从 perm 取）而非 common dict 的 open_id=None
+        result = _run(get_report_link(
+            open_id=perm.open_id, template_name=template, period=period_val))
+        return result.markdown
     else:  # 不会到这（已校验），保险
         raise ValueError(f"未实现工具：{name}")
 
