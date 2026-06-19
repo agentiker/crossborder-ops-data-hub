@@ -1,22 +1,26 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  ArrowUpDown,
+  CalendarRange,
   ChevronDown,
   DollarSign,
+  Search,
   ShoppingCart,
+  Store,
   TrendingUp,
   Wallet,
 } from "lucide-react";
-import { api, type BoardData, type LowStockItem, type PendingItem } from "@/api";
+import { api, type BoardData, type LowStockItem, type TopSku } from "@/api";
 import { EChart, useChartTokens } from "@/components/EChart";
-import { DataTable, type Column } from "@/components/DataTable";
-import { Badge } from "@/components/ui/badge";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { cn } from "@/lib/utils";
+
+// 照搬 forkStoreClaw/src/components/Dashboard/* 的版式/卡片/分段 tab/图表观感（1:1）。
+// 三处按本项目落差替换并注释：
+//   ①数据：接真实 api.boardData()（period/scope 维度），fork 的 mock filter（区域/平台/店铺/日期）
+//          收敛到我方真实的「时段 + 范围」两维。
+//   ①数据缺口（不造假）：fork 的「转化漏斗 / 流量 UV·PV / 单品 7 天趋势 / 利润排序 / 环比涨跌 /
+//          退货·退款·平台拆分」后端无对应数据源 → 对应 tab/行降级或省略；底部满宽段换成我方真实的
+//          「待发货履约」（fork OrderTrends 的卡片骨架 + 我方履约数据）。
+//   ③品牌：图表主色走自有 token（墨绿 t.primary），不照搬 StoreClaw 的靛蓝 #6366f1。
 
 const PERIODS: [string, string][] = [
   ["today", "今天"],
@@ -53,64 +57,49 @@ export function BoardPage() {
     };
   }, [period, scope]);
 
+  const canSwitch = !!data?.can_switch && (data?.scopes.length ?? 0) > 1;
+
   return (
     <section className="flex h-full flex-col">
-      {/* 顶部标题条 */}
-      <header className="sticky top-0 z-20 flex h-[68px] shrink-0 items-center justify-between gap-2 border-b border-border-shallow bg-card px-4 sm:px-6">
-        <h1 className="truncate text-lg font-medium leading-6 text-foreground">
-          运营看板
-        </h1>
-        {data?.scope && (
-          <span className="hidden text-xs text-foreground-tertiary sm:inline">
-            范围 · {data.scope}
-          </span>
-        )}
+      {/* Header（照 fork DashboardPage：h-[68px] + 底边） */}
+      <header className="sticky top-0 z-50 flex h-[68px] shrink-0 items-center justify-between gap-2 border-b border-border-shallow bg-background px-4">
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          <h1 className="truncate text-lg font-medium leading-6 text-foreground">运营看板</h1>
+        </div>
       </header>
 
-      {/* 筛选条：范围 + 时段 */}
-      <div className="flex flex-wrap items-end gap-4 border-b border-border-shallow bg-card px-4 py-3 sm:px-6">
-        {data?.can_switch && data.scopes.length > 1 && (
-          <FilterField label="范围">
-            <ScopeSwitcher
-              scopes={data.scopes}
-              value={scope}
-              label={
-                data.scopes.find((s) => (s.key || "") === scope)?.label ||
-                "全部范围"
-              }
-              onChange={setScope}
-            />
-          </FilterField>
+      {/* Filter bar（照 fork DashboardFilter：带图标标签的 select；mock 维度→真实 时段/范围） */}
+      <div className="flex flex-wrap items-end gap-4 border-b border-border-shallow bg-background px-4 py-3 sm:px-6">
+        <FilterSelect
+          icon={<CalendarRange size={12} />}
+          label="时段"
+          value={period}
+          onChange={setPeriod}
+          options={PERIODS.map(([value, label]) => ({ value, label }))}
+        />
+        {canSwitch && (
+          <FilterSelect
+            icon={<Store size={12} />}
+            label="范围"
+            value={scope}
+            onChange={setScope}
+            options={data!.scopes.map((s) => ({ value: s.key || "", label: s.label }))}
+          />
         )}
-        <FilterField label="时段">
-          <div className="flex gap-1 rounded-lg bg-fill p-0.5">
-            {PERIODS.map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => setPeriod(key)}
-                className={cn(
-                  "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                  key === period
-                    ? "bg-card text-foreground shadow-sm"
-                    : "text-foreground-tertiary hover:text-foreground",
-                )}
-              >
-                {label}
-              </button>
-            ))}
+        {data?.scope && (
+          <div className="ml-auto hidden self-center text-xs text-foreground-tertiary sm:block">
+            范围 · {data.scope}
           </div>
-        </FilterField>
+        )}
       </div>
 
-      {/* 内容区 */}
+      {/* Content（照 fork：max-w-[1400px] + 满宽概览 + 2 列 + 满宽底部段） */}
       <div className="flex-1 overflow-y-auto p-4 sm:p-6">
         <div className="mx-auto max-w-[1400px] space-y-6">
           {error ? (
-            <Panel>
-              <div className="py-10 text-center text-sm text-destructive">
-                加载失败：{error}
-              </div>
-            </Panel>
+            <Card>
+              <div className="py-10 text-center text-sm text-destructive">加载失败：{error}</div>
+            </Card>
           ) : (
             <>
               <BusinessOverview data={data} loading={loading} />
@@ -127,45 +116,26 @@ export function BoardPage() {
   );
 }
 
-/* ── 通用壳件 ──────────────────────────────────────────────── */
+/* ── 通用壳件（照 fork Dashboard 卡片/分段 tab）────────────────── */
 
-// 仿 fork：圆角 2xl + 浅边 + 卡底，作为各 Section 容器
-function Panel({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
+// fork 卡片：p-5 rounded-2xl bg-white border border-border-shallow（无阴影）。
+function Card({ children }: { children: ReactNode }) {
   return (
-    <div
-      className={cn(
-        "rounded-2xl border border-border-shallow bg-card p-5 shadow-sm",
-        className,
-      )}
-    >
-      {children}
-    </div>
+    <div className="rounded-2xl border border-border-shallow bg-card p-5">{children}</div>
   );
 }
 
-function PanelHead({
-  title,
-  right,
-}: {
-  title: string;
-  right?: ReactNode;
-}) {
+function CardHead({ title, right }: { title: string; right?: ReactNode }) {
   return (
-    <div className="mb-4 flex items-center justify-between gap-3">
+    <div className="mb-4 flex items-center justify-between">
       <h3 className="text-base font-semibold text-foreground">{title}</h3>
       {right}
     </div>
   );
 }
 
-// 分段切换器（fork 的 pill-tab 风格）
-function SegTabs<T extends string>({
+// fork 的分段 tab：bg-fill-default 容器 + 选中 bg-white shadow-sm。
+function TabPills<T extends string>({
   tabs,
   value,
   onChange,
@@ -175,92 +145,61 @@ function SegTabs<T extends string>({
   onChange: (id: T) => void;
 }) {
   return (
-    <div className="flex gap-1 rounded-lg bg-fill p-0.5">
-      {tabs.map((t) => (
+    <div className="flex gap-1 rounded-lg bg-fill-default p-0.5">
+      {tabs.map((tab) => (
         <button
-          key={t.id}
-          onClick={() => onChange(t.id)}
-          className={cn(
-            "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-            value === t.id
+          key={tab.id}
+          onClick={() => onChange(tab.id)}
+          className={
+            "rounded-md px-3 py-1.5 text-xs font-medium transition-colors " +
+            (value === tab.id
               ? "bg-card text-foreground shadow-sm"
-              : "text-foreground-tertiary hover:text-foreground",
-          )}
+              : "text-foreground-tertiary hover:text-foreground")
+          }
         >
-          {t.label}
+          {tab.label}
         </button>
       ))}
     </div>
   );
 }
 
-function FilterField({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-xs text-foreground-tertiary">{label}</span>
-      {children}
-    </div>
-  );
-}
-
-function ScopeSwitcher({
-  scopes,
-  value,
-  label,
-  onChange,
-}: {
-  scopes: { key: string; label: string }[];
-  value: string;
-  label: string;
-  onChange: (k: string) => void;
-}) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-card px-3 text-sm text-foreground transition-colors hover:border-border-deep">
-        {label}
-        <ChevronDown className="size-3.5 text-foreground-tertiary" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="max-h-72 overflow-y-auto">
-        {scopes.map((s) => (
-          <DropdownMenuItem
-            key={s.key || "__all__"}
-            onClick={() => onChange(s.key || "")}
-            className={cn((s.key || "") === value && "font-medium text-primary")}
-          >
-            {s.label}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-// 内嵌 KPI 小卡（fork BusinessOverview 的 MetricCard）
-function KpiTile({
-  title,
-  value,
+// fork DashboardFilter 的带图标标签 select。
+function FilterSelect({
   icon,
-  loading,
+  label,
+  value,
+  onChange,
+  options,
 }: {
-  title: string;
-  value: string;
   icon: ReactNode;
-  loading?: boolean;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
 }) {
   return (
-    <div className="flex flex-col gap-1 rounded-xl bg-fill-shallow p-4">
-      <div className="flex items-center gap-2 text-foreground-tertiary">
+    <div className="relative">
+      <div className="mb-1 flex items-center gap-1.5 text-xs text-foreground-tertiary">
         {icon}
-        <span className="text-xs">{title}</span>
+        <span>{label}</span>
       </div>
-      <div className="tabnum text-2xl font-bold text-foreground">
-        {loading ? "…" : value}
+      <div className="relative">
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-8 cursor-pointer appearance-none rounded-lg border border-border bg-card pl-3 pr-8 text-sm text-foreground transition-colors hover:border-border-deep focus:border-primary focus:outline-none"
+        >
+          {options.map((o) => (
+            <option key={o.value || "__all__"} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <ChevronDown
+          size={14}
+          className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-foreground-tertiary"
+        />
       </div>
     </div>
   );
@@ -285,43 +224,66 @@ function ChartEmpty({
   );
 }
 
-/* ── 经营概览（KPI + 销售/订单趋势 tab）─────────────────────── */
+/* ── 经营概览（照 fork BusinessOverview：MetricCard 行 + 分段 tab + 趋势图）──── */
 
-type OverviewTab = "sales" | "traffic";
-
-function BusinessOverview({
-  data,
+// fork MetricCard：图标+标题 / 大数值 / 涨跌行。后端无环比数据 → 按「不造假」省略涨跌行（仅两行）。
+function MetricCard({
+  title,
+  value,
+  icon,
   loading,
 }: {
-  data: BoardData | null;
-  loading: boolean;
+  title: string;
+  value: string;
+  icon: ReactNode;
+  loading?: boolean;
 }) {
+  return (
+    <div className="flex flex-col gap-1 rounded-xl bg-fill-shallow p-4">
+      <div className="flex items-center gap-2 text-foreground-tertiary">
+        {icon}
+        <span className="text-xs">{title}</span>
+      </div>
+      <div className="tabnum text-2xl font-bold text-foreground">{loading ? "…" : value}</div>
+    </div>
+  );
+}
+
+type OverviewTab = "sales" | "orders";
+
+function BusinessOverview({ data, loading }: { data: BoardData | null; loading: boolean }) {
   const t = useChartTokens();
-  const [tab, setTab] = useState<OverviewTab>("sales");
+  const [activeTab, setActiveTab] = useState<OverviewTab>("sales");
   const o = data?.overview.orders;
   const pts = data?.trend.points ?? [];
   const labels = pts.map((p) => p.date.slice(5));
 
-  const baseAxisX = {
+  const axisX = (boundaryGap: boolean) => ({
     type: "category" as const,
     data: labels,
-    boundaryGap: tab === "traffic",
+    boundaryGap,
     axisLine: { lineStyle: { color: t.grid } },
     axisLabel: { color: t.sub, rotate: labels.length > 12 ? 45 : 0 },
-  };
-  const baseAxisY = {
+  });
+  const axisY = {
     type: "value" as const,
     axisLine: { show: false },
     splitLine: { lineStyle: { color: t.grid } },
     axisLabel: { color: t.sub },
   };
+  const tip = {
+    backgroundColor: "#fff",
+    borderColor: t.grid,
+    textStyle: { color: t.text },
+  };
 
+  // fork 的「销售趋势」：GMV 面积折线（主色走品牌墨绿，非 StoreClaw 靛蓝）。
   const salesOption = useMemo(
     () => ({
-      tooltip: { trigger: "axis" as const },
+      tooltip: { trigger: "axis" as const, ...tip },
       grid: { top: 12, right: 16, bottom: 28, left: 60 },
-      xAxis: baseAxisX,
-      yAxis: baseAxisY,
+      xAxis: axisX(false),
+      yAxis: axisY,
       series: [
         {
           name: "GMV",
@@ -351,9 +313,10 @@ function BusinessOverview({
     [data, t],
   );
 
-  const trafficOption = useMemo(
+  // fork 的「流量趋势」槽位无 UV/PV 数据源 → 换成我方真实的「订单数 + 销量」双系列。
+  const ordersOption = useMemo(
     () => ({
-      tooltip: { trigger: "axis" as const },
+      tooltip: { trigger: "axis" as const, ...tip },
       legend: {
         data: ["订单数", "销量"],
         bottom: 0,
@@ -361,8 +324,8 @@ function BusinessOverview({
         icon: "roundRect",
       },
       grid: { top: 12, right: 16, bottom: 40, left: 50 },
-      xAxis: baseAxisX,
-      yAxis: baseAxisY,
+      xAxis: axisX(true),
+      yAxis: axisY,
       series: [
         {
           name: "订单数",
@@ -387,158 +350,167 @@ function BusinessOverview({
 
   const tabs: { id: OverviewTab; label: string }[] = [
     { id: "sales", label: "销售趋势" },
-    { id: "traffic", label: "订单 / 销量" },
+    { id: "orders", label: "订单 / 销量" },
   ];
 
   return (
-    <Panel>
-      <PanelHead
+    <Card>
+      <CardHead
         title="经营概览"
-        right={<SegTabs tabs={tabs} value={tab} onChange={setTab} />}
+        right={<TabPills tabs={tabs} value={activeTab} onChange={setActiveTab} />}
       />
 
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <KpiTile
-          loading={loading}
-          title="GMV（已付款）"
-          value={fmtMoney(o?.gmv)}
-          icon={<DollarSign size={14} />}
-        />
-        <KpiTile
-          loading={loading}
-          title="订单数"
-          value={fmtInt(o?.order_count)}
-          icon={<ShoppingCart size={14} />}
-        />
-        <KpiTile
-          loading={loading}
-          title="销量"
-          value={fmtInt(o?.units_sold)}
-          icon={<TrendingUp size={14} />}
-        />
-        <KpiTile
-          loading={loading}
-          title="客单价"
-          value={fmtMoney(o?.avg_order_value)}
-          icon={<Wallet size={14} />}
-        />
+        <MetricCard loading={loading} title="GMV（已付款）" value={fmtMoney(o?.gmv)} icon={<DollarSign size={14} />} />
+        <MetricCard loading={loading} title="订单数" value={fmtInt(o?.order_count)} icon={<ShoppingCart size={14} />} />
+        <MetricCard loading={loading} title="销量" value={fmtInt(o?.units_sold)} icon={<TrendingUp size={14} />} />
+        <MetricCard loading={loading} title="客单价" value={fmtMoney(o?.avg_order_value)} icon={<Wallet size={14} />} />
       </div>
 
       {loading || !pts.length ? (
         <ChartEmpty loading={loading} empty="该时段暂无趋势数据" height={220} />
       ) : (
         <div className="h-[220px]">
-          <EChart
-            option={tab === "sales" ? salesOption : trafficOption}
-            height={220}
-          />
+          <EChart option={activeTab === "sales" ? salesOption : ordersOption} height={220} />
         </div>
       )}
-    </Panel>
+    </Card>
   );
 }
 
-/* ── 爆款商品 TOP（榜单 + 条形）────────────────────────────── */
+/* ── 爆款商品（照 fork HotProducts：排行列表 + 右侧明细面板）──────────── */
 
 type RankBy = "sales" | "gmv";
 
-function HotProducts({
-  data,
-  loading,
-}: {
-  data: BoardData | null;
-  loading: boolean;
-}) {
-  const t = useChartTokens();
+function skuName(i: TopSku): string {
+  return i.product_name || i.sku_name || i.sku_id || "?";
+}
+
+function HotProducts({ data, loading }: { data: BoardData | null; loading: boolean }) {
   const [rankBy, setRankBy] = useState<RankBy>("sales");
+  const [selected, setSelected] = useState<number | null>(null);
   const raw = data?.top.items ?? [];
 
   const items = useMemo(() => {
     const sorted = [...raw].sort((a, b) =>
-      rankBy === "gmv"
-        ? (b.gmv ?? 0) - (a.gmv ?? 0)
-        : b.units_sold - a.units_sold,
+      rankBy === "gmv" ? (b.gmv ?? 0) - (a.gmv ?? 0) : b.units_sold - a.units_sold,
     );
     return sorted.slice(0, 10);
   }, [raw, rankBy]);
 
-  const names = items.map((i) =>
-    (i.product_name || i.sku_name || i.sku_id || "?").slice(0, 16),
-  );
+  const totalUnits = useMemo(() => items.reduce((s, i) => s + (i.units_sold || 0), 0), [items]);
+  const sel = selected != null ? items[selected] : null;
 
-  const option = useMemo(
-    () => ({
-      grid: { left: 8, right: 24, top: 8, bottom: 8, containLabel: true },
-      tooltip: { trigger: "axis" as const, axisPointer: { type: "shadow" as const } },
-      xAxis: {
-        type: "value" as const,
-        axisLine: { show: false },
-        splitLine: { lineStyle: { color: t.grid } },
-        axisLabel: { color: t.sub },
-      },
-      yAxis: {
-        type: "category" as const,
-        inverse: true,
-        data: names,
-        axisLine: { lineStyle: { color: t.grid } },
-        axisTick: { show: false },
-        axisLabel: { color: t.text },
-      },
-      series: [
-        {
-          name: rankBy === "gmv" ? "GMV" : "销量",
-          type: "bar",
-          data: items.map((i) =>
-            rankBy === "gmv" ? i.gmv ?? 0 : i.units_sold,
-          ),
-          itemStyle: { color: t.primary, borderRadius: [0, 4, 4, 0] },
-          barWidth: "56%",
-        },
-      ],
-    }),
-    [items, names, rankBy, t],
-  );
-
+  // fork 排序含「按利润」；我方无利润数据源 → 仅保留 销量/GMV。
   const rankOptions: { id: RankBy; label: string }[] = [
     { id: "sales", label: "按销量" },
     { id: "gmv", label: "按 GMV" },
   ];
 
   return (
-    <Panel>
-      <PanelHead
+    <Card>
+      <CardHead
         title="爆款商品 TOP 10"
-        right={<SegTabs tabs={rankOptions} value={rankBy} onChange={setRankBy} />}
+        right={<TabPills tabs={rankOptions} value={rankBy} onChange={setRankBy} />}
       />
+
       {loading ? (
-        <ChartEmpty loading empty="" height={340} />
+        <ChartEmpty loading empty="" height={320} />
       ) : !items.length ? (
-        <ChartEmpty loading={false} empty="该时段暂无销量数据" height={340} />
+        <ChartEmpty loading={false} empty="该时段暂无销量数据" height={320} />
       ) : (
-        <EChart option={option} height={Math.max(280, items.length * 34)} />
+        <div className="flex gap-4">
+          {/* 排行列表（照 fork：序号徽章 + 名称 + 数值；前 3 名 bg-foreground 实心） */}
+          <div className="max-h-[320px] flex-1 space-y-1.5 overflow-y-auto">
+            {items.map((p, index) => {
+              const val = rankBy === "gmv" ? p.gmv ?? 0 : p.units_sold;
+              return (
+                <div
+                  key={(p.sku_id || "") + index}
+                  onClick={() => setSelected(index)}
+                  className={
+                    "flex cursor-pointer items-center gap-3 rounded-lg p-2 transition-colors " +
+                    (selected === index ? "bg-fill-default" : "hover:bg-fill-shallow")
+                  }
+                >
+                  <span
+                    className={
+                      "flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold " +
+                      (index < 3
+                        ? "bg-foreground text-white"
+                        : "bg-fill-default text-foreground-secondary")
+                    }
+                  >
+                    {index + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-foreground">{skuName(p)}</div>
+                    <div className="text-xs text-foreground-tertiary">
+                      {rankBy === "gmv" ? fmtMoney(val) : `${fmtInt(val)} 件`}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* 右侧明细面板：fork 是单品 7 天趋势图；我方无单品时序 → 换成选中品的真实占比/数值（不造假） */}
+          <div className="w-[240px] shrink-0">
+            {sel ? (
+              <div className="space-y-3">
+                <div className="truncate text-sm font-medium text-foreground">{skuName(sel)}</div>
+                <DetailStat label="销量" value={`${fmtInt(sel.units_sold)} 件`} />
+                <DetailStat label="GMV" value={fmtMoney(sel.gmv)} />
+                <DetailStat
+                  label="占榜单销量"
+                  value={totalUnits ? `${Math.round((sel.units_sold / totalUnits) * 100)}%` : "—"}
+                />
+                {sel.sku_id && (
+                  <div className="pt-1 text-xs text-foreground-tertiary">SKU · {sel.sku_id}</div>
+                )}
+              </div>
+            ) : (
+              <div className="flex h-full items-center justify-center text-center text-sm text-foreground-tertiary">
+                点击商品查看明细
+              </div>
+            )}
+          </div>
+        </div>
       )}
-    </Panel>
+    </Card>
   );
 }
 
-/* ── 库存健康（汇总环图 + 商品明细表）──────────────────────── */
+function DetailStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-fill-shallow p-3">
+      <div className="text-xs text-foreground-tertiary">{label}</div>
+      <div className="tabnum mt-0.5 text-lg font-bold text-foreground">{value}</div>
+    </div>
+  );
+}
+
+/* ── 库存健康（照 fork InventoryHealth：汇总=仪表盘+分布 / 明细=搜索排序表）──── */
 
 type InventoryView = "summary" | "details";
-const LOW_LABEL: Record<string, string> = {
-  stockout: "断货",
-  critical: "告急",
-  warning: "预警",
+
+const LOW_BADGE: Record<string, { label: string; cls: string }> = {
+  stockout: { label: "缺货", cls: "bg-red-100 text-red-700" },
+  critical: { label: "告急", cls: "bg-orange-100 text-orange-700" },
+  warning: { label: "偏低", cls: "bg-yellow-100 text-yellow-700" },
 };
 
-function InventoryHealth({
-  data,
-  loading,
-}: {
-  data: BoardData | null;
-  loading: boolean;
-}) {
+type SortField = "days_of_cover" | "available_stock" | "name";
+
+function InventoryHealth({ data, loading }: { data: BoardData | null; loading: boolean }) {
   const t = useChartTokens();
   const [view, setView] = useState<InventoryView>("summary");
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("all");
+  const [sortField, setSortField] = useState<SortField>("days_of_cover");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const inv = data?.overview.inventory;
   const b = data?.low.buckets;
   const items = data?.low.items ?? [];
 
@@ -547,26 +519,59 @@ function InventoryHealth({
   const warning = b?.warning ?? 0;
   const atRisk = stockout + critical + warning;
 
+  // fork 的「库存健康度」仪表盘：我方用 (总SKU − 风险SKU) / 总SKU 真实派生。
+  const skuCount = inv?.sku_count ?? 0;
+  const lowCount = inv?.low_stock_count ?? atRisk;
+  const healthPct = skuCount > 0 ? Math.round(((skuCount - lowCount) / skuCount) * 100) : null;
+
+  const gaugeOption = useMemo(
+    () => ({
+      series: [
+        {
+          type: "gauge",
+          startAngle: 200,
+          endAngle: -20,
+          min: 0,
+          max: 100,
+          progress: { show: true, width: 18, itemStyle: { color: t.positive } },
+          axisLine: { lineStyle: { width: 18, color: [[1, t.grid]] } },
+          axisTick: { show: false },
+          splitLine: { show: false },
+          axisLabel: { show: false },
+          pointer: { show: false },
+          title: { show: true, offsetCenter: [0, "70%"], fontSize: 13, color: t.sub },
+          detail: {
+            valueAnimation: true,
+            fontSize: 28,
+            fontWeight: "bold",
+            offsetCenter: [0, "40%"],
+            formatter: "{value}%",
+            color: t.positive,
+          },
+          data: [{ value: healthPct ?? 0, name: "库存健康度" }],
+        },
+      ],
+    }),
+    [healthPct, t],
+  );
+
+  // fork 的右侧是「按品类分布」堆叠条；我方无品类维度 → 换成真实的三档风险分布环图。
   const donutOption = useMemo(
     () => ({
-      tooltip: { trigger: "item" as const },
-      legend: {
-        bottom: 0,
-        textStyle: { color: t.sub, fontSize: 11 },
-        icon: "roundRect",
-      },
+      tooltip: { trigger: "item" as const, backgroundColor: "#fff", borderColor: t.grid, textStyle: { color: t.text } },
+      legend: { bottom: 0, textStyle: { color: t.sub, fontSize: 11 }, icon: "roundRect" },
       series: [
         {
           type: "pie",
-          radius: ["48%", "72%"],
+          radius: ["45%", "70%"],
           center: ["50%", "44%"],
           avoidLabelOverlap: false,
-          itemStyle: { borderRadius: 6, borderColor: t.text, borderWidth: 0 },
+          itemStyle: { borderRadius: 6, borderColor: "#fff", borderWidth: 2 },
           label: { show: false },
           data: [
-            { name: "断货", value: stockout, itemStyle: { color: t.negative } },
+            { name: "缺货", value: stockout, itemStyle: { color: t.negative } },
             { name: "告急", value: critical, itemStyle: { color: t.warning } },
-            { name: "预警", value: warning, itemStyle: { color: t.positive } },
+            { name: "偏低", value: warning, itemStyle: { color: t.positive } },
           ],
         },
       ],
@@ -574,43 +579,38 @@ function InventoryHealth({
     [stockout, critical, warning, t],
   );
 
-  const columns: Column<LowStockItem>[] = [
-    { key: "name", header: "商品", render: (r) => r.product_name || r.sku_id },
-    {
-      key: "bucket",
-      header: "风险",
-      render: (r) => (
-        <Badge variant={r.bucket === "warning" ? "warning" : "destructive"}>
-          {LOW_LABEL[r.bucket] || r.bucket}
-        </Badge>
-      ),
-    },
-    {
-      key: "stock",
-      header: "库存",
-      numeric: true,
-      render: (r) => fmtInt(r.available_stock),
-    },
-    {
-      key: "vel",
-      header: "日均销量",
-      numeric: true,
-      render: (r) => Number(r.daily_velocity).toFixed(1),
-    },
-    {
-      key: "cover",
-      header: "可售天数",
-      numeric: true,
-      render: (r) => Number(r.days_of_cover).toFixed(1),
-    },
-  ];
+  function handleSort(field: SortField) {
+    if (sortField === field) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortField(field);
+      setSortDir("asc");
+    }
+  }
+
+  const filtered = useMemo(() => {
+    const q = query.toLowerCase();
+    return items
+      .filter((it) => {
+        const matchesQ =
+          !q ||
+          (it.product_name || "").toLowerCase().includes(q) ||
+          it.sku_id.toLowerCase().includes(q);
+        const matchesS = status === "all" || it.bucket === status;
+        return matchesQ && matchesS;
+      })
+      .sort((a, b2) => {
+        const dir = sortDir === "asc" ? 1 : -1;
+        if (sortField === "name") return skuLabel(a).localeCompare(skuLabel(b2)) * dir;
+        return ((a[sortField] as number) - (b2[sortField] as number)) * dir;
+      });
+  }, [items, query, status, sortField, sortDir]);
 
   return (
-    <Panel>
-      <PanelHead
+    <Card>
+      <CardHead
         title="库存健康"
         right={
-          <SegTabs
+          <TabPills
             tabs={[
               { id: "summary", label: "汇总" },
               { id: "details", label: "商品明细" },
@@ -623,128 +623,163 @@ function InventoryHealth({
 
       {view === "summary" ? (
         loading ? (
-          <ChartEmpty loading empty="" height={280} />
+          <ChartEmpty loading empty="" height={200} />
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="h-[220px]">
-              {atRisk ? (
-                <EChart option={donutOption} height={220} />
+          <div className="grid grid-cols-2 gap-4">
+            <div className="h-[200px]">
+              {healthPct == null ? (
+                <ChartEmpty loading={false} empty="暂无健康度数据" height={200} />
               ) : (
-                <ChartEmpty loading={false} empty="暂无断货风险" height={220} />
+                <EChart option={gaugeOption} height={200} />
               )}
             </div>
-            <div className="flex flex-col justify-center gap-3">
-              <RiskRow color="bg-negative" label="断货" value={stockout} />
-              <RiskRow color="bg-warning" label="告急" value={critical} />
-              <RiskRow color="bg-positive" label="预警" value={warning} />
-              <p className="mt-1 text-xs text-foreground-tertiary">
-                可售天数 = 可用库存 ÷ 日均销量
-              </p>
+            <div className="h-[200px]">
+              {atRisk ? (
+                <EChart option={donutOption} height={200} />
+              ) : (
+                <ChartEmpty loading={false} empty="暂无断货风险" height={200} />
+              )}
             </div>
           </div>
         )
       ) : (
-        <DataTable
-          columns={columns}
-          rows={items}
-          rowKey={(r) => r.sku_id}
-          empty="暂无断货风险 SKU"
-        />
+        <div>
+          {/* 搜索 + 状态筛选（照 fork InventoryHealth 明细头） */}
+          <div className="mb-3 flex gap-3">
+            <div className="relative flex-1">
+              <Search
+                size={14}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-foreground-tertiary"
+              />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="搜索商品名或 SKU…"
+                className="h-8 w-full rounded-lg border border-border bg-card pl-8 pr-3 text-sm text-foreground placeholder:text-foreground-tertiary focus:border-primary focus:outline-none"
+              />
+            </div>
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              className="h-8 appearance-none rounded-lg border border-border bg-card px-3 text-sm text-foreground"
+            >
+              <option value="all">全部状态</option>
+              <option value="stockout">缺货</option>
+              <option value="critical">告急</option>
+              <option value="warning">偏低</option>
+            </select>
+          </div>
+
+          {/* 可排序表（照 fork：表头点击排序 + ArrowUpDown） */}
+          <div className="overflow-hidden rounded-lg border border-border-shallow">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-fill-shallow">
+                  <SortableTh label="商品" onClick={() => handleSort("name")} />
+                  <th className="px-3 py-2 text-left font-medium text-foreground-secondary">SKU</th>
+                  <SortableTh label="库存" numeric onClick={() => handleSort("available_stock")} />
+                  <th className="px-3 py-2 text-right font-medium text-foreground-secondary">日均销量</th>
+                  <SortableTh label="可售天数" numeric onClick={() => handleSort("days_of_cover")} />
+                  <th className="px-3 py-2 text-center font-medium text-foreground-secondary">状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-3 py-8 text-center text-foreground-tertiary">
+                      暂无断货风险 SKU
+                    </td>
+                  </tr>
+                ) : (
+                  filtered.map((it) => {
+                    const badge = LOW_BADGE[it.bucket] || { label: it.bucket, cls: "bg-fill-default" };
+                    return (
+                      <tr
+                        key={it.sku_id}
+                        className="border-t border-border-shallow transition-colors hover:bg-fill-shallow"
+                      >
+                        <td className="px-3 py-2 font-medium text-foreground">
+                          {it.product_name || it.sku_id}
+                        </td>
+                        <td className="px-3 py-2 text-foreground-tertiary">{it.sku_id}</td>
+                        <td className="px-3 py-2 text-right text-foreground">
+                          {fmtInt(it.available_stock)}
+                        </td>
+                        <td className="px-3 py-2 text-right text-foreground-secondary">
+                          {Number(it.daily_velocity).toFixed(1)}
+                        </td>
+                        <td className="px-3 py-2 text-right text-foreground">
+                          {Number(it.days_of_cover).toFixed(1)}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <span
+                            className={
+                              "inline-flex rounded px-2 py-0.5 text-xs font-medium " + badge.cls
+                            }
+                          >
+                            {badge.label}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
-    </Panel>
+    </Card>
   );
+
+  function skuLabel(i: LowStockItem) {
+    return i.product_name || i.sku_id;
+  }
 }
 
-function RiskRow({
-  color,
+function SortableTh({
   label,
-  value,
+  numeric,
+  onClick,
 }: {
-  color: string;
   label: string;
-  value: number;
+  numeric?: boolean;
+  onClick: () => void;
 }) {
   return (
-    <div className="flex items-center gap-3">
-      <span className={cn("size-2.5 rounded-full", color)} />
-      <span className="flex-1 text-sm text-foreground-secondary">{label}</span>
-      <span className="tabnum text-lg font-semibold text-foreground">
-        {fmtInt(value)}
-      </span>
-    </div>
+    <th
+      onClick={onClick}
+      className={
+        "cursor-pointer px-3 py-2 font-medium text-foreground-secondary hover:text-foreground " +
+        (numeric ? "text-right" : "text-left")
+      }
+    >
+      <div className={"flex items-center gap-1 " + (numeric ? "justify-end" : "")}>
+        {label}
+        <ArrowUpDown size={12} />
+      </div>
+    </th>
   );
 }
 
-/* ── 待发货 / 订单履约（KPI 行 + 明细表）──────────────────── */
+/* ── 待发货履约（照 fork OrderTrends 卡片骨架；fork 的退货/退款/平台拆分无数据源，
+      换成我方真实的待发货分桶 + 明细）─────────────────────────────────── */
 
-const PEND_LABEL: Record<string, string> = {
-  overdue: "超时",
-  critical: "临界",
-  normal: "正常",
-  unknown: "未知",
+const PEND_BADGE: Record<string, { label: string; cls: string }> = {
+  overdue: { label: "超时", cls: "bg-red-100 text-red-700" },
+  critical: { label: "临界", cls: "bg-orange-100 text-orange-700" },
+  normal: { label: "正常", cls: "bg-green-100 text-green-700" },
+  unknown: { label: "未知", cls: "bg-fill-default text-foreground-secondary" },
 };
 
-function OrderFulfillment({
-  data,
-  loading,
-}: {
-  data: BoardData | null;
-  loading: boolean;
-}) {
+function OrderFulfillment({ data, loading }: { data: BoardData | null; loading: boolean }) {
   const b = data?.fulfillment.buckets;
   const items = data?.fulfillment.items ?? [];
 
-  const columns: Column<PendingItem>[] = [
-    {
-      key: "order",
-      header: "订单",
-      render: (r) => (
-        <span className="font-mono text-xs">{String(r.order_id).slice(-8)}</span>
-      ),
-    },
-    { key: "shop", header: "店铺", render: (r) => r.shop_id ?? "—" },
-    {
-      key: "product",
-      header: "商品",
-      render: (r) => (r.first_product_name || "—").slice(0, 20),
-    },
-    {
-      key: "bucket",
-      header: "状态",
-      render: (r) =>
-        r.bucket ? (
-          <Badge
-            variant={
-              r.bucket === "overdue"
-                ? "destructive"
-                : r.bucket === "critical"
-                  ? "warning"
-                  : "secondary"
-            }
-          >
-            {PEND_LABEL[r.bucket] || r.bucket}
-          </Badge>
-        ) : (
-          "—"
-        ),
-    },
-    {
-      key: "count",
-      header: "件数",
-      numeric: true,
-      render: (r) => fmtInt(r.item_count),
-    },
-    {
-      key: "amount",
-      header: "金额",
-      numeric: true,
-      render: (r) => fmtMoney(r.total_amount),
-    },
-  ];
-
   return (
-    <Panel>
-      <PanelHead
+    <Card>
+      <CardHead
         title="待发货订单"
         right={
           data?.fulfillment.snapshot_at ? (
@@ -755,34 +790,81 @@ function OrderFulfillment({
         }
       />
 
-      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <KpiStat label="待发货合计" value={fmtInt(b?.total)} loading={loading} />
-        <KpiStat
-          label="超时"
-          value={fmtInt(b?.overdue)}
-          tone="negative"
-          loading={loading}
-        />
-        <KpiStat
-          label="临界"
-          value={fmtInt(b?.critical)}
-          tone="warning"
-          loading={loading}
-        />
-        <KpiStat label="正常" value={fmtInt(b?.normal)} loading={loading} />
+      {/* 统计行（照 fork OrderTrends：行内 label/大数值组） */}
+      <div className="mb-4 flex flex-wrap gap-x-8 gap-y-3">
+        <Stat label="待发货合计" value={fmtInt(b?.total)} loading={loading} />
+        <Stat label="超时" value={fmtInt(b?.overdue)} tone="negative" loading={loading} />
+        <Stat label="临界" value={fmtInt(b?.critical)} tone="warning" loading={loading} />
+        <Stat label="正常" value={fmtInt(b?.normal)} loading={loading} />
       </div>
 
-      <DataTable
-        columns={columns}
-        rows={items}
-        rowKey={(r) => String(r.order_id)}
-        empty="暂无待发货订单"
-      />
-    </Panel>
+      <div className="overflow-hidden rounded-lg border border-border-shallow">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-fill-shallow">
+              <th className="px-3 py-2 text-left font-medium text-foreground-secondary">订单</th>
+              <th className="px-3 py-2 text-left font-medium text-foreground-secondary">店铺</th>
+              <th className="px-3 py-2 text-left font-medium text-foreground-secondary">商品</th>
+              <th className="px-3 py-2 text-center font-medium text-foreground-secondary">状态</th>
+              <th className="px-3 py-2 text-right font-medium text-foreground-secondary">件数</th>
+              <th className="px-3 py-2 text-right font-medium text-foreground-secondary">金额</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan={6} className="px-3 py-8 text-center text-foreground-tertiary">
+                  加载中…
+                </td>
+              </tr>
+            ) : items.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-3 py-8 text-center text-foreground-tertiary">
+                  暂无待发货订单
+                </td>
+              </tr>
+            ) : (
+              items.map((r) => {
+                const badge = r.bucket ? PEND_BADGE[r.bucket] : null;
+                return (
+                  <tr
+                    key={String(r.order_id)}
+                    className="border-t border-border-shallow transition-colors hover:bg-fill-shallow"
+                  >
+                    <td className="px-3 py-2">
+                      <span className="font-mono text-xs text-foreground">
+                        {String(r.order_id).slice(-8)}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-foreground-secondary">{r.shop_id ?? "—"}</td>
+                    <td className="px-3 py-2 text-foreground">
+                      {(r.first_product_name || "—").slice(0, 20)}
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      {badge ? (
+                        <span
+                          className={"inline-flex rounded px-2 py-0.5 text-xs font-medium " + badge.cls}
+                        >
+                          {badge.label}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right text-foreground">{fmtInt(r.item_count)}</td>
+                    <td className="px-3 py-2 text-right text-foreground">{fmtMoney(r.total_amount)}</td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 }
 
-function KpiStat({
+function Stat({
   label,
   value,
   tone,
@@ -794,14 +876,13 @@ function KpiStat({
   loading?: boolean;
 }) {
   return (
-    <div className="rounded-xl bg-fill-shallow p-4">
-      <div className="text-xs text-foreground-tertiary">{label}</div>
+    <div>
+      <div className="mb-1 text-xs text-foreground-tertiary">{label}</div>
       <div
-        className={cn(
-          "tabnum mt-1 text-2xl font-bold text-foreground",
-          tone === "negative" && "text-negative",
-          tone === "warning" && "text-warning",
-        )}
+        className={
+          "tabnum text-xl font-bold text-foreground " +
+          (tone === "negative" ? "!text-negative " : tone === "warning" ? "!text-warning " : "")
+        }
       >
         {loading ? "…" : value}
       </div>

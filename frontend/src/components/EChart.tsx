@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import * as echarts from "echarts/core";
-import { BarChart, LineChart } from "echarts/charts";
+import { BarChart, GaugeChart, LineChart, PieChart } from "echarts/charts";
 import { GridComponent, LegendComponent, TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 
-// 按需注册（tree-shake）：只引看板用到的折线/条形 + 网格/提示/图例 + Canvas 渲染。
+// 按需注册（tree-shake）：看板用到的折线/条形/环图/仪表盘 + 网格/提示/图例 + Canvas 渲染。
 echarts.use([
   LineChart,
   BarChart,
+  PieChart,
+  GaugeChart,
   GridComponent,
   TooltipComponent,
   LegendComponent,
