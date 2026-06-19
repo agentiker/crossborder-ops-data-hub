@@ -11,7 +11,11 @@ from core.config import settings
 from core.db import SessionLocal
 from core.timezone import PERIOD_KEYS, business_today, describe_window, resolve_period
 from models.base_models import Inventory, Product
-from services.ad_metrics import get_ad_spend_summary, get_roas
+from services.ad_metrics import (
+    get_ad_spend_summary,
+    get_ad_spend_trend as _ad_spend_trend_service,
+    get_roas,
+)
 from services.fulfillment_metrics import get_pending_fulfillments
 from services.order_metrics import get_gmv_summary, get_gmv_trend, get_top_skus
 from services.scope_binding import get_binding, set_binding
@@ -658,6 +662,35 @@ async def get_ad_spend(
         gmv=roas["gmv"],
         roas=roas["roas"],
         currency=spend["currency"],
+    )
+
+
+async def get_ad_spend_trend(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    period: Optional[str] = None,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_id: Optional[str] = None,
+    scope_id: Optional[str] = None,
+    shop_ids: Optional[str] = None,
+    open_id: Optional[str] = None,
+) -> dict:
+    """按印尼业务日的广告消耗序列（结算口径），scope 解析与 get_ad_spend 对齐。
+
+    供经营报告趋势图叠加广告消耗用；非 HTTP 路由（不暴露为 MCP 工具）。
+    """
+    scope = _resolve_scope(
+        scope_id=scope_id, platform=platform, country=country,
+        shop_id=shop_id, shop_ids=shop_ids, open_id=open_id,
+    )
+    sd, ed = _resolve_window(start_date, end_date, period, default_back_days=7)
+    return _ad_spend_trend_service(
+        start_date=sd,
+        end_date=ed,
+        platform=scope.platform,
+        country=scope.country,
+        shop_ids=scope.shop_ids,
     )
 
 

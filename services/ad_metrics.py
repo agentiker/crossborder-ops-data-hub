@@ -74,6 +74,45 @@ def get_ad_spend_summary(
         session.close()
 
 
+def get_ad_spend_trend(
+    *,
+    start_date: date,
+    end_date: date,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
+) -> dict:
+    """窗口 [start_date, end_date] 内按印尼业务日（metric_date）聚合的广告消耗序列。
+
+    口径同 get_ad_spend_summary（结算口径）。仅返回有数据的业务日，缺失日由调用方
+    按订单趋势的日期轴对齐补 0（见 web/routes/report.py _collect）。
+    """
+    session = SessionLocal()
+    try:
+        query = session.query(
+            FactAdSpendDaily.metric_date,
+            func.coalesce(func.sum(FactAdSpendDaily.total_ad_spend), 0),
+        ).filter(
+            FactAdSpendDaily.metric_date >= start_date,
+            FactAdSpendDaily.metric_date <= end_date,
+        )
+        query = _scope_filters(query, FactAdSpendDaily, platform, country, shop_ids)
+        query = query.group_by(FactAdSpendDaily.metric_date).order_by(
+            FactAdSpendDaily.metric_date
+        )
+        points = [
+            {"date": d.isoformat(), "total_ad_spend": _to_float(v)}
+            for d, v in query.all()
+        ]
+        return {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "points": points,
+        }
+    finally:
+        session.close()
+
+
 def get_roas(
     *,
     start_date: date,

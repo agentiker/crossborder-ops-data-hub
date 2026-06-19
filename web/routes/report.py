@@ -18,6 +18,7 @@ from fastapi.responses import HTMLResponse
 from core.timezone import business_today, describe_window, resolve_period
 from web.routes.data import (
     get_ad_spend,
+    get_ad_spend_trend,
     get_low_stock,
     get_orders_top_skus,
     get_orders_trend,
@@ -95,6 +96,11 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
         platform=None, country=None, shop_id=None,
         scope_id=None, shop_ids=None, open_id=open_id,
     ))
+    ad_trend = _asdict(await get_ad_spend_trend(
+        start_date=sd.isoformat(), end_date=ed.isoformat(), period=None,
+        platform=None, country=None, shop_id=None,
+        scope_id=None, shop_ids=None, open_id=open_id,
+    ))
 
     # 前一期窗口（算环比）
     window_days = (ed - sd).days or 1
@@ -134,6 +140,13 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
     dates = [p.get("date", "")[5:] for p in trend_points]  # MM-DD
     gmv_series = [p.get("gmv", 0) for p in trend_points]
     orders_series = [p.get("order_count", 0) for p in trend_points]
+
+    # 广告消耗按业务日对齐到订单趋势的日期轴（缺失日补 0）
+    ad_by_date = {
+        p.get("date"): p.get("total_ad_spend", 0)
+        for p in ad_trend.get("points", [])
+    }
+    ad_series = [ad_by_date.get(p.get("date"), 0) for p in trend_points]
 
     # Top 5 SKU
     top_items = []
@@ -190,6 +203,7 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
             "dates": dates,
             "gmv": gmv_series,
             "orders": orders_series,
+            "ad_spend": ad_series,
         },
         "top_skus": top_items,
         "low_stock": low_items,
@@ -305,7 +319,7 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
   <div class="kpis" id="kpis"></div>
 
   <div class="card">
-    <h2>GMV / 订单趋势</h2>
+    <h2>GMV / 广告 / 订单趋势</h2>
     <div id="trend-chart"></div>
   </div>
 
@@ -358,21 +372,23 @@ kpiDefs.forEach(d => {
   kpisEl.appendChild(div);
 });
 
-// -- Trend chart (dual Y: GMV line + Orders bar) --
+// -- Trend chart (dual Y: GMV + 广告消耗 lines share money axis, Orders bar on right) --
 const chart = echarts.init(document.getElementById('trend-chart'));
 chart.setOption({
   tooltip: { trigger:'axis' },
-  legend: { data:['GMV','订单数'], top:0 },
+  legend: { data:['GMV','广告消耗','订单数'], top:0 },
   grid: { top:36, left:50, right:50, bottom:24 },
   xAxis: { type:'category', data: DATA.trend.dates },
   yAxis: [
-    { type:'value', name:'GMV', position:'left',
+    { type:'value', name:'GMV/广告', position:'left',
       axisLabel:{ formatter:v=> v>=1000?(v/1000).toFixed(0)+'k':v } },
     { type:'value', name:'订单', position:'right' },
   ],
   series: [
     { name:'GMV', type:'line', data: DATA.trend.gmv, smooth:true,
       itemStyle:{color:'#4F46E5'}, areaStyle:{color:'rgba(79,70,229,.08)'} },
+    { name:'广告消耗', type:'line', data: DATA.trend.ad_spend || [], smooth:true,
+      itemStyle:{color:'#F59E0B'} },
     { name:'订单数', type:'bar', yAxisIndex:1, data: DATA.trend.orders,
       itemStyle:{color:'#10B981', borderRadius:[3,3,0,0]} },
   ],
