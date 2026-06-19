@@ -1,15 +1,5 @@
 import { useState } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { ChevronDown, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { WEEKDAYS, type Freq, type ScheduledDraft } from "./templates-data";
 
@@ -19,6 +9,7 @@ interface Props {
   onSubmit: (draft: ScheduledDraft) => void;
 }
 
+// 创建任务弹窗（照 forkStoreClaw CreateTaskDialog 风：手写 overlay + fade-up + 频率/时间控件）。
 export function CreateTaskDialog({ initial, onClose, onSubmit }: Props) {
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
@@ -32,123 +23,179 @@ export function CreateTaskDialog({ initial, onClose, onSubmit }: Props) {
     e.preventDefault();
     if (!name.trim()) return setError("任务名称不能为空");
     if (!prompt.trim()) return setError("执行指令不能为空");
-    onSubmit({ name: name.trim(), description: description.trim(), prompt: prompt.trim(), freq, time, weekday });
+    onSubmit({
+      name: name.trim(),
+      description: description.trim(),
+      prompt: prompt.trim(),
+      freq,
+      time,
+      weekday,
+    });
   }
 
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-xl">
-        <DialogHeader>
-          <DialogTitle>创建定时任务</DialogTitle>
-          <DialogDescription>到点自动跑一次取数对话，并把结果推送给你。</DialogDescription>
-        </DialogHeader>
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
 
-        <form onSubmit={submit} className="grid gap-4">
-          <div className="grid gap-1.5">
-            <Label htmlFor="t-name">任务名称</Label>
-            <Input
-              id="t-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="例如：晨间经营简报"
-              autoFocus
-            />
-          </div>
+      <div className="relative flex max-h-[90vh] w-[780px] max-w-[90vw] animate-fade-up flex-col rounded-2xl bg-white shadow-lg">
+        {/* Header */}
+        <div className="flex min-h-[72px] items-center justify-between px-6 py-3">
+          <div className="text-lg font-semibold leading-6 text-foreground">创建定时任务</div>
+          <button
+            onClick={onClose}
+            aria-label="关闭"
+            className="rounded-lg p-1 transition-colors hover:bg-fill"
+          >
+            <X size={20} className="text-foreground-secondary" />
+          </button>
+        </div>
 
-          <div className="grid gap-1.5">
-            <Label htmlFor="t-desc">描述（可选）</Label>
-            <Input
-              id="t-desc"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="简要说明这个任务干嘛的"
-            />
-          </div>
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto px-6 pb-6">
+          <form onSubmit={submit} className="flex flex-col gap-4">
+            <Field label="任务名称">
+              <TextInput
+                value={name}
+                onChange={setName}
+                placeholder="例如：晨间经营简报"
+                autoFocus
+              />
+            </Field>
 
-          <div className="grid gap-1.5">
-            <Label htmlFor="t-prompt">执行指令</Label>
-            <textarea
-              id="t-prompt"
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              rows={5}
-              placeholder="告诉 AI 到点该查什么、怎么汇报…"
-              className="flex w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-foreground-tertiary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            />
-          </div>
+            <Field label="描述（可选）">
+              <TextInput
+                value={description}
+                onChange={setDescription}
+                placeholder="简要说明这个任务干嘛的"
+              />
+            </Field>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="grid gap-1.5">
-              <Label htmlFor="t-freq">执行频率</Label>
-              <SelectNative id="t-freq" value={freq} onChange={(v) => setFreq(v as Freq)}>
+            <Field label="执行指令">
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                rows={6}
+                placeholder="告诉 AI 到点该查什么、怎么汇报…"
+                className="flex w-full resize-none rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground transition-colors placeholder:text-foreground-tertiary hover:border-border-deep focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1"
+              />
+            </Field>
+
+            <Field label="执行频率">
+              <SelectNative value={freq} onChange={(v) => setFreq(v as Freq)}>
                 <option value="daily">每天</option>
                 <option value="weekly">每周</option>
               </SelectNative>
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="t-time">执行时间</Label>
-              <Input id="t-time" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
-            </div>
-          </div>
+            </Field>
 
-          {freq === "weekly" && (
-            <div className="grid gap-1.5">
-              <Label htmlFor="t-weekday">星期几</Label>
-              <SelectNative
-                id="t-weekday"
-                value={String(weekday)}
-                onChange={(v) => setWeekday(Number(v))}
+            <Field label="执行时间">
+              <input
+                type="time"
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+                className="flex h-8 w-full rounded-lg border border-border bg-card px-3 py-1 text-sm text-foreground transition-colors hover:border-border-deep focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1"
+              />
+            </Field>
+
+            {freq === "weekly" && (
+              <Field label="星期几">
+                <SelectNative value={String(weekday)} onChange={(v) => setWeekday(Number(v))}>
+                  {WEEKDAYS.map((w, i) => (
+                    <option key={i} value={i}>
+                      {w}
+                    </option>
+                  ))}
+                </SelectNative>
+              </Field>
+            )}
+
+            {error && (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {error}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-fill"
               >
-                {WEEKDAYS.map((w, i) => (
-                  <option key={i} value={i}>
-                    {w}
-                  </option>
-                ))}
-              </SelectNative>
+                取消
+              </button>
+              <button
+                type="submit"
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              >
+                创建
+              </button>
             </div>
-          )}
-
-          {error && (
-            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {error}
-            </div>
-          )}
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>
-              取消
-            </Button>
-            <Button type="submit">创建</Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+          </form>
+        </div>
+      </div>
+    </div>
   );
 }
 
-// 原生 select 套 Input 样式（项目无 Select primitive，与 AdminPage 一致）。
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1.5">
+      <label className="flex items-center text-sm font-normal leading-5 text-foreground">
+        {label}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+function TextInput({
+  value,
+  onChange,
+  placeholder,
+  autoFocus,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  autoFocus?: boolean;
+}) {
+  return (
+    <input
+      type="text"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      autoFocus={autoFocus}
+      className="flex h-8 w-full rounded-lg border border-border bg-card px-3 py-1 text-sm text-foreground transition-colors placeholder:text-foreground-tertiary hover:border-border-deep focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1"
+    />
+  );
+}
+
+// 原生 select 套 fork 输入样式 + 右侧 ChevronDown。
 function SelectNative({
-  id,
   value,
   onChange,
   children,
 }: {
-  id?: string;
   value: string;
   onChange: (v: string) => void;
   children: React.ReactNode;
 }) {
   return (
-    <select
-      id={id}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className={cn(
-        "flex h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm shadow-sm",
-        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-      )}
-    >
-      {children}
-    </select>
+    <div className="relative">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={cn(
+          "flex h-8 w-full cursor-pointer appearance-none rounded-lg border border-border bg-card px-3 py-1 text-sm text-foreground transition-colors",
+          "hover:border-border-deep focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1",
+        )}
+      >
+        {children}
+      </select>
+      <ChevronDown
+        size={16}
+        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-foreground-tertiary"
+      />
+    </div>
   );
 }
