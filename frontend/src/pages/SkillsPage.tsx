@@ -31,7 +31,7 @@ export function SkillsPage() {
   return (
     <div className="flex h-full flex-col">
       {/* 页头：tab + 说明 */}
-      <header className="sticky top-0 z-10 flex h-[68px] shrink-0 items-center justify-between gap-2 border-b border-border-shallow bg-background px-4 sm:px-6">
+      <header className="sticky top-0 z-50 flex h-[68px] shrink-0 items-center justify-between gap-2 border-b border-border-shallow bg-background px-4 sm:px-6">
         <div className="flex items-center gap-7">
           <TabButton active={tab === "hub"} onClick={() => setTab("hub")}>
             技能中枢（{TOOL_SKILLS.length}）
@@ -58,7 +58,7 @@ export function SkillsPage() {
                   "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
                   cat === c
                     ? "bg-primary text-primary-foreground"
-                    : "border border-border text-foreground-secondary hover:bg-fill hover:text-foreground",
+                    : "border border-border text-foreground hover:bg-fill",
                 )}
               >
                 {c}
@@ -70,18 +70,22 @@ export function SkillsPage() {
             <div className="flex flex-col items-center justify-center py-16 text-center text-sm text-foreground-tertiary">
               {tab === "my" ? "还没有启用任何技能，去「技能中枢」开启。" : "该分类下暂无技能。"}
             </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {display.map((s) => (
-                <SkillCard
-                  key={s.name}
-                  skill={s}
-                  enabled={enabled.has(s.name)}
-                  onToggle={(on) => toggle(s.name, on)}
-                  onClick={() => setSelected(s)}
-                />
-              ))}
+          ) : cat === "全部" ? (
+            // 「全部」时按分类分组展示
+            <div className="space-y-8">
+              {SKILL_CATEGORIES.slice(1).map((c) => {
+                const group = display.filter((s) => s.category === c);
+                if (group.length === 0) return null;
+                return (
+                  <div key={c}>
+                    <h2 className="mb-4 text-lg font-semibold text-foreground">{c}</h2>
+                    <SkillGrid skills={group} enabled={enabled} toggle={toggle} onSelect={setSelected} />
+                  </div>
+                );
+              })}
             </div>
+          ) : (
+            <SkillGrid skills={display} enabled={enabled} toggle={toggle} onSelect={setSelected} />
           )}
         </div>
       </div>
@@ -94,6 +98,32 @@ export function SkillsPage() {
           onClose={() => setSelected(null)}
         />
       )}
+    </div>
+  );
+}
+
+function SkillGrid({
+  skills,
+  enabled,
+  toggle,
+  onSelect,
+}: {
+  skills: ToolSkill[];
+  enabled: Set<string>;
+  toggle: (name: string, on: boolean) => void;
+  onSelect: (s: ToolSkill) => void;
+}) {
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      {skills.map((s) => (
+        <SkillCard
+          key={s.name}
+          skill={s}
+          enabled={enabled.has(s.name)}
+          onToggle={(on) => toggle(s.name, on)}
+          onClick={() => onSelect(s)}
+        />
+      ))}
     </div>
   );
 }
