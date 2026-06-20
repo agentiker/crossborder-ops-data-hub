@@ -2,10 +2,11 @@
 
 require_web_user 是 /board* 路由的依赖：从签名 cookie 取 open_id → 查 user_roles 拿角色。
 - 无 cookie / cookie 失效 → 跳飞书登录（WebAuthRedirect → 302 /board/auth/feishu/login）。
-- 有效登录但 open_id 未登记角色 → fail closed，403 页（区别于对话侧的灰度开关，看板恒拒）。
+- 有效登录但 open_id 未授角色 → fail closed，403 页（区别于对话侧的灰度开关，看板恒拒）。
 
-未登记时 403 页**回显当前 open_id**：首次登录的老板可据此用 scripts/user_admin 把自己
-登记成 boss（解开"要先登录才知道 open_id、却要先登记才能进"的鸡蛋问题），再刷新即可。
+OAuth 回调已自助登记（services.user_authz.ensure_registration）：首登者自动成 boss、
+其余落"待审批"。故 403 页按登记状态给不同文案——pending 显友好的"申请已提交、等开通"，
+不再回显 open_id / 要人跑 CLI（那一步已被回调自动登记取代）。
 """
 
 from __future__ import annotations
@@ -14,7 +15,11 @@ from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from core.config import settings
-from services.user_authz import UserPermission, get_user_permission
+from services.user_authz import (
+    UserPermission,
+    get_registration_status,
+    get_user_permission,
+)
 from web.web_session import verify_session_cookie
 
 LOGIN_PATH = "/board/auth/feishu/login"
@@ -28,10 +33,11 @@ class WebAuthRedirect(Exception):
 
 
 class WebAuthForbidden(Exception):
-    """已登录但 open_id 未登记角色：fail closed 403。"""
+    """已登录但 open_id 未授权：fail closed 403。status 区分待审批/已停用/无登记，决定文案。"""
 
-    def __init__(self, open_id: str):
+    def __init__(self, open_id: str, status: str = "none"):
         self.open_id = open_id
+        self.status = status  # pending / deactivated / none
 
 
 def require_web_user(request: Request) -> UserPermission:
@@ -43,7 +49,7 @@ def require_web_user(request: Request) -> UserPermission:
         raise WebAuthRedirect()
     perm = get_user_permission(open_id)
     if perm is None:
-        raise WebAuthForbidden(open_id)
+        raise WebAuthForbidden(open_id, get_registration_status(open_id))
     return perm
 
 
@@ -61,7 +67,12 @@ def require_web_user_api(request: Request) -> UserPermission:
         raise HTTPException(status_code=401, detail="未登录")
     perm = get_user_permission(open_id)
     if perm is None:
-        raise HTTPException(status_code=403, detail=f"open_id={open_id} 未获授权")
+        detail = (
+            "申请已提交，等待管理员开通"
+            if get_registration_status(open_id) == "pending"
+            else "账号未获授权，请联系管理员"
+        )
+        raise HTTPException(status_code=403, detail=detail)
     return perm
 
 
@@ -74,13 +85,28 @@ def register_web_auth_handlers(app) -> None:
 
     @app.exception_handler(WebAuthForbidden)
     async def _forbidden(_request: Request, exc: WebAuthForbidden):
-        return HTMLResponse(_forbidden_page(exc.open_id), status_code=403)
+        return HTMLResponse(_forbidden_page(exc.status), status_code=403)
 
 
-def _forbidden_page(open_id: str) -> str:
-    # open_id 不来自用户输入（取自验签通过的 cookie），但仍做最小转义防意外。
-    safe = (open_id or "").replace("<", "&lt;").replace(">", "&gt;")
-    return _FORBIDDEN_PAGE.replace("__OPEN_ID__", safe)
+def _forbidden_page(status: str = "none") -> str:
+    """按登记状态渲染未授权页。pending=申请已提交、等开通；其余=未获授权、联系管理员。"""
+    if status == "pending":
+        icon, title, desc = (
+            "⏳",
+            "申请已提交，等待管理员开通",
+            "管理员开通你的数据范围后，刷新本页即可访问，无需重新登录。",
+        )
+    else:  # deactivated / none
+        icon, title, desc = (
+            "🔒",
+            "你已登录，但暂无看板权限",
+            "你的账号未获授权（或已被停用），请联系管理员开通后再访问。",
+        )
+    return (
+        _FORBIDDEN_PAGE.replace("__ICON__", icon)
+        .replace("__TITLE__", title)
+        .replace("__DESC__", desc)
+    )
 
 
 _FORBIDDEN_PAGE = r"""<!DOCTYPE html>
@@ -97,17 +123,13 @@ _FORBIDDEN_PAGE = r"""<!DOCTYPE html>
   .icon { font-size:40px; margin-bottom:12px; }
   h1 { font-size:18px; margin:0 0 8px; font-weight:600; }
   p { color:#8a90a2; margin:6px 0; font-size:13px; }
-  code { background:#1a1d27; border:1px solid #272b38; border-radius:6px;
-         padding:3px 8px; color:#5b8cff; font-size:12px; word-break:break-all; }
 </style>
 </head>
 <body>
   <div class="box">
-    <div class="icon">🔒</div>
-    <h1>你已登录，但还未获授看板权限</h1>
-    <p>请把下面的 open_id 发给管理员登记后再访问：</p>
-    <p><code>__OPEN_ID__</code></p>
-    <p style="margin-top:16px;font-size:12px;">登记命令：user_admin set --open-id 上面的值 --role boss</p>
+    <div class="icon">__ICON__</div>
+    <h1>__TITLE__</h1>
+    <p>__DESC__</p>
   </div>
 </body>
 </html>"""

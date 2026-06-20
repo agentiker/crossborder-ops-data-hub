@@ -28,6 +28,7 @@ from services.scope_resolution import ScopeError, ScopeFilters, expand_scope, re
 
 ROLE_BOSS = "boss"
 ROLE_OPERATOR = "operator"
+ROLE_PENDING = "pending"  # 自助申请待审批的哨兵角色：恒 is_active=False，永不被当有效角色读
 _VALID_ROLES = (ROLE_BOSS, ROLE_OPERATOR)
 
 
@@ -84,6 +85,100 @@ def get_user_permission(
             account_id=row.account_id,
             note=row.note,
         )
+    finally:
+        session.close()
+
+
+def ensure_registration(
+    open_id: str,
+    *,
+    name: Optional[str] = None,
+    channel: str = "feishu",
+    account_id: str = "ecom-app",
+) -> str:
+    """OAuth 通过后自动登记，把"抄 open_id + SSH 跑 CLI"那一步消灭掉。返回登记结果：
+
+    - "existing"：已有行（任意状态）→ 原样不动。已停用的人保持停用，不被复活成 pending。
+    - "boss"：该 (channel, account_id) 下 user_roles 为空 → bootstrap 第一个登录者为 boss
+      + is_active（解"要先是 boss 才能进管理页审批别人"的鸡蛋问题；单租户里首登者=搭建者）。
+    - "pending"：表非空但无此人 → 建待审批行（role=pending、scope=None、is_active=False），
+      自动出现在老板的网页审批列表，老板一键选店铺范围即开通。范围前不可用（fail-closed）。
+
+    open_id 为空 → 直接返回 "existing"（无可登记，交给上层 fail closed）。
+    """
+    if not open_id:
+        return "existing"
+    session = SessionLocal()
+    try:
+        existing = (
+            session.query(UserRole)
+            .filter(
+                UserRole.channel == channel,
+                UserRole.account_id == account_id,
+                UserRole.open_id == open_id,
+            )
+            .first()
+        )
+        if existing is not None:
+            return "existing"
+
+        # 该 app 下是否一个角色都还没有：是 → bootstrap 首登者为 boss。
+        is_first = (
+            session.query(UserRole)
+            .filter(UserRole.channel == channel, UserRole.account_id == account_id)
+            .first()
+            is None
+        )
+        note = f"申请人：{name}" if name else None
+        if is_first:
+            row = UserRole(
+                channel=channel, account_id=account_id, open_id=open_id,
+                role=ROLE_BOSS, allowed_scope_key=None, note=note, is_active=True,
+            )
+            session.add(row)
+            session.commit()
+            return "boss"
+
+        row = UserRole(
+            channel=channel, account_id=account_id, open_id=open_id,
+            role=ROLE_PENDING, allowed_scope_key=None, note=note, is_active=False,
+        )
+        session.add(row)
+        session.commit()
+        return "pending"
+    finally:
+        session.close()
+
+
+def get_registration_status(
+    open_id: str,
+    *,
+    channel: str = "feishu",
+    account_id: str = "ecom-app",
+) -> str:
+    """给未授权页区分文案用。返回 "pending"（待审批）/ "deactivated"（曾启用已停用）/ "none"（无登记）。
+
+    与 get_user_permission 区别：本函数不要求 is_active，专为"已登录但拿不到权限"时判断到底
+    卡在哪一步——好让 403 页给申请人友好的"已提交、等开通"提示而非冷冰冰的"无权限"。
+    """
+    if not open_id:
+        return "none"
+    session = SessionLocal()
+    try:
+        row = (
+            session.query(UserRole)
+            .filter(
+                UserRole.channel == channel,
+                UserRole.account_id == account_id,
+                UserRole.open_id == open_id,
+            )
+            .first()
+        )
+        if row is None:
+            return "none"
+        if row.role == ROLE_PENDING and not row.is_active:
+            return "pending"
+        return "deactivated" if not row.is_active else "none"
     finally:
         session.close()
 

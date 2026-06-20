@@ -49,6 +49,21 @@ class RoleOut(BaseModel):
     is_active: bool
     account_id: str
     channel: str
+    created_at: Optional[str] = None  # ISO 字符串，前端按申请时间排序/显示待审批
+
+
+def _role_out(row: UserRole) -> "RoleOut":
+    """UserRole 行 → RoleOut（统一序列化，含 created_at ISO 化）。"""
+    return RoleOut(
+        open_id=row.open_id,
+        role=row.role,
+        allowed_scope_key=row.allowed_scope_key,
+        note=row.note,
+        is_active=row.is_active,
+        account_id=row.account_id,
+        channel=row.channel,
+        created_at=row.created_at.isoformat() if row.created_at else None,
+    )
 
 
 class RoleListOut(BaseModel):
@@ -92,19 +107,7 @@ async def list_roles(_: UserPermission = Depends(require_boss)):
             .order_by(UserRole.account_id, UserRole.role, UserRole.open_id)
             .all()
         )
-        items = [
-            RoleOut(
-                open_id=r.open_id,
-                role=r.role,
-                allowed_scope_key=r.allowed_scope_key,
-                note=r.note,
-                is_active=r.is_active,
-                account_id=r.account_id,
-                channel=r.channel,
-            )
-            for r in rows
-        ]
-        return RoleListOut(items=items)
+        return RoleListOut(items=[_role_out(r) for r in rows])
     finally:
         session.close()
 
@@ -158,15 +161,7 @@ async def upsert_role(body: RoleUpsertIn, _: UserPermission = Depends(require_bo
                 row.note = body.note
             row.is_active = True
         session.commit()
-        return RoleOut(
-            open_id=row.open_id,
-            role=row.role,
-            allowed_scope_key=row.allowed_scope_key,
-            note=row.note,
-            is_active=row.is_active,
-            account_id=row.account_id,
-            channel=row.channel,
-        )
+        return _role_out(row)
     finally:
         session.close()
 
@@ -200,14 +195,6 @@ async def deactivate_role(body: RoleDeactivateIn, _: UserPermission = Depends(re
             )
         row.is_active = False
         session.commit()
-        return RoleOut(
-            open_id=row.open_id,
-            role=row.role,
-            allowed_scope_key=row.allowed_scope_key,
-            note=row.note,
-            is_active=row.is_active,
-            account_id=row.account_id,
-            channel=row.channel,
-        )
+        return _role_out(row)
     finally:
         session.close()

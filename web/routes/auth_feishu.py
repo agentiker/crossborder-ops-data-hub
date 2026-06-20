@@ -20,11 +20,12 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from core.config import settings
+from services.user_authz import ensure_registration
 from web.feishu_oauth import (
     FeishuOAuthError,
     build_authorize_url,
     exchange_code_for_token,
-    fetch_open_id,
+    fetch_user_identity,
 )
 from web.web_session import _make_signed, _verify_signed, make_session_cookie
 
@@ -100,12 +101,19 @@ async def callback(
 
     try:
         token = exchange_code_for_token(code)
-        open_id = fetch_open_id(token)
+        open_id, name = fetch_user_identity(token)
     except FeishuOAuthError as exc:
         logger.warning("飞书 OAuth 回调失败：%s", exc)
         return HTMLResponse(_auth_error("飞书登录失败，请重试"), status_code=502)
 
-    logger.info("看板登录成功：open_id=%s", open_id)  # 运维可据此用 user_admin 登记角色
+    # 自助申请登记：首登者 bootstrap 为 boss、其余落"待审批"自动进老板审批列表，
+    # 免去运维抄 open_id + SSH 跑 CLI。范围由老板在网页开通前不可用（fail-closed 不变）。
+    try:
+        reg = ensure_registration(open_id, name=name)
+    except Exception:  # 登记失败不阻断登录（设了 cookie 仍能走到 403 页），仅记日志
+        logger.exception("自助登记失败：open_id=%s", open_id)
+        reg = "existing"
+    logger.info("看板登录成功：open_id=%s name=%s reg=%s", open_id, name, reg)
     cfg = settings.feishu_oauth
     resp = RedirectResponse(dest, status_code=302)
     resp.set_cookie(

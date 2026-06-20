@@ -87,8 +87,11 @@ def exchange_code_for_token(code: str) -> str:
     return token
 
 
-def fetch_open_id(user_access_token: str) -> str:
-    """用 user_access_token 取 open_id。"""
+def fetch_user_identity(user_access_token: str) -> tuple[str, Optional[str]]:
+    """用 user_access_token 取 (open_id, name)。name 是飞书昵称，缺失则 None（不强求）。
+
+    自助申请登记用：name 写进 user_roles.note，老板审批时认得出是谁。open_id 仍强校验，缺则抛错。
+    """
     if not user_access_token:
         raise FeishuOAuthError("user_access_token 不能为空")
     try:
@@ -103,9 +106,17 @@ def fetch_open_id(user_access_token: str) -> str:
     data = _parse_json(resp)
     if data.get("code") not in (0, None):
         raise FeishuOAuthError(f"飞书取 user_info 返回错误：code={data.get('code')} {data.get('msg')}")
-    open_id = (data.get("data") or {}).get("open_id")
+    payload = data.get("data") or {}
+    open_id = payload.get("open_id")
     if not open_id:
         raise FeishuOAuthError("飞书 user_info 响应缺 open_id")
+    name = payload.get("name") or payload.get("en_name") or None
+    return open_id, name
+
+
+def fetch_open_id(user_access_token: str) -> str:
+    """用 user_access_token 取 open_id（fetch_user_identity 的薄封装，保留旧调用兼容）。"""
+    open_id, _ = fetch_user_identity(user_access_token)
     return open_id
 
 

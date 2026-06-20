@@ -14,6 +14,7 @@ from web.feishu_oauth import (
     build_authorize_url,
     exchange_code_for_token,
     fetch_open_id,
+    fetch_user_identity,
 )
 
 
@@ -134,3 +135,31 @@ def test_non_json_response_raises(monkeypatch):
     )
     with pytest.raises(FeishuOAuthError):
         fetch_open_id("u-tok-123")
+
+
+# ---------- fetch_user_identity（自助登记用，带姓名） ----------
+
+def test_fetch_user_identity_returns_open_id_and_name(monkeypatch):
+    monkeypatch.setattr(
+        feishu_oauth.requests, "get",
+        lambda *a, **k: _FakeResp({"code": 0, "data": {"open_id": "ou_xyz", "name": "老板"}}),
+    )
+    assert fetch_user_identity("u-tok-123") == ("ou_xyz", "老板")
+
+
+def test_fetch_user_identity_name_optional(monkeypatch):
+    """缺 name 不报错（name=None），open_id 仍强校验。"""
+    monkeypatch.setattr(
+        feishu_oauth.requests, "get",
+        lambda *a, **k: _FakeResp({"code": 0, "data": {"open_id": "ou_xyz"}}),
+    )
+    assert fetch_user_identity("u-tok-123") == ("ou_xyz", None)
+
+
+def test_fetch_user_identity_missing_open_id_raises(monkeypatch):
+    monkeypatch.setattr(
+        feishu_oauth.requests, "get",
+        lambda *a, **k: _FakeResp({"code": 0, "data": {"name": "无 open_id"}}),
+    )
+    with pytest.raises(FeishuOAuthError):
+        fetch_user_identity("u-tok-123")

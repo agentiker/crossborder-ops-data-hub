@@ -14,6 +14,8 @@ from services.scope_resolution import ScopeError
 from services.user_authz import (
     AuthzError,
     assert_authorized,
+    ensure_registration,
+    get_registration_status,
     get_user_permission,
     resolve_authorized_scope,
 )
@@ -238,3 +240,85 @@ def test_assert_operator_default_clamped(session, monkeypatch):
     out = assert_authorized("ou_op")
     assert out.scope_key == "scope-a"
     assert sorted(out.shop_ids) == ["s1", "s2", "s3"]
+
+
+# ---------- ensure_registration（自助申请自动登记） ----------
+
+def _find_role(session, open_id, account_id="ecom-app"):
+    return (
+        session.query(UserRole)
+        .filter(UserRole.account_id == account_id, UserRole.open_id == open_id)
+        .first()
+    )
+
+
+def test_ensure_registration_first_user_bootstraps_boss(session, monkeypatch):
+    """user_roles 为空时首登者 bootstrap 为 boss + 启用（解鸡蛋问题）。"""
+    _use(session, monkeypatch)
+    assert ensure_registration("ou_first", name="张三") == "boss"
+    row = _find_role(session, "ou_first")
+    assert row.role == "boss"
+    assert row.is_active is True
+    assert row.allowed_scope_key is None
+    # bootstrap 后立即可用
+    assert get_user_permission("ou_first").is_boss is True
+
+
+def test_ensure_registration_subsequent_is_pending(session, monkeypatch):
+    """表非空且无此人 → 落待审批行（pending + 未启用 + 带姓名 note），仍 fail-closed。"""
+    _use(session, monkeypatch)
+    _role(session, "ou_boss", "boss")  # 表已有人
+    session.commit()
+    assert ensure_registration("ou_new", name="李四") == "pending"
+    row = _find_role(session, "ou_new")
+    assert row.role == "pending"
+    assert row.is_active is False
+    assert "李四" in (row.note or "")
+    # 待审批期间不可用
+    assert get_user_permission("ou_new") is None
+
+
+def test_ensure_registration_existing_active_untouched(session, monkeypatch):
+    """已有启用行 → 原样不动、返回 existing。"""
+    _use(session, monkeypatch)
+    _role(session, "ou_boss", "boss")
+    _role(session, "ou_op", "operator", allowed_scope_key="scope-a")
+    session.commit()
+    assert ensure_registration("ou_op", name="忽略") == "existing"
+    row = _find_role(session, "ou_op")
+    assert row.role == "operator"  # 未被改写
+    assert row.allowed_scope_key == "scope-a"
+
+
+def test_ensure_registration_deactivated_not_resurrected(session, monkeypatch):
+    """已停用的人重新登录 → 保持停用，不被复活成 pending。"""
+    _use(session, monkeypatch)
+    _role(session, "ou_boss", "boss")
+    _role(session, "ou_dead", "operator", allowed_scope_key="scope-a", active=False)
+    session.commit()
+    assert ensure_registration("ou_dead") == "existing"
+    row = _find_role(session, "ou_dead")
+    assert row.is_active is False
+    assert row.role == "operator"  # 仍是原角色，不是 pending
+
+
+# ---------- get_registration_status（403 页文案区分） ----------
+
+def test_registration_status_pending(session, monkeypatch):
+    _use(session, monkeypatch)
+    _role(session, "ou_boss", "boss")
+    session.commit()
+    ensure_registration("ou_new")
+    assert get_registration_status("ou_new") == "pending"
+
+
+def test_registration_status_deactivated(session, monkeypatch):
+    _use(session, monkeypatch)
+    _role(session, "ou_dead", "operator", allowed_scope_key="scope-a", active=False)
+    session.commit()
+    assert get_registration_status("ou_dead") == "deactivated"
+
+
+def test_registration_status_none(session, monkeypatch):
+    _use(session, monkeypatch)
+    assert get_registration_status("ou_ghost") == "none"

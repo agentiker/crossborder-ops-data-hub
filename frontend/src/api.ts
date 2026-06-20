@@ -162,12 +162,13 @@ export interface BoardData {
 // ── 角色管理（plan/15 Phase C · boss-only CRUD）──
 export interface RoleRow {
   open_id: string;
-  role: string;
+  role: string; // boss / operator / pending（待审批，自助申请落库的哨兵）
   allowed_scope_key: string | null;
   note: string | null;
   is_active: boolean;
   account_id: string;
   channel: string;
+  created_at?: string | null; // ISO，自助申请时间；用于待审批排序/显示
 }
 
 export interface AdminScopeOption {

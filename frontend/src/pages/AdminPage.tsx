@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
-import { Ban, MoreHorizontal, Pencil, UserPlus } from "lucide-react";
+import { Ban, Check, MoreHorizontal, Pencil, UserPlus } from "lucide-react";
 import {
   api,
   type AdminScopeOption,
@@ -32,7 +32,10 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
-type FormMode = { kind: "create" } | { kind: "edit"; row: RoleRow };
+type FormMode =
+  | { kind: "create" }
+  | { kind: "edit"; row: RoleRow }
+  | { kind: "approve"; row: RoleRow }; // 通过自助申请：预填 open_id、强制选范围后开通
 
 export function AdminPage() {
   const me = useMe();
@@ -53,6 +56,17 @@ export function AdminPage() {
       })
       .catch((e) => setLoadError(String(e instanceof Error ? e.message : e)));
   }, [me]);
+
+  // 待审批（自助申请）置顶、按申请时间升序，其余保持原序；让老板一眼看到待办。
+  const sortedRows = useMemo(() => {
+    if (!rows) return rows;
+    const pending = rows
+      .filter(isPending)
+      .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""));
+    const rest = rows.filter((r) => !isPending(r));
+    return [...pending, ...rest];
+  }, [rows]);
+  const pendingCount = (rows ?? []).filter(isPending).length;
 
   // 行高亮 2s 自动褪。
   useEffect(() => {
@@ -88,11 +102,14 @@ export function AdminPage() {
       {
         key: "role",
         header: "角色",
-        render: (r) => (
-          <Badge variant={r.role === "boss" ? "default" : "secondary"}>
-            {r.role === "boss" ? "老板" : "运营"}
-          </Badge>
-        ),
+        render: (r) =>
+          isPending(r) ? (
+            <span className="text-muted-foreground">待定</span>
+          ) : (
+            <Badge variant={r.role === "boss" ? "default" : "secondary"}>
+              {r.role === "boss" ? "老板" : "运营"}
+            </Badge>
+          ),
       },
       {
         key: "scope",
@@ -115,7 +132,9 @@ export function AdminPage() {
         key: "is_active",
         header: "状态",
         render: (r) =>
-          r.is_active ? (
+          isPending(r) ? (
+            <Badge variant="warning">待审批</Badge>
+          ) : r.is_active ? (
             <Badge variant="success">启用</Badge>
           ) : (
             <Badge variant="outline">停用</Badge>
@@ -126,6 +145,14 @@ export function AdminPage() {
         header: "",
         render: (r) => {
           const isSelf = r.open_id === myOpenId;
+          if (isPending(r)) {
+            // 待审批：直给「通过」主操作（开预填表单选范围），不藏在下拉里。
+            return (
+              <Button size="sm" onClick={() => setForm({ kind: "approve", row: r })}>
+                <Check className="size-3.5" /> 通过
+              </Button>
+            );
+          }
           return (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -178,7 +205,7 @@ export function AdminPage() {
       <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
         <PageHeader
           title="用户权限管理"
-          scope="user_roles 真相源"
+          scope={pendingCount > 0 ? `${pendingCount} 个待审批申请` : "user_roles 真相源"}
           actions={
             <Button size="sm" onClick={() => setForm({ kind: "create" })}>
               <UserPlus className="size-4" /> 新增成员
@@ -196,7 +223,7 @@ export function AdminPage() {
           ) : (
             <DataTable
               columns={columns}
-              rows={rows ?? []}
+              rows={sortedRows ?? []}
               rowKey={rowKey}
               empty={rows === null ? "加载中…" : "暂无用户角色"}
               className={cn(flashId && "ring-1 ring-transparent")}
@@ -231,6 +258,9 @@ export function AdminPage() {
 
 const rowKey = (r: RoleRow) => `${r.channel}/${r.account_id}/${r.open_id}`;
 
+// 待审批 = 自助申请落库的哨兵：role=pending 且未启用（OAuth 回调 ensure_registration 写入）。
+const isPending = (r: RoleRow) => r.role === "pending" && !r.is_active;
+
 function upsertRow(rows: RoleRow[], saved: RoleRow): RoleRow[] {
   const key = rowKey(saved);
   const idx = rows.findIndex((r) => rowKey(r) === key);
@@ -253,10 +283,12 @@ function RoleFormDialog({
   onClose: () => void;
   onSaved: (r: RoleRow) => void;
 }) {
-  const initial = mode.kind === "edit" ? mode.row : null;
+  const isExisting = mode.kind === "edit" || mode.kind === "approve";
+  const initial = isExisting ? mode.row : null;
   const [openId, setOpenId] = useState(initial?.open_id ?? "");
+  // 待审批行 role=pending 不是合法选项，开通时默认 operator；编辑老板/运营则沿用原角色。
   const [role, setRole] = useState<"boss" | "operator">(
-    (initial?.role as "boss" | "operator") ?? "operator",
+    initial?.role === "boss" ? "boss" : "operator",
   );
   const [scopeKey, setScopeKey] = useState(initial?.allowed_scope_key ?? "");
   const [note, setNote] = useState(initial?.note ?? "");
@@ -303,11 +335,19 @@ function RoleFormDialog({
     <Dialog open onOpenChange={(o) => !o && !submitting && onClose()}>
       <DialogContent onPointerDownOutside={(e) => submitting && e.preventDefault()}>
         <DialogHeader>
-          <DialogTitle>{mode.kind === "create" ? "新增成员" : "编辑成员"}</DialogTitle>
-          <DialogDescription>
+          <DialogTitle>
             {mode.kind === "create"
-              ? "boss 看全部范围；operator 必须绑定一个数据范围作为不可越界的硬上限。"
-              : "修改后立即生效；停用成员请用列表行的「停用」操作。"}
+              ? "新增成员"
+              : mode.kind === "approve"
+                ? "通过申请并开通权限"
+                : "编辑成员"}
+          </DialogTitle>
+          <DialogDescription>
+            {mode.kind === "approve"
+              ? "为该申请人选定角色与数据范围，保存即开通；TA 刷新页面即可访问。"
+              : mode.kind === "create"
+                ? "boss 看全部范围；operator 必须绑定一个数据范围作为不可越界的硬上限。"
+                : "修改后立即生效；停用成员请用列表行的「停用」操作。"}
           </DialogDescription>
         </DialogHeader>
 
@@ -319,13 +359,13 @@ function RoleFormDialog({
               value={openId}
               onChange={(e) => setOpenId(e.target.value)}
               placeholder="ou_xxxxxxxxxxxxxxxxxxxxxxxxxx"
-              readOnly={mode.kind === "edit"}
+              readOnly={isExisting}
               required
               autoFocus={mode.kind === "create"}
               className="font-mono text-sm"
             />
             <p className="text-xs text-muted-foreground">
-              飞书 open_id；新成员未登录时可让他先点飞书菜单看 403 页拿到。
+              飞书 open_id。通常无需手填——成员自己登录后会自动出现在上方「待审批」列表，点该行「通过」即可。
             </p>
           </div>
 

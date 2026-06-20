@@ -44,14 +44,28 @@ def test_no_cookie_redirects_to_login():
     assert "/board/auth/feishu/login" in r.headers["location"]
 
 
-def test_logged_in_but_unregistered_403(monkeypatch):
-    # cookie 验签通过拿到 open_id，但 user_roles 无记录 → fail closed 403
+def test_logged_in_pending_403_friendly(monkeypatch):
+    # cookie 验签通过但权限为 None，且登记状态=pending → 友好"申请已提交"页（不回显 open_id）
     monkeypatch.setattr(web_security, "verify_session_cookie", lambda raw: "ou_unknown")
     monkeypatch.setattr(web_security, "get_user_permission", lambda oid, **k: None)
+    monkeypatch.setattr(web_security, "get_registration_status", lambda oid, **k: "pending")
     client = TestClient(app, follow_redirects=False)
     r = client.get("/board", cookies={settings.feishu_oauth.cookie_name: "whatever"})
     assert r.status_code == 403
-    assert "ou_unknown" in r.text  # 403 页回显 open_id 便于登记
+    assert "等待管理员开通" in r.text  # 待审批友好文案
+    assert "ou_unknown" not in r.text  # 不再回显 open_id
+    assert "user_admin" not in r.text  # 不再要人跑 CLI
+
+
+def test_logged_in_unregistered_403_generic(monkeypatch):
+    # 无登记记录（none）/ 已停用 → 通用"未获授权"页，仍 403 fail closed
+    monkeypatch.setattr(web_security, "verify_session_cookie", lambda raw: "ou_unknown")
+    monkeypatch.setattr(web_security, "get_user_permission", lambda oid, **k: None)
+    monkeypatch.setattr(web_security, "get_registration_status", lambda oid, **k: "none")
+    client = TestClient(app, follow_redirects=False)
+    r = client.get("/board", cookies={settings.feishu_oauth.cookie_name: "whatever"})
+    assert r.status_code == 403
+    assert "暂无看板权限" in r.text
 
 
 def test_boss_renders_200(monkeypatch):
