@@ -101,7 +101,7 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
     # 版型：单日→日报（当日数 + 近 7 天迷你趋势参照）；多日→区间报（区间汇总 + 完整趋势）
     if is_single_day:
         kind, title = "daily", "经营日报"
-        change_label = "较昨日同期" if is_today else "较前一日"
+        change_label = "较近 7 天同期均值" if is_today else "较前一日"
         trend_title, trend_mini = "近 7 天趋势（参考）", True
         trend_sd, trend_ed = ed - timedelta(days=6), ed  # 迷你背景图画近 7 天
     else:
@@ -127,8 +127,16 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
         cutoff = now.time()
         _sc = dict(platform=scope.platform, country=scope.country, shop_ids=scope.shop_ids)
         orders_cur = get_gmv_summary_intraday(day=ed, cutoff=cutoff, **_sc)
-        orders_prev = get_gmv_summary_intraday(day=ed - timedelta(days=1), cutoff=cutoff, **_sc)
-        cutoff_label = "数据截至 " + now.strftime("%H:%M") + "（印尼时间）· 当日累计 vs 昨日同期"
+        # 基准 = 近 7 天每天截至同一时刻的均值（摊平昨日爆单等单日异常，比单看昨天稳）
+        base_days = [get_gmv_summary_intraday(day=ed - timedelta(days=i), cutoff=cutoff, **_sc)
+                     for i in range(1, 8)]
+        n = len(base_days) or 1
+        orders_prev = {
+            "gmv": sum(b["gmv"] for b in base_days) / n,
+            "order_count": sum(b["order_count"] for b in base_days) / n,
+        }
+        cutoff_label = ("数据截至 " + now.strftime("%H:%M")
+                        + "（印尼时间）· 当日累计 vs 近 7 天同期均值")
     else:
         orders_cur = _asdict(await get_orders_summary(
             start_date=sd.isoformat(), end_date=ed.isoformat(), period=None,
@@ -266,12 +274,14 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
             "gmv": {
                 "value": cur_gmv,
                 "change": _calc_change(cur_gmv, prev_gmv),
+                "baseline": round(prev_gmv),
                 "currency": "IDR",
                 "tip": gmv_tip,
             },
             "orders": {
                 "value": cur_orders,
                 "change": _calc_change(cur_orders, prev_orders),
+                "baseline": round(prev_orders, 1),
             },
             "ad_spend": {
                 "value": cur_ad_spend,
@@ -347,8 +357,12 @@ _INSIGHT_SYSTEM = (
     "重要约束："
     "(1) 广告消耗为 0 通常是广告数据尚未接通（不是没投广告），**不要**当作问题、"
     "**不要**建议投放/启动广告。"
-    "(2) 若数据标注为『当日累计』：数字是当日进行中的累计、环比已是『昨日同期』口径，"
-    "**不要**因当日绝对值偏小而判断经营崩盘；如确有同期环比骤降才提示。"
+    "(2) 若数据标注为『当日累计』：数字是当日进行中的累计、环比已是同期口径，"
+    "**不要**因当日绝对值偏小而判断经营崩盘。"
+    "(3) **低单量护栏**：当订单数是个位数（如 1~2 单）时，环比百分比是小样本噪声、极不可靠，"
+    "**禁止**用『骤降/暴跌/严重』等警报措辞、**不要**把它当成今日问题；如需提及就如实陈述"
+    "绝对值（如『今日 1 单 vs 近 7 天同期均值约 2 单，样本小、属正常波动』），把注意力放在"
+    "断货、爆款等更确定的信号上。"
 )
 
 
@@ -424,8 +438,10 @@ def _build_insight_prompt(data: dict) -> str:
         "周期": data.get("period_label"),
         "环比基准": data.get("change_label"),
         "GMV": kpi.get("gmv", {}).get("value"),
+        "GMV基准值": kpi.get("gmv", {}).get("baseline"),
         "GMV环比%": kpi.get("gmv", {}).get("change"),
         "订单数": kpi.get("orders", {}).get("value"),
+        "订单基准值": kpi.get("orders", {}).get("baseline"),
         "订单环比%": kpi.get("orders", {}).get("change"),
         "广告消耗": kpi.get("ad_spend", {}).get("value"),
         "广告环比%": kpi.get("ad_spend", {}).get("change"),
@@ -442,6 +458,13 @@ def _build_insight_prompt(data: dict) -> str:
         "趋势异常日": anomalies,
         "币种": "IDR（印尼盾）",
     }
+    cur_orders = kpi.get("orders", {}).get("value") or 0
+    base_orders = kpi.get("orders", {}).get("baseline") or 0
+    if cur_orders < 10 or base_orders < 10:
+        payload["低单量提示"] = (
+            "今日及基准单量很小（个位数），环比百分比为小样本噪声，勿用骤降/暴跌措辞、"
+            "勿当严重问题，按低单量护栏处理。"
+        )
     return json.dumps(payload, ensure_ascii=False)
 
 

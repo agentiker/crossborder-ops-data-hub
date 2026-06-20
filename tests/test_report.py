@@ -275,9 +275,10 @@ def test_collect_single_day_is_daily(monkeypatch):
     data = _run(_collect("ou_x", None, None, "today"))
     assert data["kind"] == "daily"
     assert data["title"] == "经营日报"
-    assert data["change_label"] == "较昨日同期"   # 当日走 intraday 同期对比
+    assert data["change_label"] == "较近 7 天同期均值"   # 当日走 intraday 近7天同期均值基准
     assert data["intraday"] is True
     assert data["cutoff_label"] and "数据截至" in data["cutoff_label"]
+    assert data["kpi"]["orders"]["baseline"] is not None   # 同期均值基准值
     assert data["trend_mini"] is True
     assert len(data["trend"]["dates"]) == 7  # 单日报告画近 7 天迷你趋势
     assert data["kpi"]["gmv"]["value"] == 1000  # 当日 KPI 走 intraday 取数
