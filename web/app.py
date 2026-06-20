@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import logging
 import os
 
 from fastapi import Depends, FastAPI
@@ -17,6 +18,15 @@ from web.routes.data import router as data_router
 from web.routes.report import router as report_router
 from web.security import require_internal_token
 from web.web_security import register_web_auth_handlers
+
+# 应用 INFO 日志接入 stdout → systemd journal。此前无任何日志配置：应用 logger 走 root
+# 默认 WARNING、INFO 被吞，导致"report link issued""report view"(含 UA)等诊断日志在
+# journal 完全不可见——曾据"看不到日志"误判为"请求没到达服务端"。uvicorn 只配自身 logger、
+# 不碰 root，故 basicConfig 会真正装上 root handler；路由模块 import 时不发日志，放此处即可。
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 app = FastAPI(
     title="Crossborder Ops Data Hub",
