@@ -22,6 +22,7 @@ export function useShell(): ShellContext {
 // StoreClaw 式外壳：左固定 Sidebar（桌面）/ 抽屉（移动）+ 右内容区。
 export function AppShell() {
   const [me, setMe] = useState<Me | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -30,15 +31,32 @@ export function AppShell() {
   }, []);
 
   useEffect(() => {
-    // 401 由 api 层跳飞书登录；这里只管成功态。
-    api.me().then(setMe).catch(() => {});
+    api.me().then(setMe).catch((e) => {
+      // 401 由 api 层跳飞书登录（导航中），保持加载态；其余（403 待审批/未授权）展示服务端文案。
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg !== "unauthenticated") setAuthError(msg);
+    });
     refreshConversations();
   }, [refreshConversations]);
 
-  // 鉴权确认前只显示加载态：避免 me=null 时先渲染出受保护内容（老板首页）、
-  // 等 /api/me 返 401 才跳登录造成的"内容闪现"。未登录时 api 层已触发跳飞书登录，
-  // 此处保持加载态直到浏览器导航离开。
+  // 鉴权确认前只显示加载态/提示，不渲染受保护内容（避免 me=null 时先闪出老板首页）。
   if (me === null) {
+    // 已登录但未获授权（待审批/未开通）：/api/me 返 403，展示服务端文案而非卡死在加载态。
+    if (authError) {
+      return (
+        <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+          <div className="text-3xl">⏳</div>
+          <p className="max-w-sm text-sm text-foreground-secondary">{authError}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="rounded-full border border-border-shallow px-4 py-1.5 text-sm text-foreground-secondary hover:bg-fill"
+          >
+            刷新
+          </button>
+        </div>
+      );
+    }
+    // 未登录时 api 层已触发跳飞书登录，此处保持加载态直到浏览器导航离开。
     return (
       <div className="flex h-full items-center justify-center text-sm text-foreground-tertiary">
         加载中…

@@ -53,15 +53,15 @@ def test_authorize_url_has_required_query(configured):
     assert q["redirect_uri"] == ["https://board.agenticker.cc/board/auth/feishu/callback"]
     assert q["response_type"] == ["code"]
     assert q["state"] == ["state-abc"]
-    # 默认钉最小 scope（只请求登录所需的 open_id 权限，不请求应用声明的全集）
-    assert q["scope"] == ["contact:user.id:readonly"]
-
-
-def test_authorize_url_empty_scope_omits_param(configured, monkeypatch):
-    """oauth_scope 置空时不拼 scope（飞书按应用全集请求；保留此口子但非默认）。"""
-    monkeypatch.setattr(settings.feishu_oauth, "oauth_scope", "")
-    q = parse_qs(urlparse(build_authorize_url("s")).query)
+    # 默认不带 scope：登录只需基础"获取用户身份标识"，不请求登录用不到的 contact:user.id:readonly
     assert "scope" not in q
+
+
+def test_authorize_url_includes_scope_when_configured(configured, monkeypatch):
+    """配置了 oauth_scope（需显式请求某权限）时，scope 才拼进 URL。"""
+    monkeypatch.setattr(settings.feishu_oauth, "oauth_scope", "contact:user.id:readonly")
+    q = parse_qs(urlparse(build_authorize_url("s")).query)
+    assert q["scope"] == ["contact:user.id:readonly"]
 
 
 def test_authorize_url_explicit_scope_arg_wins(configured):
