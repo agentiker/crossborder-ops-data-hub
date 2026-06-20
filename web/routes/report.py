@@ -198,6 +198,14 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
     if prev_ad_spend and prev_ad_spend > 0:
         prev_roas = round(prev_gmv / prev_ad_spend, 2)
 
+    # 低单量护栏：当期或基准单量为个位数时，环比百分比是除以接近 0 的小基准 / 小样本噪声，
+    # 极不可靠（如 1 单 vs 均值 0.3 单 = ↑250%）。此时不在 GMV/订单卡片显示百分比，
+    # 改由前端渲染「vs <基准> 绝对值」对比（更有信息量、不误导）；change=None 同时让喂给
+    # AI 的环比% 自动变空，避免 AI 把噪声当成「增长 X%」复述。详见 _build_insight_prompt。
+    low_volume = (cur_orders < 10) or (prev_orders < 10)
+    # 基准口径短语（去掉「较」前缀）：「较近 7 天同期均值」→「近 7 天同期均值」
+    baseline_label = change_label.lstrip("较").strip()
+
     # 趋势数据
     trend_points = trend.get("points", [])
     dates = [p.get("date", "")[5:] for p in trend_points]  # MM-DD
@@ -263,6 +271,8 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
         "kind": kind,
         "title": title,
         "change_label": change_label,
+        "low_volume": low_volume,
+        "baseline_label": baseline_label,
         "trend_title": trend_title,
         "trend_mini": trend_mini,
         "intraday": is_today,
@@ -273,14 +283,14 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
         "kpi": {
             "gmv": {
                 "value": cur_gmv,
-                "change": _calc_change(cur_gmv, prev_gmv),
+                "change": None if low_volume else _calc_change(cur_gmv, prev_gmv),
                 "baseline": round(prev_gmv),
                 "currency": "IDR",
                 "tip": gmv_tip,
             },
             "orders": {
                 "value": cur_orders,
-                "change": _calc_change(cur_orders, prev_orders),
+                "change": None if low_volume else _calc_change(cur_orders, prev_orders),
                 "baseline": round(prev_orders, 1),
             },
             "ad_spend": {
@@ -620,6 +630,7 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
               font-variant-numeric:tabular-nums; }
   .chg.up { color:var(--success); background:rgba(34,139,90,.12); }
   .chg.down { color:var(--danger); background:rgba(220,38,38,.1); }
+  .chg.base { color:var(--sub); background:transparent; padding:1px 0; font-weight:500; }
   .card { background:var(--card); border:1px solid var(--border-shallow); border-radius:12px;
           padding:14px; margin-top:12px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
   .card h2 { font-size:14px; font-weight:600; color:var(--txt); margin-bottom:10px;
@@ -740,8 +751,17 @@ function chgHtml(c) {
   return '<span class="chg ' + cls + '">' + arrow + ' ' + Math.abs(c) + '%</span>';
 }
 
-const _gmv = {label:'GMV', val: fmtMoney(DATA.kpi.gmv.value), chg: chgHtml(DATA.kpi.gmv.change), tip: DATA.kpi.gmv.tip};
-const _ord = {label:'订单数', val: fmtInt(DATA.kpi.orders.value), chg: chgHtml(DATA.kpi.orders.change)};
+// 低单量护栏：环比百分比是噪声，改显示「vs <基准口径> 绝对值」对比（后端已把 change 置 null）
+const _LV = !!DATA.low_volume;
+const _BL = DATA.baseline_label || '上期';
+const baseHtml = valHtml => '<span class="chg base">vs ' + _BL + ' ' + valHtml + '</span>';
+const _gmv = {label:'GMV', val: fmtMoney(DATA.kpi.gmv.value),
+  chg: _LV ? baseHtml(fmtMoney(DATA.kpi.gmv.baseline))
+           : chgHtml(DATA.kpi.gmv.change),
+  tip: DATA.kpi.gmv.tip};
+const _ord = {label:'订单数', val: fmtInt(DATA.kpi.orders.value),
+  chg: _LV ? baseHtml(fmtInt(DATA.kpi.orders.baseline) + ' 单')
+           : chgHtml(DATA.kpi.orders.change)};
 const _ad  = {label:'广告消耗', val: fmtMoney(DATA.kpi.ad_spend.value), chg: chgHtml(DATA.kpi.ad_spend.change), tip: DATA.kpi.ad_spend.tip};
 const _lowc = {label:'断货风险', val: fmtInt(DATA.kpi.low_stock_count), chg: ''};
 // 日报：纯核心 4 张（去 ROAS / 库存 SKU）；区间报：保留完整 6 张
@@ -773,9 +793,10 @@ kpisEl.querySelectorAll('.qmark').forEach(q => {
 });
 document.addEventListener('click', () =>
   kpisEl.querySelectorAll('.tip.show').forEach(t => t.classList.remove('show')));
-document.getElementById('kpi-note').textContent = DATA.cutoff_label
-  ? DATA.cutoff_label
-  : '↑↓ 为环比变化（' + (DATA.change_label || '较上期') + '）';
+document.getElementById('kpi-note').textContent =
+  (DATA.cutoff_label ? DATA.cutoff_label
+                     : '↑↓ 为环比变化（' + (DATA.change_label || '较上期') + '）')
+  + (DATA.low_volume ? ' · 单量小，环比百分比噪声大已隐藏，改示绝对基准对比' : '');
 
 // -- 趋势卡标题 + 迷你视图（单日报告画近 7 天作背景参照，弱化呈现）--
 document.getElementById('trend-title').textContent = DATA.trend_title || 'GMV / 广告 / 订单趋势';
