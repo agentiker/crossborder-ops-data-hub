@@ -3,7 +3,10 @@
 与 dashboard.py 同架构：后端预定义 HTML 模板 + 真实数据注入，签名链接鉴权。
 飞书/WebUI 对话中 agent 调 ops_report 工具签出链接，用户点开看到 echarts 图表。
 
-鉴权 = 签名 token（照搬 dashboard.py）：入口 `?t=<token>`，验签拿 open_id。
+鉴权 = 双重校验（绑定打开者身份，防转发）：
+  1. 签名 token（`?t=<token>`）验签拿"签发对象"open_id + 时效 + 参数；
+  2. 飞书登录 session cookie（board_session，与 /board、/app 同一套）拿"打开者"open_id；
+  两者必须一致才放行——本人看自己数据，同企业同事/外部一律拒绝（见 plan：转发防护）。
 强制软隔离：scope_id/shop_ids/shop_id 一律钉 None，只按 token 里的 open_id 解析范围。
 
 取数直接 await 现有路由处理函数，所有参数显式传齐。
@@ -11,10 +14,12 @@
 
 import json
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Query
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 
+from core.config import settings
 from core.timezone import business_today, describe_window, resolve_period
 from web.routes.data import (
     get_ad_spend,
@@ -25,6 +30,9 @@ from web.routes.data import (
     get_overview,
 )
 from web.signed_link import verify_token
+from web.web_session import verify_session_cookie
+
+_LOGIN_PATH = "/board/auth/feishu/login"
 
 router = APIRouter()
 
@@ -215,17 +223,34 @@ _VALID_TEMPLATES = {"daily_brief"}
 
 @router.get("/report/{template_name}", response_class=HTMLResponse, include_in_schema=False)
 async def report(
+    request: Request,
     template_name: str,
     t: str = Query("", description="签名 token（含 open_id + 过期）"),
     start_date: str = Query(None, description="开始日期 YYYY-MM-DD"),
     end_date: str = Query(None, description="结束日期 YYYY-MM-DD"),
     period: str = Query("last_7d", description="时间窗口: last_7d / last_30d / today"),
 ):
+    # 1) 签名 token → 报告的"签发对象"open_id（时效 + 参数 + 防篡改）
     open_id = verify_token(t)
     if not open_id:
         return HTMLResponse(_render_error(), status_code=401)
     if template_name not in _VALID_TEMPLATES:
         return HTMLResponse(_render_error(), status_code=404)
+
+    # 2) 飞书登录态 → "打开者"open_id（与 /board、/app 同一 board_session cookie）
+    raw = request.cookies.get(settings.feishu_oauth.cookie_name, "")
+    viewer = verify_session_cookie(raw) if raw else None
+    if not viewer:
+        # 未登录：跳飞书登录，登录后回跳本报告 URL（飞书内免登静默，飞书外自然被挡）
+        nxt = request.url.path + (("?" + request.url.query) if request.url.query else "")
+        return RedirectResponse(
+            f"{_LOGIN_PATH}?{urlencode({'next': nxt})}", status_code=302
+        )
+    if viewer != open_id:
+        # 已登录但非本人（同企业同事/他人转发）：拒绝
+        return HTMLResponse(_render_forbidden(), status_code=403)
+
+    # 3) 本人：照常取数渲染（软隔离按 open_id 的 binding）
     data = await _collect(open_id, start_date, end_date, period)
     return HTMLResponse(_render(data))
 
@@ -237,6 +262,36 @@ def _render(data: dict) -> str:
 
 def _render_error() -> str:
     return _ERROR_PAGE
+
+
+def _render_forbidden() -> str:
+    return _FORBIDDEN_PAGE
+
+
+_FORBIDDEN_PAGE = r"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>无权查看</title>
+<style>
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:#f8f9fa; color:#1f2937;
+         font:14px/1.6 -apple-system,BlinkMacSystemFont,sans-serif; }
+  .box { text-align:center; padding:32px 24px; max-width:420px; }
+  .icon { font-size:40px; margin-bottom:12px; }
+  h1 { font-size:18px; margin:0 0 8px; font-weight:600; }
+  p { color:#6b7280; margin:0; font-size:13px; }
+</style>
+</head>
+<body>
+  <div class="box">
+    <div class="icon">🚫</div>
+    <h1>此报告仅限本人查看</h1>
+    <p>这条报告链接是发给特定账号的，请在你自己的飞书里向机器人获取属于你的报告。</p>
+  </div>
+</body>
+</html>"""
 
 
 _ERROR_PAGE = r"""<!DOCTYPE html>

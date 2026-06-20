@@ -14,14 +14,21 @@ from fastapi.testclient import TestClient
 from core.config import settings
 from web.app import app
 from web.signed_link import make_token
+from web.web_session import make_session_cookie
 
 
 @pytest.fixture(autouse=True)
 def _set_secret(monkeypatch):
-    """确保签名密钥可用。"""
+    """确保签名密钥可用（report 签名 token + 飞书登录 session cookie 两套）。"""
     monkeypatch.setattr(settings.dashboard, "link_secret", "test-secret-for-report-12345")
     monkeypatch.setattr(settings.dashboard, "token_ttl_seconds", 1800)
     monkeypatch.setattr(settings.dashboard, "public_base_url", "https://board.example.com")
+    monkeypatch.setattr(settings.feishu_oauth, "session_secret", "test-session-secret-67890")
+
+
+def _login_cookie(open_id: str) -> dict:
+    """造一个匹配 open_id 的飞书登录 session cookie。"""
+    return {settings.feishu_oauth.cookie_name: make_session_cookie(open_id)}
 
 
 @pytest.fixture(autouse=True)
@@ -75,17 +82,43 @@ def test_report_invalid_token_401():
     assert "链接已失效" in r.text
 
 
-def test_report_valid_token_200_html(monkeypatch):
-    """token 有效 -> 200 + HTML 包含 echarts + __DATA__ 已替换（无原始占位符）。"""
+def test_report_valid_token_matching_viewer_200(monkeypatch):
+    """token 有效 + 打开者 == 签发对象 -> 200 + HTML 包含 echarts + 广告消耗。"""
     monkeypatch.setattr("web.routes.report._collect", _fake_collect)
     token = make_token("ou_test_user", ttl=1800)
-    client = TestClient(app)
+    client = TestClient(app, cookies=_login_cookie("ou_test_user"))
     r = client.get(f"/report/daily_brief?t={token}&period=last_7d")
     assert r.status_code == 200
     assert "echarts" in r.text
     assert "__DATA__" not in r.text  # 占位符已替换
     assert "经营日报" in r.text
+    assert "广告消耗" in r.text  # 趋势图第三条线
     assert "128450" in r.text  # GMV value injected
+
+
+def test_report_mismatched_viewer_403(monkeypatch):
+    """token 有效但打开者 != 签发对象（同事/他人转发）-> 403 拒绝。"""
+    monkeypatch.setattr("web.routes.report._collect", _fake_collect)
+    token = make_token("ou_owner", ttl=1800)
+    client = TestClient(app, cookies=_login_cookie("ou_someone_else"))
+    r = client.get(f"/report/daily_brief?t={token}&period=last_7d")
+    assert r.status_code == 403
+    assert "仅限本人" in r.text
+
+
+def test_report_no_cookie_redirects_to_login(monkeypatch):
+    """token 有效但未登录 -> 302 跳飞书登录，next 带回原始报告 URL。"""
+    monkeypatch.setattr("web.routes.report._collect", _fake_collect)
+    token = make_token("ou_test_user", ttl=1800)
+    client = TestClient(app)
+    r = client.get(
+        f"/report/daily_brief?t={token}&period=last_7d", follow_redirects=False
+    )
+    assert r.status_code == 302
+    loc = r.headers["location"]
+    assert loc.startswith("/board/auth/feishu/login")
+    assert "next=" in loc
+    assert "report" in loc  # next 含原始报告路径
 
 
 def test_report_invalid_template_404(monkeypatch):
@@ -154,6 +187,40 @@ def test_ops_report_tool_returns_markdown(monkeypatch):
     result = run_tool("ops_report", {"template_name": "daily_brief", "period": "last_7d"}, perm)
     # run_tool returns the markdown string directly for ops_report
     assert "查看经营日报" in result
+
+
+# ── auth_feishu next 回跳 ───────────────────────────────────────────
+
+
+def test_safe_next_whitelist():
+    """_safe_next 只放行站内 /report、/board、/app；挡开放重定向。"""
+    from web.routes.auth_feishu import _safe_next
+
+    assert _safe_next("/report/daily_brief?t=x") == "/report/daily_brief?t=x"
+    assert _safe_next("/board") == "/board"
+    assert _safe_next("/app/foo") == "/app/foo"
+    # 拒绝项
+    assert _safe_next("//evil.com") is None        # 协议相对 URL
+    assert _safe_next("https://evil.com") is None  # 绝对 URL
+    assert _safe_next("/etc/passwd") is None        # 非白名单前缀
+    assert _safe_next("/reportx") is None           # 前缀边界（report 后须 / $ ?）
+    assert _safe_next("") is None
+
+
+def test_login_state_carries_next_roundtrip():
+    """login 把 next 编进签名 state，callback 侧能原样解出（防篡改 + 回跳）。"""
+    from web.routes import auth_feishu as af
+
+    safe = af._safe_next("/report/daily_brief?t=abc&period=last_7d")
+    assert safe is not None
+    # login 侧：state value = nonce|b64(next)
+    value = f"nonce123|{af._b64url(safe.encode('utf-8'))}"
+    state = af._make_signed(value, 600)
+    # callback 侧：验签 + 解码
+    got = af._verify_signed(state)
+    assert got is not None and "|" in got
+    decoded = af._b64url_decode(got.split("|", 1)[1]).decode("utf-8")
+    assert decoded == "/report/daily_brief?t=abc&period=last_7d"
 
 
 # ── helper ──────────────────────────────────────────────────────────
