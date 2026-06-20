@@ -3,7 +3,7 @@
 import logging
 from datetime import date, timedelta
 from typing import Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
@@ -924,11 +924,20 @@ async def get_dashboard_link(
 
 
 # 飞书 AppLink：走「网页应用」通道（web_app/open + appId）让飞书端内打开报告。
-# 不能用 web_url/open(打开任意网址)——实测它对第三方域名仍被当外链拦截、甩到外部
-# 浏览器（可信域名救不了聊天裸链）。web_app/open 用已注册应用的 appId，飞书识别为
-# 应用内页面，不弹"非飞书链接"提示。报告 URL 带 token(query)，故用 lk_target_url
-# (完整 URL 整体 encode)而非 path(path 不能带 ?/#)；lk_target_url 的 domain 须与
-# 应用主页同域（均 board.agenticker.cc）。见飞书 applink web_app/open 规范。
+# 不能用 web_url/open(打开任意网址)——实测它对第三方域名仍被当外链拦截、甩到外部浏览器。
+#
+# ⚠️ 关键（2026-06-20 纠错）：早前用 lk_target_url(完整 URL 整体 encode)，移动端正常但
+# PC 端飞书仍弹"该网页非飞书官方链接"、强制跳系统浏览器。根因不是路径范围(加 /board/report
+# 别名也没救回)，而是 lk_target_url 语义=「打开任意外链」，PC 端对其做外链安全拦截；移动端
+# 不校验故正常。改用 path 系列(语义=「打开本应用注册页面」)，PC 端信任、端内直开。
+#   - path 不能带 ?/#(官方明令)；官方变通：把 query 拆到 applink 顶层，飞书重组成 主页/path?query
+#     （见 open-an-h5-app 文档「使用示例2」）。报告 token 是 b64url、period 等是 ASCII，天然
+#     URL-safe，照搬顶层即可。
+#   - path / path_pc 同传(PC 端优先 path_pc)。path 用相对路径(不带 /board 前缀)，对飞书
+#     「替换 or 追加 主页 path」两种解释都落到有效路由：替换→/report/*，追加→/board/report/*
+#     (别名)，且前端 insight 请求按 location.pathname 相对取，两种落点都对。
+#   - path 与 lk_target_url 互斥(同传 lk_target_url 优先)，故彻底弃用后者。
+# 见 https://open.feishu.cn/document/common-capabilities/applink-protocol/supported-protocol/open-an-h5-app
 _FEISHU_WEBAPP_APPLINK = "https://applink.feishu.cn/client/web_app/open"
 
 
@@ -936,10 +945,13 @@ def _wrap_feishu_applink(url: str, mode: str = "window") -> str:
     app_id = settings.feishu_oauth.app_id
     if not app_id:
         return url  # 未配 appId：退回裸链（至少不报错）
-    return (
-        f"{_FEISHU_WEBAPP_APPLINK}?appId={app_id}&mode={mode}"
-        f"&lk_target_url={quote(url, safe='')}"
-    )
+    parts = urlsplit(url)
+    enc_path = quote(parts.path or "/", safe="/")
+    link = f"{_FEISHU_WEBAPP_APPLINK}?appId={app_id}&mode={mode}"
+    if parts.query:  # t/period/start_date/end_date 搬到 applink 顶层（URL-safe，无需再 encode）
+        link += "&" + parts.query
+    link += f"&path={enc_path}&path_pc={enc_path}"
+    return link
 
 
 @router.get(
@@ -970,9 +982,10 @@ async def get_report_link(
         token = make_token(open_id, ttl=ttl)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=503, detail=str(exc))
-    # 走 /board/report/*（/report/* 的别名）：让飞书 applink 目标落在「桌面端主页」(/board)路径
-    # 范围内，PC 端才不会当外链拦成"非飞书链接"（见 web/routes/report.py 别名路由注释）。
-    url = base.rstrip("/") + "/board/report/" + template_name + "?t=" + token + "&period=" + period
+    # 用 /report/*（裸链/WebUI 直访有效）；飞书渠道由 _wrap_feishu_applink 拆成 path 走
+    # web_app/open。path 的「替换 or 追加 主页」两种解释分别落到 /report/* 与别名 /board/report/*，
+    # 都有效（见 _wrap_feishu_applink 注释与 web/routes/report.py 别名路由）。
+    url = base.rstrip("/") + "/report/" + template_name + "?t=" + token + "&period=" + period
     if start_date and isinstance(start_date, str):
         url += "&start_date=" + start_date
     if end_date and isinstance(end_date, str):

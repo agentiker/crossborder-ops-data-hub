@@ -140,8 +140,12 @@ def test_report_invalid_template_404(monkeypatch):
 
 
 def test_report_link_feishu_wraps_applink():
-    """飞书渠道（默认）签出的链接包成 applink，让飞书端内 web-view 打开。"""
-    from urllib.parse import unquote
+    """飞书渠道（默认）签出的链接包成 applink，让飞书端内 web-view 打开。
+
+    用 path/path_pc（语义=本应用注册页面）而非 lk_target_url（任意外链，PC 端弹外链拦截）；
+    query（t/period）按官方变通拆到 applink 顶层。详见 _wrap_feishu_applink 注释。
+    """
+    from urllib.parse import parse_qs, urlsplit
     from web.routes.data import get_report_link
 
     result = _run(get_report_link(
@@ -149,13 +153,19 @@ def test_report_link_feishu_wraps_applink():
         template_name="daily_brief",
         period="last_7d",
     ))
-    # 走「网页应用」通道（web_app/open + appId + lk_target_url），飞书端内打开不弹外链提示
+    # 走「网页应用」通道（web_app/open + appId + path/path_pc），飞书端内打开不弹外链提示
     assert result.url.startswith(
-        "https://applink.feishu.cn/client/web_app/open?appId=cli_test123&mode=window&lk_target_url="
+        "https://applink.feishu.cn/client/web_app/open?appId=cli_test123&mode=window"
     )
-    inner = unquote(result.url.split("lk_target_url=", 1)[1])
-    assert inner.startswith("https://board.example.com/report/daily_brief?t=")
-    assert "period=last_7d" in inner
+    q = parse_qs(urlsplit(result.url).query)
+    # path 是相对路径（不带 /board），PC 端优先 path_pc；二者一致
+    assert q["path"] == ["/report/daily_brief"]
+    assert q["path_pc"] == ["/report/daily_brief"]
+    # 报告参数搬到 applink 顶层（飞书重组成 主页/path?query）
+    assert q["period"] == ["last_7d"]
+    assert q["t"] and q["t"][0]  # 签名 token 存在
+    # 彻底弃用 lk_target_url（与 path 互斥，且 PC 端会被当外链拦）
+    assert "lk_target_url" not in result.url
     assert result.expires_in == 1800
     assert "查看经营报告" in result.markdown  # last_7d → 区间报版型文案
     assert result.url in result.markdown

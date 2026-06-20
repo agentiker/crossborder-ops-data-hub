@@ -71,6 +71,7 @@
 - 交付前运行 `uv run pytest`。
 - 如果某个测试需要真实凭据或网络访问，请将其单独标记，并保持默认测试套件离线运行。
 - 仅在对应计划的代码和测试通过后，才将 `plan/` 中相关文件的 `status: active` 改为 `status: completed`。
+- 用户测试验证通过后，把本次新的业务规则记录到docs目录下的文档中
 
 ## 🛠️ Skill 开发与编写规范 (Agent Skill Specifications)
 
