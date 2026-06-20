@@ -165,10 +165,15 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
             "gmv": item.get("gmv", 0),
         })
 
-    # 断货预警
+    # 断货预警：按严重度（断货 > 告急 > 预警）排序，同级最紧急（可售天数最少）在前
     low_items = []
     level_map = {"stockout": "断货", "critical": "告急", "warning": "预警"}
-    for item in low.get("items", [])[:20]:
+    _severity = {"stockout": 0, "critical": 1, "warning": 2}
+    low_sorted = sorted(
+        low.get("items", []),
+        key=lambda it: (_severity.get(it.get("bucket", ""), 9), it.get("days_of_cover", 0)),
+    )
+    for item in low_sorted[:20]:
         bucket = item.get("bucket", "")
         low_items.append({
             "name": item.get("product_name") or item.get("sku_id") or "?",
@@ -276,12 +281,12 @@ _FORBIDDEN_PAGE = r"""<!DOCTYPE html>
 <title>无权查看</title>
 <style>
   body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
-         background:#f8f9fa; color:#1f2937;
-         font:14px/1.6 -apple-system,BlinkMacSystemFont,sans-serif; }
+         background:hsl(58 20% 96%); color:rgba(25,36,32,.88);
+         font:14px/1.6 ui-sans-serif,system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
   .box { text-align:center; padding:32px 24px; max-width:420px; }
   .icon { font-size:40px; margin-bottom:12px; }
   h1 { font-size:18px; margin:0 0 8px; font-weight:600; }
-  p { color:#6b7280; margin:0; font-size:13px; }
+  p { color:rgba(25,36,32,.5); margin:0; font-size:13px; }
 </style>
 </head>
 <body>
@@ -302,12 +307,12 @@ _ERROR_PAGE = r"""<!DOCTYPE html>
 <title>链接已失效</title>
 <style>
   body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
-         background:#f8f9fa; color:#1f2937;
-         font:14px/1.6 -apple-system,BlinkMacSystemFont,sans-serif; }
+         background:hsl(58 20% 96%); color:rgba(25,36,32,.88);
+         font:14px/1.6 ui-sans-serif,system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
   .box { text-align:center; padding:32px 24px; }
   .icon { font-size:40px; margin-bottom:12px; }
   h1 { font-size:18px; margin:0 0 8px; font-weight:600; }
-  p { color:#6b7280; margin:0; font-size:13px; }
+  p { color:rgba(25,36,32,.5); margin:0; font-size:13px; }
 </style>
 </head>
 <body>
@@ -328,40 +333,56 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
 <title>经营日报</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
 <style>
-  :root { --primary:#4F46E5; --success:#10B981; --warn:#F59E0B; --danger:#EF4444;
-          --bg:#f8f9fa; --card:#fff; --txt:#1f2937; --sub:#6b7280; --border:#e5e7eb; }
+  /* 设计 token 对齐 SPA 控制台（frontend/src/index.css，StoreClaw 体系） */
+  :root { --primary:hsl(158 18% 12%); --success:hsl(152 52% 36%);
+          --warn:hsl(32 84% 44%); --danger:hsl(0 72% 50%);
+          --bg:hsl(58 20% 96%); --card:hsl(56 38% 99%);
+          --txt:rgba(25,36,32,.88); --txt2:rgba(25,36,32,.7); --sub:rgba(25,36,32,.5);
+          --border:rgba(0,0,0,.1); --border-shallow:rgba(0,0,0,.05);
+          --fill:rgba(0,0,0,.04); --fill-shallow:rgba(0,0,0,.02); }
+  @font-face { font-family:"GoogleSansFlex"; font-display:swap;
+               src:url("/app/fonts/GoogleSansFlex.woff2") format("woff2"); }
   * { box-sizing:border-box; margin:0; padding:0; }
+  html { background:rgba(107,104,31,.05); }
   body { background:var(--bg); color:var(--txt);
-         font:14px/1.5 -apple-system,BlinkMacSystemFont,sans-serif; }
+         font:14px/1.5 "GoogleSansFlex",ui-sans-serif,system-ui,-apple-system,
+              "PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+         -webkit-font-smoothing:antialiased; }
   .wrap { max-width:800px; margin:0 auto; padding:16px 12px 40px; }
   header { margin-bottom:16px; }
-  header h1 { font-size:20px; font-weight:700; color:var(--primary); }
+  header h1 { font-size:20px; font-weight:700; color:var(--primary); letter-spacing:-.01em; }
   .meta { color:var(--sub); font-size:12px; margin-top:4px; }
-  .kpis { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
-  .kpi { background:var(--card); border:1px solid var(--border); border-radius:10px;
-         padding:12px; }
+  .kpis { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  .kpi { background:var(--card); border:1px solid var(--border-shallow); border-radius:12px;
+         padding:14px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
   .kpi .label { color:var(--sub); font-size:11px; }
-  .kpi .val { font-size:18px; font-weight:700; margin-top:2px; }
-  .kpi .chg { font-size:11px; margin-top:2px; }
-  .chg.up { color:var(--success); }
-  .chg.down { color:var(--danger); }
-  .card { background:var(--card); border:1px solid var(--border); border-radius:10px;
-          padding:14px; margin-top:12px; }
-  .card h2 { font-size:14px; font-weight:600; margin-bottom:10px; display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .kpi .val { font-size:19px; font-weight:700; margin-top:3px;
+              font-variant-numeric:tabular-nums; letter-spacing:-.01em; }
+  .kpi .chg { display:inline-flex; align-items:center; gap:2px; margin-top:6px;
+              padding:1px 7px; border-radius:8px; font-size:11px; font-weight:600;
+              font-variant-numeric:tabular-nums; }
+  .chg.up { color:var(--success); background:rgba(34,139,90,.12); }
+  .chg.down { color:var(--danger); background:rgba(220,38,38,.1); }
+  .card { background:var(--card); border:1px solid var(--border-shallow); border-radius:12px;
+          padding:14px; margin-top:12px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .card h2 { font-size:14px; font-weight:600; color:var(--txt); margin-bottom:10px;
+             display:flex; align-items:center; justify-content:space-between; gap:8px; }
   .card h2 small { font-weight:400; font-size:12px; color:var(--sub); }
   #trend-chart { width:100%; height:280px; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
-  th,td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--border); }
+  th,td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--border-shallow); }
+  tbody tr:last-child td { border-bottom:none; }
+  tbody tr:hover td { background:var(--fill-shallow); }
   th { color:var(--sub); font-weight:500; font-size:12px; }
   td.num { text-align:right; font-variant-numeric:tabular-nums; }
-  .pill { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; font-weight:500; }
-  .pill.stockout { background:rgba(239,68,68,.12); color:var(--danger); }
-  .pill.critical { background:rgba(245,158,11,.12); color:var(--warn); }
-  .pill.warning  { background:rgba(79,70,229,.12); color:var(--primary); }
+  .pill { display:inline-block; padding:1px 8px; border-radius:8px; font-size:11px; font-weight:600; }
+  .pill.stockout { background:rgba(220,38,38,.1); color:var(--danger); }
+  .pill.critical { background:rgba(214,140,20,.14); color:var(--warn); }
+  .pill.warning  { background:rgba(25,36,32,.08); color:var(--txt2); }
   .foot { color:var(--sub); font-size:11px; margin-top:20px; text-align:center; }
   @media (max-width:480px){
     .kpis { grid-template-columns:repeat(2,1fr); }
-    .kpi .val { font-size:17px; }
+    .kpi .val { font-size:18px; }
   }
 </style>
 </head>
@@ -400,10 +421,20 @@ const DATA = __DATA__;
 document.getElementById('meta').textContent =
   DATA.scope + '  ·  ' + DATA.period_label + '  ·  生成于 ' + DATA.generated_at;
 
-// -- KPI cards --
-const fmt = n => (n == null ? '—' : Number(n).toLocaleString('en-US', {maximumFractionDigits:0}));
-const fmtDec = n => (n == null ? '—' : Number(n).toFixed(2));
+// -- formatters --
+// 大额 IDR 缩写：Rp + K/M/B（后端返回原值，缩写只在展示层）
+const abbr = n => {
+  n = Number(n); const a = Math.abs(n);
+  if (a >= 1e9) return (n/1e9).toFixed(2) + 'B';
+  if (a >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  if (a >= 1e3) return (n/1e3).toFixed(0) + 'K';
+  return String(Math.round(n));
+};
+const fmtMoney = n => (n == null ? '—' : 'Rp ' + abbr(n));         // GMV / 广告消耗 / GMV 列
+const fmtInt = n => (n == null ? '—' : Number(n).toLocaleString('en-US')); // 订单 / SKU / 销量
+const fmtDec = n => (n == null ? '—' : Number(n).toFixed(2));      // ROAS
 
+// -- KPI cards --
 function chgHtml(c) {
   if (c == null) return '';
   const cls = c >= 0 ? 'up' : 'down';
@@ -412,12 +443,12 @@ function chgHtml(c) {
 }
 
 const kpiDefs = [
-  {label:'GMV', val: fmt(DATA.kpi.gmv.value), chg: chgHtml(DATA.kpi.gmv.change)},
-  {label:'订单数', val: fmt(DATA.kpi.orders.value), chg: chgHtml(DATA.kpi.orders.change)},
-  {label:'广告消耗', val: fmt(DATA.kpi.ad_spend.value), chg: chgHtml(DATA.kpi.ad_spend.change)},
+  {label:'GMV', val: fmtMoney(DATA.kpi.gmv.value), chg: chgHtml(DATA.kpi.gmv.change)},
+  {label:'订单数', val: fmtInt(DATA.kpi.orders.value), chg: chgHtml(DATA.kpi.orders.change)},
+  {label:'广告消耗', val: fmtMoney(DATA.kpi.ad_spend.value), chg: chgHtml(DATA.kpi.ad_spend.change)},
   {label:'ROAS', val: fmtDec(DATA.kpi.roas.value), chg: chgHtml(DATA.kpi.roas.change)},
-  {label:'库存 SKU', val: fmt(DATA.kpi.sku_count), chg: ''},
-  {label:'断货风险', val: fmt(DATA.kpi.low_stock_count), chg: ''},
+  {label:'库存 SKU', val: fmtInt(DATA.kpi.sku_count), chg: ''},
+  {label:'断货风险', val: fmtInt(DATA.kpi.low_stock_count), chg: ''},
 ];
 const kpisEl = document.getElementById('kpis');
 kpiDefs.forEach(d => {
@@ -429,27 +460,46 @@ kpiDefs.forEach(d => {
 });
 
 // -- Trend chart (dual Y: GMV + 广告消耗 lines share money axis, Orders bar on right) --
+// 配色对齐 SPA token：GMV=墨绿主色 / 广告=橙警示 / 订单=绿
+const C_GMV = 'rgb(25,36,32)', C_AD = 'rgb(206,118,18)', C_ORD = 'rgb(44,140,95)';
+const C_SUB = 'rgba(25,36,32,.5)', C_GRID = 'rgba(0,0,0,.06)';
 const chart = echarts.init(document.getElementById('trend-chart'));
 const _dates = DATA.trend.dates || [];
 const _isSingleDay = _dates.length <= 1;
+// 含柱状图，x 轴始终留边距（boundaryGap:true），避免首尾柱子贴 Y 轴
 chart.setOption({
-  tooltip: { trigger:'axis' },
-  legend: { data:['GMV','广告消耗','订单数'], top:0, left:0, right:0, type:'scroll', pageTextStyle:{color:'#6b7280'} },
-  grid: { top:36, left:50, right:50, bottom:24 },
-  xAxis: { type:'category', data: _dates, boundaryGap:_isSingleDay?true:false },
+  tooltip: { trigger:'axis',
+    formatter: function(ps){
+      let s = ps[0].axisValue + '<br/>';
+      ps.forEach(p => {
+        const v = p.seriesName === '订单数' ? fmtInt(p.value) : fmtMoney(p.value);
+        s += p.marker + p.seriesName + '：<b>' + v + '</b><br/>';
+      });
+      return s;
+    } },
+  legend: { data:['GMV','广告消耗','订单数'], bottom:0, left:'center', type:'scroll',
+            itemWidth:14, itemHeight:8, itemGap:16,
+            textStyle:{color:C_SUB}, pageTextStyle:{color:C_SUB} },
+  grid: { top:30, left:48, right:44, bottom:36 },
+  xAxis: { type:'category', data: _dates, boundaryGap:true,
+    axisLabel:{ color:C_SUB }, axisLine:{ lineStyle:{ color:C_GRID } },
+    axisTick:{ show:false } },
   yAxis: [
-    { type:'value', name:'GMV/广告', position:'left',
-      axisLabel:{ formatter:v=> v>=1000?(v/1000).toFixed(0)+'k':v } },
-    { type:'value', name:'订单', position:'right' },
+    { type:'value', name:'GMV/广告', position:'left', nameTextStyle:{ color:C_SUB, fontSize:11 },
+      axisLabel:{ color:C_SUB, formatter:v=> abbr(v) },
+      splitLine:{ lineStyle:{ color:C_GRID } } },
+    { type:'value', name:'订单', position:'right', nameTextStyle:{ color:C_SUB, fontSize:11 },
+      axisLabel:{ color:C_SUB }, splitLine:{ show:false } },
   ],
   series: [
     { name:'GMV', type:'line', data: DATA.trend.gmv, smooth:true, showSymbol:_isSingleDay,
-      itemStyle:{color:'#4F46E5'}, areaStyle:{color:'rgba(79,70,229,.08)'} },
+      symbolSize:6, lineStyle:{ width:2.5 }, itemStyle:{color:C_GMV},
+      areaStyle:{color:'rgba(25,36,32,.06)'} },
     { name:'广告消耗', type:'line', data: DATA.trend.ad_spend || [], smooth:true, showSymbol:_isSingleDay,
-      itemStyle:{color:'#F59E0B'} },
+      symbolSize:6, lineStyle:{ width:2 }, itemStyle:{color:C_AD} },
     { name:'订单数', type:'bar', yAxisIndex:1, data: DATA.trend.orders,
-      barMaxWidth: _isSingleDay ? 44 : 28,
-      itemStyle:{color:'#10B981', borderRadius:[3,3,0,0]} },
+      barMaxWidth: _isSingleDay ? 44 : 26,
+      itemStyle:{color:'rgba(44,140,95,.55)', borderRadius:[4,4,0,0]} },
   ],
 });
 document.getElementById('trend-title-note').textContent = _isSingleDay ? '单日视图' : '';
@@ -460,26 +510,26 @@ const topBody = document.getElementById('top-body');
 (DATA.top_skus || []).forEach(s => {
   const tr = document.createElement('tr');
   tr.innerHTML = '<td>' + s.name + '</td>'
-    + '<td class="num">' + fmt(s.units) + '</td>'
-    + '<td class="num">' + fmt(s.gmv) + '</td>';
+    + '<td class="num">' + fmtInt(s.units) + '</td>'
+    + '<td class="num">' + fmtMoney(s.gmv) + '</td>';
   topBody.appendChild(tr);
 });
 if (!DATA.top_skus || !DATA.top_skus.length) {
-  topBody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#6b7280">暂无数据</td></tr>';
+  topBody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--sub)">暂无数据</td></tr>';
 }
 
 // -- Low stock table --
 const lowWrap = document.getElementById('low-wrap');
 const lowItems = DATA.low_stock || [];
 if (!lowItems.length) {
-  lowWrap.innerHTML = '<div style="text-align:center;color:#6b7280;padding:16px 0">暂无断货风险 SKU</div>';
+  lowWrap.innerHTML = '<div style="text-align:center;color:var(--sub);padding:16px 0">暂无断货风险 SKU</div>';
 } else {
   let html = '<table><thead><tr><th>商品</th><th>风险</th><th class="num">库存</th>'
     + '<th class="num">日均销速</th><th class="num">可售天数</th></tr></thead><tbody>';
   lowItems.forEach(it => {
     html += '<tr><td>' + it.name + '</td>'
       + '<td><span class="pill ' + it.level + '">' + it.level_label + '</span></td>'
-      + '<td class="num">' + it.stock + '</td>'
+      + '<td class="num">' + fmtInt(it.stock) + '</td>'
       + '<td class="num">' + it.velocity + '</td>'
       + '<td class="num">' + it.days + '</td></tr>';
   });
