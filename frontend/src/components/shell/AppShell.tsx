@@ -35,6 +35,17 @@ export function AppShell() {
     refreshConversations();
   }, [refreshConversations]);
 
+  // 鉴权确认前只显示加载态：避免 me=null 时先渲染出受保护内容（老板首页）、
+  // 等 /api/me 返 401 才跳登录造成的"内容闪现"。未登录时 api 层已触发跳飞书登录，
+  // 此处保持加载态直到浏览器导航离开。
+  if (me === null) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-foreground-tertiary">
+        加载中…
+      </div>
+    );
+  }
+
   return (
     <div className="grid h-full grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)]">
       {/* 桌面固定侧栏 */}

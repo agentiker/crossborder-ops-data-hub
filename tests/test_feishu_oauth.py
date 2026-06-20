@@ -53,7 +53,21 @@ def test_authorize_url_has_required_query(configured):
     assert q["redirect_uri"] == ["https://board.agenticker.cc/board/auth/feishu/callback"]
     assert q["response_type"] == ["code"]
     assert q["state"] == ["state-abc"]
+    # 默认不带 scope（oauth_scope 空）：已授权用户静默发码、不弹同意页
+    assert "scope" not in q
+
+
+def test_authorize_url_includes_scope_when_configured(configured, monkeypatch):
+    """配置了 oauth_scope（需增量授权某权限）时，scope 才拼进 URL。"""
+    monkeypatch.setattr(settings.feishu_oauth, "oauth_scope", "contact:user.id:readonly")
+    q = parse_qs(urlparse(build_authorize_url("s")).query)
     assert q["scope"] == ["contact:user.id:readonly"]
+
+
+def test_authorize_url_explicit_scope_arg_wins(configured):
+    """显式传 scope 参数覆盖配置默认。"""
+    q = parse_qs(urlparse(build_authorize_url("s", scope="bitable:app")).query)
+    assert q["scope"] == ["bitable:app"]
 
 
 def test_authorize_url_missing_config_raises(monkeypatch):

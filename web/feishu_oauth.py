@@ -26,7 +26,8 @@ AUTHORIZE_URL = "https://accounts.feishu.cn/open-apis/authen/v1/authorize"
 TOKEN_URL = "https://open.feishu.cn/open-apis/authen/v2/oauth/token"
 USER_INFO_URL = "https://open.feishu.cn/open-apis/authen/v1/user_info"
 
-# 拿 open_id 的最小权限；飞书后台须为该 app 申请此权限。
+# 拿 open_id 的最小权限；已在飞书后台为该 app 开通。默认**不**塞进 authorize（见下），
+# 避免每次登录弹同意页；保留常量供需要显式增量授权时引用。
 DEFAULT_SCOPE = "contact:user.id:readonly"
 
 _TIMEOUT = 10
@@ -36,13 +37,19 @@ class FeishuOAuthError(RuntimeError):
     """飞书 OAuth 交互失败（配置缺失 / 网络错 / 飞书返回非 0 code）。"""
 
 
-def build_authorize_url(state: str, *, scope: Optional[str] = DEFAULT_SCOPE) -> str:
-    """拼飞书授权页 URL。app_id/redirect_uri 未配置则拒绝生成（抛错）。"""
+def build_authorize_url(state: str, *, scope: Optional[str] = None) -> str:
+    """拼飞书授权页 URL。app_id/redirect_uri 未配置则拒绝生成（抛错）。
+
+    scope 缺省取 settings.feishu_oauth.oauth_scope（默认空=不传）。不传 scope 时，已授权
+    用户静默发码、不再弹同意页（权限累积，无新增权限即无需重复授权，见飞书 authorize 文档）。
+    """
     cfg = settings.feishu_oauth
     if not cfg.app_id or not cfg.redirect_uri:
         raise FeishuOAuthError("FEISHU_OAUTH__APP_ID / REDIRECT_URI 未配置，无法发起登录")
     if not state:
         raise FeishuOAuthError("state 不能为空（防 CSRF）")
+    if scope is None:
+        scope = cfg.oauth_scope
     params = {
         "client_id": cfg.app_id,
         "redirect_uri": cfg.redirect_uri,
