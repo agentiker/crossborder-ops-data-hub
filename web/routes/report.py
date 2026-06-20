@@ -642,7 +642,8 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
   tbody tr:last-child td { border-bottom:none; }
   tbody tr:hover td { background:var(--fill-shallow); }
   th { color:var(--sub); font-weight:500; font-size:12px; }
-  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  th.num, td.num { text-align:right; }
+  td.num { font-variant-numeric:tabular-nums; }
   .pill { display:inline-block; padding:1px 8px; border-radius:8px; font-size:11px; font-weight:600; }
   .pill.stockout { background:rgba(220,38,38,.1); color:var(--danger); }
   .pill.critical { background:rgba(214,140,20,.14); color:var(--warn); }
@@ -703,7 +704,7 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
   </div>
 
   <div class="card">
-    <h2>Top 5 爆款 <small>占比＝占当期 GMV（商品行口径近似）</small></h2>
+    <h2>Top 5 爆款 <small>占比 = 该商品 GMV ÷ 当期总 GMV</small></h2>
     <table><thead><tr><th>商品</th><th class="num">销量</th><th class="num">GMV</th><th class="num">占比</th></tr></thead>
     <tbody id="top-body"></tbody></table>
   </div>
