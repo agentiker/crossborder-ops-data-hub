@@ -2,7 +2,7 @@
 
 - GET /login：签一个短时效 state（防 CSRF，可携带回跳 next）→ 302 跳飞书授权页。
 - GET /callback：校 state → 用 code 换 token → 取 open_id → 签登录 cookie → 302 回 next 或 /board。
-- GET /logout：清 cookie → 回 /board（随即触发重新登录）。
+- GET /logout：清 cookie → 回 /app（WebUI 主页，随即触发重新登录回到 /app）。
 
 登录成功后默认回 /board；若发起登录时带了 next（仅 /report、/board、/app 白名单内的站内
 路径），登录后回跳到该 URL。next 编进签名 state 一起防篡改，回跳前再做一次白名单校验，
@@ -130,9 +130,9 @@ async def callback(
 
 @router.get("/logout", include_in_schema=False)
 async def logout():
-    """登出：清登录 cookie，回 /board（随即触发重新登录）。"""
+    """登出：清登录 cookie，回 /app（WebUI 主页；随即触发重新登录回到 /app 而非 /board）。"""
     cfg = settings.feishu_oauth
-    resp = RedirectResponse(_HOME, status_code=302)
+    resp = RedirectResponse("/app", status_code=302)
     resp.delete_cookie(key=cfg.cookie_name, path="/")
     return resp
 
