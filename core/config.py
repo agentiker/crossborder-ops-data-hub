@@ -56,10 +56,10 @@ class FeishuOAuthConfig(BaseModel):
     session_ttl_seconds: int = 604800  # 登录态有效期，默认 7 天
     cookie_name: str = "board_session"  # 登录态 cookie 名
     cookie_secure: bool = True  # Set-Cookie 是否带 Secure（生产 HTTPS 必须 True，本机调试可 False）
-    # authorize 请求的 scope：表示"用户需增量授予的权限"。默认空=不传，让已授权用户静默发码、
-    # 不再每次弹同意页（contact:user.id:readonly 已在应用后台开通、且授权累积无需重申）。
-    # 万一某权限需用户显式增量授予，再经 env FEISHU_OAUTH__OAUTH_SCOPE 加回。
-    oauth_scope: str = ""
+    # authorize 请求的 scope：只请求登录所需的最小权限。不传 scope 时飞书会按应用声明的
+    # 全部权限请求（同意页更长、与历史授予不符），故这里钉死最小集，保证新用户也能正常授权
+    # 拿到 open_id。注意：同意页是否出现由飞书「权限管理」声明的需用户授权权限集决定，非此参数。
+    oauth_scope: str = "contact:user.id:readonly"
     # 对话侧 fail-closed 硬闸灰度开关（防自锁，见 plan/14 Phase 6）：
     # 先 False 部署 → CLI 登记 boss/operator → 确认无误再置 True。
     # False 时 web/routes/data.py::_resolve_scope 维持旧行为（未登记 open_id 不拒）。
