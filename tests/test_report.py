@@ -230,6 +230,10 @@ def _patch_collect_data_sources(monkeypatch):
     async def fake_ad_trend(*, start_date, end_date, **k):
         return {"points": []}
 
+    async def fake_top(**k):
+        return {"items": [{"product_name": "热卖A", "units_sold": 30, "gmv": 250},
+                          {"product_name": "热卖B", "units_sold": 20, "gmv": 100}]}
+
     async def fake_empty(**k):
         return {"items": []}
 
@@ -238,7 +242,7 @@ def _patch_collect_data_sources(monkeypatch):
     monkeypatch.setattr("web.routes.report.get_orders_trend", fake_orders_trend)
     monkeypatch.setattr("web.routes.report.get_ad_spend", fake_ad_spend)
     monkeypatch.setattr("web.routes.report.get_ad_spend_trend", fake_ad_trend)
-    monkeypatch.setattr("web.routes.report.get_orders_top_skus", fake_empty)
+    monkeypatch.setattr("web.routes.report.get_orders_top_skus", fake_top)
     monkeypatch.setattr("web.routes.report.get_low_stock", fake_empty)
 
 
@@ -267,6 +271,96 @@ def test_collect_multi_day_is_period(monkeypatch):
     assert data["change_label"] == "较上期"
     assert data["trend_mini"] is False
     assert len(data["trend"]["dates"]) == 7  # last_7d = 7 天窗口
+
+
+def test_collect_top_share_and_kpi_tips(monkeypatch):
+    """Top item 含 GMV 占比；GMV/广告 KPI 含口径 tip。"""
+    _patch_collect_data_sources(monkeypatch)
+    from web.routes.report import _collect
+
+    data = _run(_collect("ou_x", None, None, "today"))
+    top = data["top_skus"]
+    assert top and top[0]["share"] == 25.0  # 250 / 1000 = 25%
+    assert "已付款" in data["kpi"]["gmv"]["tip"]
+    assert "环比" in data["kpi"]["ad_spend"]["tip"]
+
+
+# ── AI 洞察端点 (/report/{tpl}/insight) ──────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _clear_insight_cache():
+    """清当天洞察缓存，避免用例间串味（缓存按 open_id+period+日期）。"""
+    from web.routes import report as _r
+    _r._INSIGHT_CACHE.clear()
+    yield
+    _r._INSIGHT_CACHE.clear()
+
+
+class _FakeProvider:
+    """假 LLM provider：stream() 吐一个含 JSON 的 TurnComplete。"""
+    model = "fake-model"
+
+    def __init__(self, text):
+        self._text = text
+
+    def stream(self, messages, tools):
+        from services.llm.types import TurnComplete
+        yield TurnComplete(text=self._text, tool_calls=[], finish_reason="stop")
+
+
+def test_insight_success(monkeypatch):
+    """token+cookie 匹配 + LLM 正常 → available:true + 三段解析。"""
+    monkeypatch.setattr("web.routes.report._collect", _fake_collect)
+    fake = _FakeProvider('{"headline":"今日 GMV 创新高","problems":["X 断货"],"actions":["补货 X"]}')
+    monkeypatch.setattr("services.llm.get_provider", lambda *a, **k: fake)
+    token = make_token("ou_test_user", ttl=1800)
+    client = TestClient(app, cookies=_login_cookie("ou_test_user"))
+    r = client.get(f"/report/daily_brief/insight?t={token}&period=today")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["available"] is True
+    assert d["headline"] == "今日 GMV 创新高"
+    assert d["problems"] == ["X 断货"]
+    assert d["actions"] == ["补货 X"]
+    assert d["model"] == "fake-model"
+
+
+def test_insight_forbidden_when_viewer_mismatch(monkeypatch):
+    """打开者 != 签发对象 → available:false（不泄漏、不 500）。"""
+    monkeypatch.setattr("web.routes.report._collect", _fake_collect)
+    token = make_token("ou_owner", ttl=1800)
+    client = TestClient(app, cookies=_login_cookie("ou_someone_else"))
+    r = client.get(f"/report/daily_brief/insight?t={token}&period=today")
+    assert r.status_code == 200
+    assert r.json()["available"] is False
+
+
+def test_insight_degrades_on_llm_error(monkeypatch):
+    """LLM 配置缺失/报错 → available:false，绝不 500（不阻塞主报告）。"""
+    from services.llm.types import LLMError
+
+    monkeypatch.setattr("web.routes.report._collect", _fake_collect)
+
+    def _boom(*a, **k):
+        raise LLMError("not configured")
+
+    monkeypatch.setattr("services.llm.get_provider", _boom)
+    token = make_token("ou_test_user", ttl=1800)
+    client = TestClient(app, cookies=_login_cookie("ou_test_user"))
+    r = client.get(f"/report/daily_brief/insight?t={token}&period=today")
+    assert r.status_code == 200
+    assert r.json()["available"] is False
+
+
+def test_report_html_has_ai_and_insight_hook(monkeypatch):
+    """报告 HTML 含 AI 块节点 + insight 拉取路径。"""
+    monkeypatch.setattr("web.routes.report._collect", _fake_collect)
+    token = make_token("ou_test_user", ttl=1800)
+    client = TestClient(app, cookies=_login_cookie("ou_test_user"))
+    r = client.get(f"/report/daily_brief?t={token}&period=today")
+    assert "ai-headline" in r.text
+    assert "/insight" in r.text
 
 
 # ── agent_tool ops_report tests ─────────────────────────────────────

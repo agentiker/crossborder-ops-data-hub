@@ -13,11 +13,13 @@
 """
 
 import json
+import logging
 from datetime import datetime, timezone, timedelta
+from statistics import median
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from core.config import settings
 from core.timezone import (
@@ -40,10 +42,15 @@ from web.web_session import verify_session_cookie
 
 _LOGIN_PATH = "/board/auth/feishu/login"
 
+logger = logging.getLogger("report")
+
 router = APIRouter()
 
 # 印尼时区 UTC+7
 _JAKARTA_TZ = timezone(timedelta(hours=7))
+
+# AI 洞察当天缓存：key=(open_id, period/dates, business_date) → 三段 dict（刷新不重复烧 LLM）
+_INSIGHT_CACHE: dict[tuple, dict] = {}
 
 
 def _asdict(obj):
@@ -178,13 +185,16 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
     }
     ad_series = [ad_by_date.get(p.get("date"), 0) for p in trend_points]
 
-    # Top 5 SKU
+    # Top 5 SKU（加 GMV 占比 = 单品 GMV / 当期总 GMV，guard 除零）
     top_items = []
     for item in top.get("items", [])[:5]:
+        item_gmv = item.get("gmv", 0) or 0
+        share = round(item_gmv / cur_gmv * 100, 1) if cur_gmv else None
         top_items.append({
             "name": item.get("product_name") or item.get("sku_name") or item.get("sku_id") or "?",
             "units": item.get("units_sold", 0),
-            "gmv": item.get("gmv", 0),
+            "gmv": item_gmv,
+            "share": share,
         })
 
     # 断货预警：按严重度（断货 > 告急 > 预警）排序，同级最紧急（可售天数最少）在前
@@ -208,6 +218,16 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
 
     generated_at = datetime.now(_JAKARTA_TZ).strftime("%Y-%m-%d %H:%M")
 
+    # KPI 问号 tip：精简取数口径 + 环比基准
+    gmv_tip = (
+        "GMV=已付款订单买家实付额（含运费/税/优惠，非平台结算）。"
+        f"环比={change_label}（紧邻等长窗口）。"
+    )
+    ad_tip = (
+        "广告消耗=结算口径，含 GMV Max / TAP / 联盟三项拆分。"
+        f"环比={change_label}（紧邻等长窗口）。广告数据接通中，可能偏低或为 0。"
+    )
+
     return {
         "kind": kind,
         "title": title,
@@ -222,6 +242,7 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
                 "value": cur_gmv,
                 "change": _calc_change(cur_gmv, prev_gmv),
                 "currency": "IDR",
+                "tip": gmv_tip,
             },
             "orders": {
                 "value": cur_orders,
@@ -231,6 +252,7 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
                 "value": cur_ad_spend,
                 "change": _calc_change(cur_ad_spend, prev_ad_spend),
                 "currency": "IDR",
+                "tip": ad_tip,
             },
             "roas": {
                 "value": cur_roas,
@@ -285,6 +307,159 @@ async def report(
     # 3) 本人：照常取数渲染（软隔离按 open_id 的 binding）
     data = await _collect(open_id, start_date, end_date, period)
     return HTMLResponse(_render(data))
+
+
+# ── AI 洞察（结论 / 今日问题 / 明日动作）─────────────────────────────
+# 渲染时服务端调 LLM、前端渐进加载；当天缓存、优雅降级（绝不阻塞主报告）。
+
+_INSIGHT_SYSTEM = (
+    "你是跨境电商运营分析助手，为老板写极简经营洞察。严格只依据给定数字，"
+    "禁止编造任何未提供的数据或原因。输出**严格 JSON**（不要 markdown 围栏、不要多余文字）："
+    '{"headline": "一句话结论", "problems": ["..."], "actions": ["..."]}。'
+    "headline≤40字、点明经营好坏与最关键信号；problems 今日问题 0-3 条、每条≤30字、"
+    "只挑数字暴露的真问题（如环比骤降、断货、广告异常）；actions 明日动作 1-3 条、具体可执行。"
+    "全部用中文。无明显问题时 problems 可为空数组。"
+)
+
+
+def _detect_anomalies(dates: list, gmv: list) -> list:
+    """确定性异常日：> 中位数×1.5 的最大日记『爆单』，>0 且 < 中位数×0.5 的最小日记『骤降』。"""
+    out = []
+    pts = [(d, v) for d, v in zip(dates, gmv) if v is not None]
+    if len(pts) < 3:
+        return out
+    vals = [v for _, v in pts]
+    m = median(vals)
+    if m <= 0:
+        return out
+    hi = max(pts, key=lambda x: x[1])
+    lo = min(pts, key=lambda x: x[1])
+    if hi[1] > m * 1.5:
+        out.append({"date": hi[0], "kind": "spike", "label": "爆单"})
+    if 0 < lo[1] < m * 0.5 and lo[0] != hi[0]:
+        out.append({"date": lo[0], "kind": "drop", "label": "骤降"})
+    return out
+
+
+def _llm_complete(provider, messages) -> str:
+    """消费 stream() 取最后 TurnComplete 的完整文本。"""
+    from services.llm.types import TurnComplete
+
+    text = ""
+    for ev in provider.stream(messages, tools=[]):
+        if isinstance(ev, TurnComplete):
+            text = ev.text or ""
+    return text
+
+
+def _parse_insight(text: str) -> dict | None:
+    """容错解析 LLM 返回的 JSON（剥 ```json 围栏）。失败返回 None。"""
+    if not text:
+        return None
+    s = text.strip()
+    if s.startswith("```"):
+        s = s.split("```", 2)[1] if "```" in s[3:] else s.strip("`")
+        s = s[4:].strip() if s.lower().startswith("json") else s.strip()
+    try:
+        obj = json.loads(s)
+    except (ValueError, TypeError):
+        # 退一步：截取首个 { 到末个 }
+        i, j = s.find("{"), s.rfind("}")
+        if i == -1 or j == -1 or j <= i:
+            return None
+        try:
+            obj = json.loads(s[i : j + 1])
+        except (ValueError, TypeError):
+            return None
+    if not isinstance(obj, dict) or "headline" not in obj:
+        return None
+    return {
+        "headline": str(obj.get("headline", "")).strip(),
+        "problems": [str(x).strip() for x in (obj.get("problems") or []) if str(x).strip()][:3],
+        "actions": [str(x).strip() for x in (obj.get("actions") or []) if str(x).strip()][:3],
+    }
+
+
+def _build_insight_prompt(data: dict) -> str:
+    """把报告指标压成喂给 LLM 的精简数字上下文。"""
+    kpi = data.get("kpi", {})
+    anomalies = _detect_anomalies(
+        data.get("trend", {}).get("dates", []), data.get("trend", {}).get("gmv", [])
+    )
+    payload = {
+        "报告类型": "日报" if data.get("kind") == "daily" else "区间报告",
+        "范围": data.get("scope"),
+        "周期": data.get("period_label"),
+        "环比基准": data.get("change_label"),
+        "GMV": kpi.get("gmv", {}).get("value"),
+        "GMV环比%": kpi.get("gmv", {}).get("change"),
+        "订单数": kpi.get("orders", {}).get("value"),
+        "订单环比%": kpi.get("orders", {}).get("change"),
+        "广告消耗": kpi.get("ad_spend", {}).get("value"),
+        "广告环比%": kpi.get("ad_spend", {}).get("change"),
+        "断货风险SKU数": kpi.get("low_stock_count"),
+        "Top爆款": [
+            {"名称": t.get("name"), "销量": t.get("units"), "GMV占比%": t.get("share")}
+            for t in data.get("top_skus", [])[:5]
+        ],
+        "断货预警Top": [
+            {"名称": l.get("name"), "风险": l.get("level_label"),
+             "库存": l.get("stock"), "可售天数": l.get("days")}
+            for l in data.get("low_stock", [])[:5]
+        ],
+        "趋势异常日": anomalies,
+        "币种": "IDR（印尼盾）",
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+@router.get("/report/{template_name}/insight", include_in_schema=False)
+async def report_insight(
+    request: Request,
+    template_name: str,
+    t: str = Query("", description="签名 token"),
+    start_date: str = Query(None),
+    end_date: str = Query(None),
+    period: str = Query("last_7d"),
+):
+    """AI 三段洞察（结论/问题/动作）。鉴权同 report()，失败一律降级 {available:false}，绝不 500。"""
+    open_id = verify_token(t)
+    if not open_id or template_name not in _VALID_TEMPLATES:
+        return JSONResponse({"available": False, "reason": "invalid"})
+    raw = request.cookies.get(settings.feishu_oauth.cookie_name, "")
+    viewer = verify_session_cookie(raw) if raw else None
+    if not viewer or viewer != open_id:
+        return JSONResponse({"available": False, "reason": "forbidden"})
+
+    cache_key = (open_id, start_date or "", end_date or "", period or "", str(business_today()))
+    if cache_key in _INSIGHT_CACHE:
+        return JSONResponse(_INSIGHT_CACHE[cache_key])
+
+    try:
+        from services.llm import get_provider
+        from services.llm.types import ChatMessage
+
+        data = await _collect(open_id, start_date, end_date, period)
+        provider = get_provider()
+        messages = [
+            ChatMessage(role="system", content=_INSIGHT_SYSTEM),
+            ChatMessage(role="user", content=_build_insight_prompt(data)),
+        ]
+        text = _llm_complete(provider, messages)
+        parsed = _parse_insight(text)
+        if not parsed:
+            return JSONResponse({"available": False, "reason": "parse"})
+        result = {
+            "available": True,
+            "generated_by": "ai",
+            "model": getattr(provider, "model", ""),
+            **parsed,
+        }
+        _INSIGHT_CACHE[cache_key] = result
+        return JSONResponse(result)
+    except Exception as exc:  # LLMError / 网络 / 超时 — 一律降级
+        logger.warning("report insight unavailable: %s", exc)
+        return JSONResponse({"available": False, "reason": "llm_error"})
 
 
 def _render(data: dict) -> str:
@@ -407,6 +582,34 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
   .pill.critical { background:rgba(214,140,20,.14); color:var(--warn); }
   .pill.warning  { background:rgba(25,36,32,.08); color:var(--txt2); }
   .kpi-note { color:var(--sub); font-size:11px; margin-top:6px; padding:0 2px; }
+  /* 问号 tip */
+  .qmark { display:inline-flex; align-items:center; justify-content:center; cursor:pointer;
+           width:14px; height:14px; margin-left:4px; border-radius:50%; font-size:10px;
+           color:var(--sub); background:var(--fill); vertical-align:middle; }
+  .kpi { position:relative; }
+  .kpi .tip { display:none; position:absolute; z-index:5; left:10px; right:10px; top:100%;
+              margin-top:4px; padding:8px 10px; border-radius:8px; font-size:11px; line-height:1.5;
+              font-weight:400; color:var(--card); background:rgba(25,36,32,.92);
+              box-shadow:0 4px 12px rgba(0,0,0,.18); }
+  .kpi .tip.show { display:block; }
+  /* AI 一句话结论 */
+  .ai-headline { margin:0 0 12px; padding:12px 14px; border-radius:12px;
+                 background:linear-gradient(135deg, rgba(44,140,95,.10), rgba(25,36,32,.04));
+                 border:1px solid var(--border-shallow); color:var(--txt);
+                 font-size:15px; font-weight:600; line-height:1.5; }
+  .ai-headline .tag { display:inline-block; margin-right:6px; padding:1px 6px; border-radius:6px;
+                      font-size:10px; font-weight:600; color:var(--success);
+                      background:rgba(44,140,95,.14); vertical-align:middle; }
+  .ai-headline.loading, .ai-card .ai-loading { color:var(--sub); font-weight:400; }
+  /* AI 问题 / 动作 */
+  .ai-block { margin-bottom:10px; }
+  .ai-block:last-child { margin-bottom:0; }
+  .ai-block .h { font-size:12px; font-weight:600; color:var(--sub); margin-bottom:4px; }
+  .ai-block ul { margin:0; padding-left:18px; }
+  .ai-block li { font-size:13px; line-height:1.7; }
+  .ai-block.actions li { color:var(--success); }
+  /* 表格：商品名截断 */
+  td.name { max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .foot { color:var(--sub); font-size:11px; margin-top:20px; text-align:center; }
   @media (max-width:480px){
     .kpis { grid-template-columns:repeat(2,1fr); }
@@ -421,6 +624,10 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
     <div class="meta" id="meta"></div>
   </header>
 
+  <div class="ai-headline loading" id="ai-headline" style="display:none">
+    <span class="tag">🤖 AI 总结</span><span id="ai-headline-text">正在生成洞察…</span>
+  </div>
+
   <div class="kpis" id="kpis"></div>
   <div class="kpi-note" id="kpi-note"></div>
 
@@ -430,14 +637,19 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
   </div>
 
   <div class="card">
-    <h2>Top 5 爆款</h2>
-    <table><thead><tr><th>商品</th><th class="num">销量</th><th class="num">GMV</th></tr></thead>
+    <h2>Top 5 爆款 <small>占比＝占当期 GMV（商品行口径近似）</small></h2>
+    <table><thead><tr><th>商品</th><th class="num">销量</th><th class="num">GMV</th><th class="num">占比</th></tr></thead>
     <tbody id="top-body"></tbody></table>
   </div>
 
   <div class="card">
-    <h2>断货预警</h2>
+    <h2>断货预警 <small>按可售天数（库存÷日均销速）排序</small></h2>
     <div id="low-wrap"></div>
+  </div>
+
+  <div class="card" id="ai-card" style="display:none">
+    <h2>🤖 今日问题 &amp; 明日动作 <small>AI 总结</small></h2>
+    <div id="ai-body"><div class="ai-loading">正在生成…</div></div>
   </div>
 
   <div class="foot" id="foot"></div>
@@ -473,22 +685,39 @@ function chgHtml(c) {
   return '<span class="chg ' + cls + '">' + arrow + ' ' + Math.abs(c) + '%</span>';
 }
 
-const kpiDefs = [
-  {label:'GMV', val: fmtMoney(DATA.kpi.gmv.value), chg: chgHtml(DATA.kpi.gmv.change)},
-  {label:'订单数', val: fmtInt(DATA.kpi.orders.value), chg: chgHtml(DATA.kpi.orders.change)},
-  {label:'广告消耗', val: fmtMoney(DATA.kpi.ad_spend.value), chg: chgHtml(DATA.kpi.ad_spend.change)},
-  {label:'ROAS', val: fmtDec(DATA.kpi.roas.value), chg: chgHtml(DATA.kpi.roas.change)},
-  {label:'库存 SKU', val: fmtInt(DATA.kpi.sku_count), chg: ''},
-  {label:'断货风险', val: fmtInt(DATA.kpi.low_stock_count), chg: ''},
-];
+const _gmv = {label:'GMV', val: fmtMoney(DATA.kpi.gmv.value), chg: chgHtml(DATA.kpi.gmv.change), tip: DATA.kpi.gmv.tip};
+const _ord = {label:'订单数', val: fmtInt(DATA.kpi.orders.value), chg: chgHtml(DATA.kpi.orders.change)};
+const _ad  = {label:'广告消耗', val: fmtMoney(DATA.kpi.ad_spend.value), chg: chgHtml(DATA.kpi.ad_spend.change), tip: DATA.kpi.ad_spend.tip};
+const _lowc = {label:'断货风险', val: fmtInt(DATA.kpi.low_stock_count), chg: ''};
+// 日报：纯核心 4 张（去 ROAS / 库存 SKU）；区间报：保留完整 6 张
+const kpiDefs = (DATA.kind === 'daily')
+  ? [_gmv, _ord, _ad, _lowc]
+  : [_gmv, _ord, _ad,
+     {label:'ROAS', val: fmtDec(DATA.kpi.roas.value), chg: chgHtml(DATA.kpi.roas.change)},
+     {label:'库存 SKU', val: fmtInt(DATA.kpi.sku_count), chg: ''},
+     _lowc];
 const kpisEl = document.getElementById('kpis');
 kpiDefs.forEach(d => {
   const div = document.createElement('div');
   div.className = 'kpi';
-  div.innerHTML = '<div class="label">' + d.label + '</div>'
-    + '<div class="val">' + d.val + '</div>' + d.chg;
+  const q = d.tip ? '<span class="qmark" title="点击查看口径">?</span>' : '';
+  const tip = d.tip ? '<div class="tip">' + d.tip + '</div>' : '';
+  div.innerHTML = '<div class="label">' + d.label + q + '</div>'
+    + '<div class="val">' + d.val + '</div>' + d.chg + tip;
   kpisEl.appendChild(div);
 });
+// 问号点击切换口径浮层（点别处关闭）
+kpisEl.querySelectorAll('.qmark').forEach(q => {
+  q.addEventListener('click', e => {
+    e.stopPropagation();
+    const tip = q.closest('.kpi').querySelector('.tip');
+    const open = tip.classList.contains('show');
+    kpisEl.querySelectorAll('.tip.show').forEach(t => t.classList.remove('show'));
+    if (!open) tip.classList.add('show');
+  });
+});
+document.addEventListener('click', () =>
+  kpisEl.querySelectorAll('.tip.show').forEach(t => t.classList.remove('show')));
 document.getElementById('kpi-note').textContent =
   '↑↓ 为环比变化（' + (DATA.change_label || '较上期') + '）';
 
@@ -503,6 +732,31 @@ const C_SUB = 'rgba(25,36,32,.5)', C_GRID = 'rgba(0,0,0,.06)';
 const chart = echarts.init(document.getElementById('trend-chart'));
 const _dates = DATA.trend.dates || [];
 const _isSingleDay = _dates.length <= 1;
+
+// 异常日标注（确定性，不臆造原因）：> 中位数×1.5 标「爆单」、>0 且 < 中位数×0.5 标「骤降」；末点高亮「当日」
+function _median(arr){ const a=arr.filter(v=>v!=null).slice().sort((x,y)=>x-y);
+  if(!a.length) return 0; const m=Math.floor(a.length/2); return a.length%2?a[m]:(a[m-1]+a[m])/2; }
+const _g = DATA.trend.gmv || [];
+const _mk = [];
+if (_g.length >= 3) {
+  const m = _median(_g);
+  if (m > 0) {
+    let hi=0, lo=0;
+    _g.forEach((v,i)=>{ if(v>_g[hi]) hi=i; if(v<_g[lo]) lo=i; });
+    if (_g[hi] > m*1.5)
+      _mk.push({coord:[_dates[hi],_g[hi]], value:'爆单', symbol:'pin', symbolSize:42,
+                itemStyle:{color:'rgba(206,118,18,.92)'}, label:{color:'#fff',fontSize:10,fontWeight:600}});
+    if (_g[lo] > 0 && _g[lo] < m*0.5 && lo!==hi)
+      _mk.push({coord:[_dates[lo],_g[lo]], value:'骤降', symbol:'pin', symbolSize:42,
+                itemStyle:{color:'rgba(220,38,38,.92)'}, label:{color:'#fff',fontSize:10,fontWeight:600}});
+  }
+}
+if (_g.length) {
+  const li = _g.length-1;
+  _mk.push({coord:[_dates[li],_g[li]], symbol:'circle', symbolSize:9, itemStyle:{color:C_GMV},
+            label:{show:true, position:'top', color:C_SUB, fontSize:10, formatter:'当日'}});
+}
+
 // 含柱状图，x 轴始终留边距（boundaryGap:true），避免首尾柱子贴 Y 轴
 chart.setOption({
   tooltip: { trigger:'axis',
@@ -531,7 +785,8 @@ chart.setOption({
   series: [
     { name:'GMV', type:'line', data: DATA.trend.gmv, smooth:true, showSymbol:_isSingleDay,
       symbolSize:6, lineStyle:{ width:2.5 }, itemStyle:{color:C_GMV},
-      areaStyle:{color:'rgba(25,36,32,.06)'} },
+      areaStyle:{color:'rgba(25,36,32,.06)'},
+      markPoint:{ data:_mk, silent:true } },
     { name:'广告消耗', type:'line', data: DATA.trend.ad_spend || [], smooth:true, showSymbol:_isSingleDay,
       symbolSize:6, lineStyle:{ width:2 }, itemStyle:{color:C_AD} },
     { name:'订单数', type:'bar', yAxisIndex:1, data: DATA.trend.orders,
@@ -544,15 +799,19 @@ window.addEventListener('resize', () => chart.resize());
 
 // -- Top 5 SKU table --
 const topBody = document.getElementById('top-body');
+const _esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 (DATA.top_skus || []).forEach(s => {
   const tr = document.createElement('tr');
-  tr.innerHTML = '<td>' + s.name + '</td>'
+  const nm = _esc(s.name);
+  tr.innerHTML = '<td class="name" title="' + nm + '">' + nm + '</td>'
     + '<td class="num">' + fmtInt(s.units) + '</td>'
-    + '<td class="num">' + fmtMoney(s.gmv) + '</td>';
+    + '<td class="num">' + fmtMoney(s.gmv) + '</td>'
+    + '<td class="num">' + (s.share == null ? '—' : s.share + '%') + '</td>';
   topBody.appendChild(tr);
 });
 if (!DATA.top_skus || !DATA.top_skus.length) {
-  topBody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--sub)">暂无数据</td></tr>';
+  topBody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--sub)">暂无数据</td></tr>';
 }
 
 // -- Low stock table --
@@ -564,7 +823,8 @@ if (!lowItems.length) {
   let html = '<table><thead><tr><th>商品</th><th>风险</th><th class="num">库存</th>'
     + '<th class="num">日均销速</th><th class="num">可售天数</th></tr></thead><tbody>';
   lowItems.forEach(it => {
-    html += '<tr><td>' + it.name + '</td>'
+    const nm = _esc(it.name);
+    html += '<tr><td class="name" title="' + nm + '">' + nm + '</td>'
       + '<td><span class="pill ' + it.level + '">' + it.level_label + '</span></td>'
       + '<td class="num">' + fmtInt(it.stock) + '</td>'
       + '<td class="num">' + it.velocity + '</td>'
@@ -577,6 +837,39 @@ if (!lowItems.length) {
 // -- Footer --
 document.getElementById('foot').textContent =
   '数据由 Data Hub 提供 · 结算口径 · ' + DATA.generated_at;
+
+// -- AI 洞察：渐进加载（数字/图表已就绪，AI 失败不影响整页）--
+(function loadInsight(){
+  const hl = document.getElementById('ai-headline');
+  const hlText = document.getElementById('ai-headline-text');
+  const card = document.getElementById('ai-card');
+  const body = document.getElementById('ai-body');
+  hl.style.display = 'block';            // 先显示「正在生成」骨架
+  card.style.display = 'block';
+  const url = location.pathname + '/insight' + location.search;
+  fetch(url, {credentials:'same-origin'})
+    .then(r => r.json())
+    .then(d => {
+      if (!d || !d.available) {          // 降级：隐藏 AI 块
+        hl.style.display = 'none'; card.style.display = 'none'; return;
+      }
+      hl.classList.remove('loading');
+      hlText.textContent = d.headline || '';
+      let html = '';
+      if (d.problems && d.problems.length) {
+        html += '<div class="ai-block problems"><div class="h">今日问题</div><ul>'
+          + d.problems.map(p => '<li>' + _esc(p) + '</li>').join('') + '</ul></div>';
+      }
+      if (d.actions && d.actions.length) {
+        html += '<div class="ai-block actions"><div class="h">明日动作</div><ul>'
+          + d.actions.map(a => '<li>' + _esc(a) + '</li>').join('') + '</ul></div>';
+      }
+      const model = d.model ? '<div style="color:var(--sub);font-size:11px;margin-top:8px">🤖 由 '
+        + _esc(d.model) + ' 总结，仅供参考</div>' : '';
+      body.innerHTML = (html || '<div class="ai-loading">今日无突出问题</div>') + model;
+    })
+    .catch(() => { hl.style.display = 'none'; card.style.display = 'none'; });
+})();
 </script>
 </body>
 </html>"""
