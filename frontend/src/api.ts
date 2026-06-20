@@ -32,7 +32,9 @@ export interface Message {
 const LOGIN_PATH = "/board/auth/feishu/login";
 
 function gotoLogin() {
-  window.location.href = LOGIN_PATH;
+  // 带上当前 /app 路径作 next，登录后回跳到 WebUI 而非默认 /board（后端 _safe_next 白名单含 /app）。
+  const next = window.location.pathname + window.location.search;
+  window.location.href = `${LOGIN_PATH}?next=${encodeURIComponent(next)}`;
 }
 
 // 把 FastAPI 的 {detail: "..."} 反解出来再抛；后端中文错误能直接展示给 boss。
