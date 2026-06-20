@@ -970,7 +970,9 @@ async def get_report_link(
         token = make_token(open_id, ttl=ttl)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=503, detail=str(exc))
-    url = base.rstrip("/") + "/report/" + template_name + "?t=" + token + "&period=" + period
+    # 走 /board/report/*（/report/* 的别名）：让飞书 applink 目标落在「桌面端主页」(/board)路径
+    # 范围内，PC 端才不会当外链拦成"非飞书链接"（见 web/routes/report.py 别名路由注释）。
+    url = base.rstrip("/") + "/board/report/" + template_name + "?t=" + token + "&period=" + period
     if start_date and isinstance(start_date, str):
         url += "&start_date=" + start_date
     if end_date and isinstance(end_date, str):

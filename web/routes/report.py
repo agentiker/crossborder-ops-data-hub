@@ -320,7 +320,11 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
 _VALID_TEMPLATES = {"daily_brief"}
 
 
+# /board/report/... 是 /report/... 的别名：飞书 applink(web_app/open + lk_target_url)在 PC 端
+# 要求目标页落在「桌面端主页」(/board)的路径范围内才放行，否则当外链拦成"非飞书链接"跳浏览器
+# （移动端只校验域名、不拦）。故飞书渠道的报告链接走 /board/report/*，让 PC 端也能端内打开。
 @router.get("/report/{template_name}", response_class=HTMLResponse, include_in_schema=False)
+@router.get("/board/report/{template_name}", response_class=HTMLResponse, include_in_schema=False)
 async def report(
     request: Request,
     template_name: str,
@@ -484,6 +488,7 @@ def _build_insight_prompt(data: dict) -> str:
 
 
 @router.get("/report/{template_name}/insight", include_in_schema=False)
+@router.get("/board/report/{template_name}/insight", include_in_schema=False)
 async def report_insight(
     request: Request,
     template_name: str,
