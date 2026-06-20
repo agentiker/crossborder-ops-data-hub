@@ -337,17 +337,18 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
   header { margin-bottom:16px; }
   header h1 { font-size:20px; font-weight:700; color:var(--primary); }
   .meta { color:var(--sub); font-size:12px; margin-top:4px; }
-  .kpis { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  .kpis { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
   .kpi { background:var(--card); border:1px solid var(--border); border-radius:10px;
          padding:12px; }
   .kpi .label { color:var(--sub); font-size:11px; }
-  .kpi .val { font-size:20px; font-weight:700; margin-top:2px; }
+  .kpi .val { font-size:18px; font-weight:700; margin-top:2px; }
   .kpi .chg { font-size:11px; margin-top:2px; }
   .chg.up { color:var(--success); }
   .chg.down { color:var(--danger); }
   .card { background:var(--card); border:1px solid var(--border); border-radius:10px;
           padding:14px; margin-top:12px; }
-  .card h2 { font-size:14px; font-weight:600; margin-bottom:10px; }
+  .card h2 { font-size:14px; font-weight:600; margin-bottom:10px; display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .card h2 small { font-weight:400; font-size:12px; color:var(--sub); }
   #trend-chart { width:100%; height:280px; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th,td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--border); }
@@ -374,7 +375,7 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
   <div class="kpis" id="kpis"></div>
 
   <div class="card">
-    <h2>GMV / 广告 / 订单趋势</h2>
+    <h2>GMV / 广告 / 订单趋势 <small id="trend-title-note"></small></h2>
     <div id="trend-chart"></div>
   </div>
 
@@ -429,25 +430,29 @@ kpiDefs.forEach(d => {
 
 // -- Trend chart (dual Y: GMV + 广告消耗 lines share money axis, Orders bar on right) --
 const chart = echarts.init(document.getElementById('trend-chart'));
+const _dates = DATA.trend.dates || [];
+const _isSingleDay = _dates.length <= 1;
 chart.setOption({
   tooltip: { trigger:'axis' },
-  legend: { data:['GMV','广告消耗','订单数'], top:0 },
+  legend: { data:['GMV','广告消耗','订单数'], top:0, left:0, right:0, type:'scroll', pageTextStyle:{color:'#6b7280'} },
   grid: { top:36, left:50, right:50, bottom:24 },
-  xAxis: { type:'category', data: DATA.trend.dates },
+  xAxis: { type:'category', data: _dates, boundaryGap:_isSingleDay?true:false },
   yAxis: [
     { type:'value', name:'GMV/广告', position:'left',
       axisLabel:{ formatter:v=> v>=1000?(v/1000).toFixed(0)+'k':v } },
     { type:'value', name:'订单', position:'right' },
   ],
   series: [
-    { name:'GMV', type:'line', data: DATA.trend.gmv, smooth:true,
+    { name:'GMV', type:'line', data: DATA.trend.gmv, smooth:true, showSymbol:_isSingleDay,
       itemStyle:{color:'#4F46E5'}, areaStyle:{color:'rgba(79,70,229,.08)'} },
-    { name:'广告消耗', type:'line', data: DATA.trend.ad_spend || [], smooth:true,
+    { name:'广告消耗', type:'line', data: DATA.trend.ad_spend || [], smooth:true, showSymbol:_isSingleDay,
       itemStyle:{color:'#F59E0B'} },
     { name:'订单数', type:'bar', yAxisIndex:1, data: DATA.trend.orders,
+      barMaxWidth: _isSingleDay ? 44 : 28,
       itemStyle:{color:'#10B981', borderRadius:[3,3,0,0]} },
   ],
 });
+document.getElementById('trend-title-note').textContent = _isSingleDay ? '单日视图' : '';
 window.addEventListener('resize', () => chart.resize());
 
 // -- Top 5 SKU table --
