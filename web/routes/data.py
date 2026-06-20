@@ -3,6 +3,7 @@
 import logging
 from datetime import date, timedelta
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
@@ -922,6 +923,16 @@ async def get_dashboard_link(
     return DashboardLinkResponse(url=url, expires_in=ttl, markdown=markdown)
 
 
+# 飞书 AppLink：把报告 URL 包一层，让飞书在端内 web-view（独立窗口）打开，
+# 而非把裸外链甩到外部浏览器（裸链接吃不到可信域名，飞书会弹"非飞书链接"提示）。
+# url 参数须 encodeURIComponent（quote safe='' 等价）。见飞书 applink web_url/open 规范。
+_FEISHU_WEBVIEW_APPLINK = "https://applink.feishu.cn/client/web_url/open"
+
+
+def _wrap_feishu_applink(url: str, mode: str = "window") -> str:
+    return f"{_FEISHU_WEBVIEW_APPLINK}?mode={mode}&url={quote(url, safe='')}"
+
+
 @router.get(
     "/report/link", response_model=ReportLinkResponse, operation_id="ops_report_link"
 )
@@ -931,12 +942,16 @@ async def get_report_link(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     period: str = Query("last_7d", description="时间窗口: last_7d / last_30d / today"),
+    wrap_applink: bool = Query(True, include_in_schema=False),
 ):
     """签发一条带签名 token 的经营报告链接，用户点开可查看可视化图表报告。
 
     用户问「经营日报 / 报告 / 数据报告」时调用，**把返回的 `markdown` 字段原样发给用户**
     （已是飞书可点击链接格式，别贴裸 `url`——那是一长串带 token 的丑字符串）。报告范围由
     open_id 的会话默认范围（binding）锁定，token 短时效（默认 30 分钟）后失效，需重新获取。
+
+    wrap_applink（不暴露给 LLM）：飞书渠道默认 True，把链接包成 applink 让飞书端内打开；
+    WebUI（agent_tools.ops_report）传 False 用裸链（浏览器里 applink 无意义）。
     """
     base = settings.dashboard.public_base_url
     if not base:
@@ -951,12 +966,16 @@ async def get_report_link(
         url += "&start_date=" + start_date
     if end_date and isinstance(end_date, str):
         url += "&end_date=" + end_date
+    # 直接调用（非 HTTP）不传时 wrap_applink 是 FieldInfo，归一化为飞书默认 True。
+    wrap = wrap_applink if isinstance(wrap_applink, bool) else True
+    link = _wrap_feishu_applink(url) if wrap else url
     mins = max(1, ttl // 60)
     markdown = (
-        "📊 [查看经营日报]({url})\n> 链接 {mins} 分钟内有效，点击查看可视化报告"
-    ).format(url=url, mins=mins)
-    logger.info("report link issued: open_id=%s template=%s ttl=%ds", open_id, template_name, ttl)
-    return ReportLinkResponse(url=url, expires_in=ttl, markdown=markdown)
+        "📊 [查看经营日报]({link})\n> 链接 {mins} 分钟内有效，点击查看可视化报告"
+    ).format(link=link, mins=mins)
+    logger.info("report link issued: open_id=%s template=%s ttl=%ds applink=%s",
+                open_id, template_name, ttl, wrap)
+    return ReportLinkResponse(url=link, expires_in=ttl, markdown=markdown)
 
 
 @router.get(

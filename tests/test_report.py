@@ -133,8 +133,9 @@ def test_report_invalid_template_404(monkeypatch):
 # ── ops_report_link endpoint tests ──────────────────────────────────
 
 
-def test_report_link_structure():
-    """ops_report_link 端点返回结构 + URL 格式。"""
+def test_report_link_feishu_wraps_applink():
+    """飞书渠道（默认）签出的链接包成 applink，让飞书端内 web-view 打开。"""
+    from urllib.parse import unquote
     from web.routes.data import get_report_link
 
     result = _run(get_report_link(
@@ -142,15 +143,33 @@ def test_report_link_structure():
         template_name="daily_brief",
         period="last_7d",
     ))
-    assert result.url.startswith("https://board.example.com/report/daily_brief?t=")
-    assert "period=last_7d" in result.url
+    assert result.url.startswith(
+        "https://applink.feishu.cn/client/web_url/open?mode=window&url="
+    )
+    inner = unquote(result.url.split("&url=", 1)[1])
+    assert inner.startswith("https://board.example.com/report/daily_brief?t=")
+    assert "period=last_7d" in inner
     assert result.expires_in == 1800
     assert "查看经营日报" in result.markdown
     assert result.url in result.markdown
 
 
+def test_report_link_webui_raw_no_applink():
+    """WebUI（wrap_applink=False）用裸链，不包 applink。"""
+    from web.routes.data import get_report_link
+
+    result = _run(get_report_link(
+        open_id="ou_test_user",
+        template_name="daily_brief",
+        period="last_7d",
+        wrap_applink=False,
+    ))
+    assert result.url.startswith("https://board.example.com/report/daily_brief?t=")
+    assert "applink.feishu.cn" not in result.url
+
+
 def test_report_link_with_dates():
-    """ops_report_link 传 start_date/end_date 时 URL 包含这些参数。"""
+    """ops_report_link 传 start_date/end_date 时 URL 包含这些参数（裸链断言更直观）。"""
     from web.routes.data import get_report_link
 
     result = _run(get_report_link(
@@ -159,6 +178,7 @@ def test_report_link_with_dates():
         start_date="2026-06-01",
         end_date="2026-06-15",
         period="last_7d",
+        wrap_applink=False,
     ))
     assert "start_date=2026-06-01" in result.url
     assert "end_date=2026-06-15" in result.url

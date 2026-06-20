@@ -168,8 +168,10 @@ def run_tool(name: str, arguments: dict, perm: UserPermission) -> dict:
         template = args.get("template_name", "daily_brief")
         period_val = args.get("period", "last_7d")
         # ops_report 需要 open_id（从 perm 取）而非 common dict 的 open_id=None
+        # WebUI 在浏览器里，用裸链（applink 只在飞书客户端有意义）
         result = _run(get_report_link(
-            open_id=perm.open_id, template_name=template, period=period_val))
+            open_id=perm.open_id, template_name=template, period=period_val,
+            wrap_applink=False))
         return result.markdown
     else:  # 不会到这（已校验），保险
         raise ValueError(f"未实现工具：{name}")
