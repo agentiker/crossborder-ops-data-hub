@@ -24,6 +24,7 @@ def _set_secret(monkeypatch):
     monkeypatch.setattr(settings.dashboard, "token_ttl_seconds", 1800)
     monkeypatch.setattr(settings.dashboard, "public_base_url", "https://board.example.com")
     monkeypatch.setattr(settings.feishu_oauth, "session_secret", "test-session-secret-67890")
+    monkeypatch.setattr(settings.feishu_oauth, "app_id", "cli_test123")
 
 
 def _login_cookie(open_id: str) -> dict:
@@ -143,10 +144,11 @@ def test_report_link_feishu_wraps_applink():
         template_name="daily_brief",
         period="last_7d",
     ))
+    # 走「网页应用」通道（web_app/open + appId + lk_target_url），飞书端内打开不弹外链提示
     assert result.url.startswith(
-        "https://applink.feishu.cn/client/web_url/open?mode=window&url="
+        "https://applink.feishu.cn/client/web_app/open?appId=cli_test123&mode=window&lk_target_url="
     )
-    inner = unquote(result.url.split("&url=", 1)[1])
+    inner = unquote(result.url.split("lk_target_url=", 1)[1])
     assert inner.startswith("https://board.example.com/report/daily_brief?t=")
     assert "period=last_7d" in inner
     assert result.expires_in == 1800

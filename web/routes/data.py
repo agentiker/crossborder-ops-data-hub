@@ -923,14 +923,23 @@ async def get_dashboard_link(
     return DashboardLinkResponse(url=url, expires_in=ttl, markdown=markdown)
 
 
-# 飞书 AppLink：把报告 URL 包一层，让飞书在端内 web-view（独立窗口）打开，
-# 而非把裸外链甩到外部浏览器（裸链接吃不到可信域名，飞书会弹"非飞书链接"提示）。
-# url 参数须 encodeURIComponent（quote safe='' 等价）。见飞书 applink web_url/open 规范。
-_FEISHU_WEBVIEW_APPLINK = "https://applink.feishu.cn/client/web_url/open"
+# 飞书 AppLink：走「网页应用」通道（web_app/open + appId）让飞书端内打开报告。
+# 不能用 web_url/open(打开任意网址)——实测它对第三方域名仍被当外链拦截、甩到外部
+# 浏览器（可信域名救不了聊天裸链）。web_app/open 用已注册应用的 appId，飞书识别为
+# 应用内页面，不弹"非飞书链接"提示。报告 URL 带 token(query)，故用 lk_target_url
+# (完整 URL 整体 encode)而非 path(path 不能带 ?/#)；lk_target_url 的 domain 须与
+# 应用主页同域（均 board.agenticker.cc）。见飞书 applink web_app/open 规范。
+_FEISHU_WEBAPP_APPLINK = "https://applink.feishu.cn/client/web_app/open"
 
 
 def _wrap_feishu_applink(url: str, mode: str = "window") -> str:
-    return f"{_FEISHU_WEBVIEW_APPLINK}?mode={mode}&url={quote(url, safe='')}"
+    app_id = settings.feishu_oauth.app_id
+    if not app_id:
+        return url  # 未配 appId：退回裸链（至少不报错）
+    return (
+        f"{_FEISHU_WEBAPP_APPLINK}?appId={app_id}&mode={mode}"
+        f"&lk_target_url={quote(url, safe='')}"
+    )
 
 
 @router.get(
