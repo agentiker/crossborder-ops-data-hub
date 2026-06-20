@@ -339,9 +339,14 @@ async def report(
     # 2) 飞书登录态 → "打开者"open_id（与 /board、/app 同一 board_session cookie）
     raw = request.cookies.get(settings.feishu_oauth.cookie_name, "")
     viewer = verify_session_cookie(raw) if raw else None
+    # 诊断日志（PC/移动端飞书 webview 行为定位）：UA + 是否已带有效 session。
+    # 飞书 PC webview UA 含 Lark/Feishu + Windows/Macintosh；移动端含 iPhone/Android。
+    logger.info("report view: tmpl=%s open_id=%s has_session=%s ua=%r",
+                template_name, open_id, bool(viewer), request.headers.get("user-agent", ""))
     if not viewer:
         # 未登录：跳飞书登录，登录后回跳本报告 URL（飞书内免登静默，飞书外自然被挡）
         nxt = request.url.path + (("?" + request.url.query) if request.url.query else "")
+        logger.info("report → 302 跳飞书登录(无有效 session)：open_id=%s", open_id)
         return RedirectResponse(
             f"{_LOGIN_PATH}?{urlencode({'next': nxt})}", status_code=302
         )
