@@ -41,6 +41,11 @@ def _clear_overrides():
 # ── Fake data collectors (monkeypatch _collect to avoid DB) ──────────
 
 _FAKE_REPORT_DATA = {
+    "kind": "period",
+    "title": "经营报告",
+    "change_label": "较上期",
+    "trend_title": "GMV / 广告 / 订单趋势",
+    "trend_mini": False,
     "scope": "全店",
     "period_label": "近 7 天",
     "generated_at": "2026-06-19 10:30",
@@ -92,7 +97,7 @@ def test_report_valid_token_matching_viewer_200(monkeypatch):
     assert r.status_code == 200
     assert "echarts" in r.text
     assert "__DATA__" not in r.text  # 占位符已替换
-    assert "经营日报" in r.text
+    assert "经营报告" in r.text  # period 版型标题
     assert "广告消耗" in r.text  # 趋势图第三条线
     assert "128450" in r.text  # GMV value injected
 
@@ -152,7 +157,7 @@ def test_report_link_feishu_wraps_applink():
     assert inner.startswith("https://board.example.com/report/daily_brief?t=")
     assert "period=last_7d" in inner
     assert result.expires_in == 1800
-    assert "查看经营日报" in result.markdown
+    assert "查看经营报告" in result.markdown  # last_7d → 区间报版型文案
     assert result.url in result.markdown
 
 
@@ -186,6 +191,84 @@ def test_report_link_with_dates():
     assert "end_date=2026-06-15" in result.url
 
 
+def test_report_link_daily_label_for_single_day():
+    """单日 period（today）→ 链接文案为「查看经营日报」。"""
+    from web.routes.data import get_report_link
+
+    result = _run(get_report_link(
+        open_id="ou_test_user", template_name="daily_brief",
+        period="today", wrap_applink=False,
+    ))
+    assert "查看经营日报" in result.markdown
+
+
+# ── _collect 版型自适应（按时间窗自动判定）────────────────────────────
+
+
+def _patch_collect_data_sources(monkeypatch):
+    """monkeypatch _collect 依赖的数据端点，避免连库；趋势按请求窗口生成点位。"""
+    from datetime import date, timedelta
+
+    async def fake_overview(**k):
+        return {"scope": "全店", "inventory": {"total_sku": 100, "low_stock_count": 3},
+                "orders": {"gmv": 999, "order_count": 9}}
+
+    async def fake_orders_summary(*, start_date, end_date, **k):
+        return {"gmv": 1000, "order_count": 50, "units_sold": 80, "avg_order_value": 20}
+
+    async def fake_orders_trend(*, start_date, end_date, **k):
+        sd, ed = date.fromisoformat(start_date), date.fromisoformat(end_date)
+        pts, d = [], sd
+        while d <= ed:
+            pts.append({"date": d.isoformat(), "gmv": 100, "order_count": 5})
+            d += timedelta(days=1)
+        return {"points": pts}
+
+    async def fake_ad_spend(**k):
+        return {"total_ad_spend": 200, "roas": 5.0}
+
+    async def fake_ad_trend(*, start_date, end_date, **k):
+        return {"points": []}
+
+    async def fake_empty(**k):
+        return {"items": []}
+
+    monkeypatch.setattr("web.routes.report.get_overview", fake_overview)
+    monkeypatch.setattr("web.routes.report.get_orders_summary", fake_orders_summary)
+    monkeypatch.setattr("web.routes.report.get_orders_trend", fake_orders_trend)
+    monkeypatch.setattr("web.routes.report.get_ad_spend", fake_ad_spend)
+    monkeypatch.setattr("web.routes.report.get_ad_spend_trend", fake_ad_trend)
+    monkeypatch.setattr("web.routes.report.get_orders_top_skus", fake_empty)
+    monkeypatch.setattr("web.routes.report.get_low_stock", fake_empty)
+
+
+def test_collect_single_day_is_daily(monkeypatch):
+    """单日 period → 日报版型：标题/环比口径/迷你趋势 + 近 7 天趋势点。"""
+    _patch_collect_data_sources(monkeypatch)
+    from web.routes.report import _collect
+
+    data = _run(_collect("ou_x", None, None, "today"))
+    assert data["kind"] == "daily"
+    assert data["title"] == "经营日报"
+    assert data["change_label"] == "较昨日"
+    assert data["trend_mini"] is True
+    assert len(data["trend"]["dates"]) == 7  # 单日报告画近 7 天迷你趋势
+    assert data["kpi"]["gmv"]["value"] == 1000  # KPI 走 orders_summary 而非 overview 固定 7 天
+
+
+def test_collect_multi_day_is_period(monkeypatch):
+    """多日 period → 区间报版型：标题/环比口径/完整趋势。"""
+    _patch_collect_data_sources(monkeypatch)
+    from web.routes.report import _collect
+
+    data = _run(_collect("ou_x", None, None, "last_7d"))
+    assert data["kind"] == "period"
+    assert data["title"] == "经营报告"
+    assert data["change_label"] == "较上期"
+    assert data["trend_mini"] is False
+    assert len(data["trend"]["dates"]) == 7  # last_7d = 7 天窗口
+
+
 # ── agent_tool ops_report tests ─────────────────────────────────────
 
 
@@ -208,7 +291,7 @@ def test_ops_report_tool_returns_markdown(monkeypatch):
 
     result = run_tool("ops_report", {"template_name": "daily_brief", "period": "last_7d"}, perm)
     # run_tool returns the markdown string directly for ops_report
-    assert "查看经营日报" in result
+    assert "查看经营报告" in result  # last_7d → 区间报版型文案
 
 
 # ── auth_feishu next 回跳 ───────────────────────────────────────────

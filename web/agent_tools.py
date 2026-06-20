@@ -98,8 +98,8 @@ TOOL_SPECS: list[ToolSpec] = [
         parameters={
             "type": "object",
             "properties": {
-                "template_name": {"type": "string", "description": "报告模板: daily_brief", "default": "daily_brief"},
-                "period": {"type": "string", "description": "时间窗口: last_7d/last_30d/today", "default": "last_7d"},
+                "template_name": {"type": "string", "description": "固定 daily_brief（版型按时间窗自动判定，无需选择）", "default": "daily_brief"},
+                "period": {"type": "string", "description": "时间窗口：today/yesterday/this_week/last_week/last_7d/last_30d/this_month。单日(today/yesterday)出日报版型(当日数+近7天迷你趋势)，多日出区间报版型(区间汇总+完整趋势)，系统自动判定。问'今天/日报'传 today；'本周/周报'传 this_week 或 last_7d；'近30天/月报'传 last_30d", "default": "last_7d"},
             },
             "required": [],
         },

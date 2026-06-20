@@ -20,11 +20,17 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from core.config import settings
-from core.timezone import business_today, describe_window, resolve_period
+from core.timezone import (
+    business_today,
+    describe_window,
+    previous_window,
+    resolve_period,
+)
 from web.routes.data import (
     get_ad_spend,
     get_ad_spend_trend,
     get_low_stock,
+    get_orders_summary,
     get_orders_top_skus,
     get_orders_trend,
     get_overview,
@@ -78,17 +84,49 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
     强制软隔离：scope_id/shop_ids/shop_id 一律钉 None，只按 token 里的 open_id 解析范围。
     """
     sd, ed, period_label = _resolve_dates(start_date, end_date, period)
+    is_single_day = sd == ed
 
-    # 当前窗口数据
+    # 版型：单日→日报（当日数 + 近 7 天迷你趋势参照）；多日→区间报（区间汇总 + 完整趋势）
+    if is_single_day:
+        kind, title, change_label = "daily", "经营日报", "较昨日"
+        trend_title, trend_mini = "近 7 天趋势（参考）", True
+        trend_sd, trend_ed = ed - timedelta(days=6), ed  # 迷你背景图画近 7 天
+    else:
+        kind, title, change_label = "period", "经营报告", "较上期"
+        trend_title, trend_mini = "GMV / 广告 / 订单趋势", False
+        trend_sd, trend_ed = sd, ed
+
+    # 环比基准：紧邻当期、等长的上一窗口（单日即昨日）
+    prev_sd, prev_ed = previous_window(sd, ed)
+
+    # 库存快照（当前快照，与时间窗无关）
     overview = _asdict(await get_overview(
         platform=None, country=None, shop_id=None,
         scope_id=None, shop_ids=None, open_id=open_id,
     ))
-    trend = _asdict(await get_orders_trend(
+    # 订单 KPI 按 [sd, ed] 取数（修正：原先取 overview 固定近 7 天，不随 period 变）
+    orders_cur = _asdict(await get_orders_summary(
         start_date=sd.isoformat(), end_date=ed.isoformat(), period=None,
         platform=None, country=None, shop_id=None,
         scope_id=None, shop_ids=None, open_id=open_id,
     ))
+    orders_prev = _asdict(await get_orders_summary(
+        start_date=prev_sd.isoformat(), end_date=prev_ed.isoformat(), period=None,
+        platform=None, country=None, shop_id=None,
+        scope_id=None, shop_ids=None, open_id=open_id,
+    ))
+    # 趋势（订单 + 广告，按趋势窗口：单日近 7 天 / 多日选定区间）
+    trend = _asdict(await get_orders_trend(
+        start_date=trend_sd.isoformat(), end_date=trend_ed.isoformat(), period=None,
+        platform=None, country=None, shop_id=None,
+        scope_id=None, shop_ids=None, open_id=open_id,
+    ))
+    ad_trend = _asdict(await get_ad_spend_trend(
+        start_date=trend_sd.isoformat(), end_date=trend_ed.isoformat(), period=None,
+        platform=None, country=None, shop_id=None,
+        scope_id=None, shop_ids=None, open_id=open_id,
+    ))
+    # Top5 爆款按 KPI 窗口 [sd, ed]
     top = _asdict(await get_orders_top_skus(
         start_date=sd.isoformat(), end_date=ed.isoformat(), period=None,
         platform=None, country=None, shop_id=None,
@@ -99,49 +137,33 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
         scope_id=None, shop_ids=None,
         critical_days=None, warning_days=None, open_id=open_id,
     ))
+    # 广告 KPI（当期 + 上期，按 KPI 窗口）
     ad = _asdict(await get_ad_spend(
         start_date=sd.isoformat(), end_date=ed.isoformat(), period=None,
         platform=None, country=None, shop_id=None,
         scope_id=None, shop_ids=None, open_id=open_id,
     ))
-    ad_trend = _asdict(await get_ad_spend_trend(
-        start_date=sd.isoformat(), end_date=ed.isoformat(), period=None,
-        platform=None, country=None, shop_id=None,
-        scope_id=None, shop_ids=None, open_id=open_id,
-    ))
-
-    # 前一期窗口（算环比）
-    window_days = (ed - sd).days or 1
-    prev_ed = sd
-    prev_sd = prev_ed - timedelta(days=window_days)
-
-    prev_trend = _asdict(await get_orders_trend(
-        start_date=prev_sd.isoformat(), end_date=prev_ed.isoformat(), period=None,
-        platform=None, country=None, shop_id=None,
-        scope_id=None, shop_ids=None, open_id=open_id,
-    ))
-    prev_ad = _asdict(await get_ad_spend(
+    ad_prev = _asdict(await get_ad_spend(
         start_date=prev_sd.isoformat(), end_date=prev_ed.isoformat(), period=None,
         platform=None, country=None, shop_id=None,
         scope_id=None, shop_ids=None, open_id=open_id,
     ))
 
-    # 汇总前一期的 GMV 和订单数
-    prev_gmv = sum(p.get("gmv", 0) for p in prev_trend.get("points", []))
-    prev_orders = sum(p.get("order_count", 0) for p in prev_trend.get("points", []))
-    prev_ad_spend = prev_ad.get("total_ad_spend", 0) or 0
+    # 上一期汇总
+    prev_gmv = orders_prev.get("gmv", 0) or 0
+    prev_orders = orders_prev.get("order_count", 0) or 0
+    prev_ad_spend = ad_prev.get("total_ad_spend", 0) or 0
 
-    # 当前窗口汇总
-    cur_gmv = overview.get("orders", {}).get("gmv", 0)
-    cur_orders = overview.get("orders", {}).get("order_count", 0)
+    # 当期汇总
+    cur_gmv = orders_cur.get("gmv", 0) or 0
+    cur_orders = orders_cur.get("order_count", 0) or 0
     cur_ad_spend = ad.get("total_ad_spend", 0) or 0
     cur_roas = ad.get("roas")
 
-    # 前一期 ROAS
+    # 上一期 ROAS
     prev_roas = None
     if prev_ad_spend and prev_ad_spend > 0:
-        prev_roas_val = prev_gmv / prev_ad_spend
-        prev_roas = round(prev_roas_val, 2)
+        prev_roas = round(prev_gmv / prev_ad_spend, 2)
 
     # 趋势数据
     trend_points = trend.get("points", [])
@@ -187,6 +209,11 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
     generated_at = datetime.now(_JAKARTA_TZ).strftime("%Y-%m-%d %H:%M")
 
     return {
+        "kind": kind,
+        "title": title,
+        "change_label": change_label,
+        "trend_title": trend_title,
+        "trend_mini": trend_mini,
         "scope": overview.get("scope") or "全店",
         "period_label": period_label,
         "generated_at": generated_at,
@@ -330,7 +357,7 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>经营日报</title>
+<title>经营报告</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
 <style>
   /* 设计 token 对齐 SPA 控制台（frontend/src/index.css，StoreClaw 体系） */
@@ -379,6 +406,7 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
   .pill.stockout { background:rgba(220,38,38,.1); color:var(--danger); }
   .pill.critical { background:rgba(214,140,20,.14); color:var(--warn); }
   .pill.warning  { background:rgba(25,36,32,.08); color:var(--txt2); }
+  .kpi-note { color:var(--sub); font-size:11px; margin-top:6px; padding:0 2px; }
   .foot { color:var(--sub); font-size:11px; margin-top:20px; text-align:center; }
   @media (max-width:480px){
     .kpis { grid-template-columns:repeat(2,1fr); }
@@ -389,14 +417,15 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
 <body>
 <div class="wrap">
   <header>
-    <h1>经营日报</h1>
+    <h1 id="title">经营报告</h1>
     <div class="meta" id="meta"></div>
   </header>
 
   <div class="kpis" id="kpis"></div>
+  <div class="kpi-note" id="kpi-note"></div>
 
   <div class="card">
-    <h2>GMV / 广告 / 订单趋势 <small id="trend-title-note"></small></h2>
+    <h2><span id="trend-title">GMV / 广告 / 订单趋势</span> <small id="trend-title-note"></small></h2>
     <div id="trend-chart"></div>
   </div>
 
@@ -418,6 +447,8 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
 const DATA = __DATA__;
 
 // -- header --
+document.getElementById('title').textContent = DATA.title || '经营报告';
+document.title = DATA.title || '经营报告';
 document.getElementById('meta').textContent =
   DATA.scope + '  ·  ' + DATA.period_label + '  ·  生成于 ' + DATA.generated_at;
 
@@ -458,6 +489,12 @@ kpiDefs.forEach(d => {
     + '<div class="val">' + d.val + '</div>' + d.chg;
   kpisEl.appendChild(div);
 });
+document.getElementById('kpi-note').textContent =
+  '↑↓ 为环比变化（' + (DATA.change_label || '较上期') + '）';
+
+// -- 趋势卡标题 + 迷你视图（单日报告画近 7 天作背景参照，弱化呈现）--
+document.getElementById('trend-title').textContent = DATA.trend_title || 'GMV / 广告 / 订单趋势';
+if (DATA.trend_mini) { document.getElementById('trend-chart').style.height = '200px'; }
 
 // -- Trend chart (dual Y: GMV + 广告消耗 lines share money axis, Orders bar on right) --
 // 配色对齐 SPA token：GMV=墨绿主色 / 广告=橙警示 / 订单=绿
@@ -480,7 +517,7 @@ chart.setOption({
   legend: { data:['GMV','广告消耗','订单数'], bottom:0, left:'center', type:'scroll',
             itemWidth:14, itemHeight:8, itemGap:16,
             textStyle:{color:C_SUB}, pageTextStyle:{color:C_SUB} },
-  grid: { top:30, left:48, right:44, bottom:36 },
+  grid: { top:30, left:48, right:44, bottom:54 },
   xAxis: { type:'category', data: _dates, boundaryGap:true,
     axisLabel:{ color:C_SUB }, axisLine:{ lineStyle:{ color:C_GRID } },
     axisTick:{ show:false } },

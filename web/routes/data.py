@@ -947,10 +947,10 @@ def _wrap_feishu_applink(url: str, mode: str = "window") -> str:
 )
 async def get_report_link(
     open_id: str = Query(..., description="飞书用户 open_id"),
-    template_name: str = Query("daily_brief", description="报告模板名"),
+    template_name: str = Query("daily_brief", description="报告模板名（版型按时间窗自动判定）"),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
-    period: str = Query("last_7d", description="时间窗口: last_7d / last_30d / today"),
+    period: str = Query("last_7d", description="时间窗口：today/yesterday/this_week/last_week/last_7d/last_30d/this_month。单日(today/yesterday)出日报版型，多日出区间报版型(带完整趋势)，系统自动判定"),
     wrap_applink: bool = Query(True, include_in_schema=False),
 ):
     """签发一条带签名 token 的经营报告链接，用户点开可查看可视化图表报告。
@@ -979,9 +979,18 @@ async def get_report_link(
     wrap = wrap_applink if isinstance(wrap_applink, bool) else True
     link = _wrap_feishu_applink(url) if wrap else url
     mins = max(1, ttl // 60)
+    # 链接文案随版型：单日→日报，多日→报告（与页面 title 一致）
+    # 直接调用（非 HTTP）未传时 start_date/end_date 是 FieldInfo，按 str 归一化
+    _sd = start_date if isinstance(start_date, str) else None
+    _ed = end_date if isinstance(end_date, str) else None
+    is_daily = (
+        (_sd and _ed and _sd == _ed)
+        or (not _sd and not _ed and period in ("today", "yesterday"))
+    )
+    label = "查看经营日报" if is_daily else "查看经营报告"
     markdown = (
-        "📊 [查看经营日报]({link})\n> 链接 {mins} 分钟内有效，点击查看可视化报告"
-    ).format(link=link, mins=mins)
+        "📊 [{label}]({link})\n> 链接 {mins} 分钟内有效，点击查看可视化报告"
+    ).format(label=label, link=link, mins=mins)
     logger.info("report link issued: open_id=%s template=%s ttl=%ds applink=%s",
                 open_id, template_name, ttl, wrap)
     return ReportLinkResponse(url=link, expires_in=ttl, markdown=markdown)
