@@ -234,6 +234,15 @@ def _patch_collect_data_sources(monkeypatch):
         return {"items": [{"product_name": "热卖A", "units_sold": 30, "gmv": 250},
                           {"product_name": "热卖B", "units_sold": 20, "gmv": 100}]}
 
+    async def fake_low(**k):
+        # 销速模型：buckets.total=2（与 overview 静态 low_stock_count=3 故意不同）
+        return {"items": [
+                    {"product_name": "断货品", "available_stock": 0, "daily_velocity": 5.0,
+                     "days_of_cover": 0.0, "bucket": "stockout"},
+                    {"product_name": "告急品", "available_stock": 8, "daily_velocity": 4.0,
+                     "days_of_cover": 2.0, "bucket": "critical"}],
+                "buckets": {"stockout": 1, "critical": 1, "warning": 0, "total": 2}}
+
     async def fake_empty(**k):
         return {"items": []}
 
@@ -243,7 +252,7 @@ def _patch_collect_data_sources(monkeypatch):
     monkeypatch.setattr("web.routes.report.get_ad_spend", fake_ad_spend)
     monkeypatch.setattr("web.routes.report.get_ad_spend_trend", fake_ad_trend)
     monkeypatch.setattr("web.routes.report.get_orders_top_skus", fake_top)
-    monkeypatch.setattr("web.routes.report.get_low_stock", fake_empty)
+    monkeypatch.setattr("web.routes.report.get_low_stock", fake_low)
 
 
 def test_collect_single_day_is_daily(monkeypatch):
@@ -283,6 +292,8 @@ def test_collect_top_share_and_kpi_tips(monkeypatch):
     assert top and top[0]["share"] == 25.0  # 250 / 1000 = 25%
     assert "已付款" in data["kpi"]["gmv"]["tip"]
     assert "环比" in data["kpi"]["ad_spend"]["tip"]
+    # 断货风险计数走销速模型 buckets.total(=2)，而非 overview 静态 low_stock_count(=3)
+    assert data["kpi"]["low_stock_count"] == 2
 
 
 # ── AI 洞察端点 (/report/{tpl}/insight) ──────────────────────────────

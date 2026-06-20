@@ -205,6 +205,11 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
         low.get("items", []),
         key=lambda it: (_severity.get(it.get("bucket", ""), 9), it.get("days_of_cover", 0)),
     )
+    # 断货风险计数统一用销速模型（与下方表格同源），而非 overview 的静态「库存<10」计数
+    # ——后者含卖不动的滞销死货，会和「按可售天数」的表格自相矛盾
+    risk_count = low.get("buckets", {}).get("total")
+    if risk_count is None:
+        risk_count = len(low.get("items", []))
     for item in low_sorted[:20]:
         bucket = item.get("bucket", "")
         low_items.append({
@@ -259,7 +264,7 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
                 "change": _calc_change(cur_roas, prev_roas) if cur_roas and prev_roas else None,
             },
             "sku_count": overview.get("inventory", {}).get("total_sku", 0),
-            "low_stock_count": overview.get("inventory", {}).get("low_stock_count", 0),
+            "low_stock_count": risk_count,
         },
         "trend": {
             "dates": dates,
