@@ -56,8 +56,10 @@ def _b64url_decode(s: str) -> bytes:
 
 
 @router.get("/login", include_in_schema=False)
-async def login(next_: str = Query("", alias="next")):
+async def login(request: Request, next_: str = Query("", alias="next")):
     """发起登录：生成签名 state（可携带白名单 next）→ 跳飞书授权页。"""
+    # 诊断日志（PC/移动端 webview 定位）：是哪种客户端把请求带到了 OAuth 发起这一步。
+    logger.info("feishu login 发起：next=%s ua=%r", next_, request.headers.get("user-agent", ""))
     nonce = secrets.token_urlsafe(16)
     safe = _safe_next(next_)
     # next 编进 state 的 value（b64url，避免 ':'/特殊字符破坏底层 payload 分隔），与 nonce 同签。
@@ -73,10 +75,13 @@ async def login(next_: str = Query("", alias="next")):
 
 @router.get("/callback", include_in_schema=False)
 async def callback(
+    request: Request,
     code: str = Query("", description="飞书回调授权码"),
     state: str = Query("", description="登录发起时签发的 state"),
 ):
     """飞书回调：校 state → 换 token → 取 open_id → 签 cookie → 回 next 或看板。"""
+    logger.info("feishu callback 到达：has_code=%s ua=%r",
+                bool(code), request.headers.get("user-agent", ""))
     state_value = _verify_signed(state) if state else None
     if state_value is None:
         # state 缺失/伪造/过期 → 防 CSRF，拒绝。
