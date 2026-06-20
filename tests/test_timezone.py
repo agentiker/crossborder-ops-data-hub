@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 from fastapi import HTTPException
@@ -111,3 +111,21 @@ def test_describe_window_past_range_excludes_today(fixed_today):
 def test_describe_window_weekday_is_correct_not_hallucinated(fixed_today):
     # 回归：6/9 是周二（不是周一）——这正是 agent 之前编错的点
     assert "6/9（周二" in describe_window(REF, REF)
+
+
+def test_intraday_window_utc_cutoff():
+    """intraday 窗口：印尼日 00:00~cutoff → naive UTC 边界（−7h）。"""
+    from datetime import time
+    from core.timezone import intraday_window_utc
+
+    sd, ed = intraday_window_utc(date(2026, 6, 9), time(14, 30))
+    # 印尼 6/9 00:00 = UTC 6/8 17:00；印尼 6/9 14:30 = UTC 6/9 07:30
+    assert sd == datetime(2026, 6, 8, 17, 0, 0)
+    assert ed == datetime(2026, 6, 9, 7, 30, 0)
+
+
+def test_business_now_is_utc_plus_offset(monkeypatch):
+    """business_now = utcnow + 7h（印尼此刻）。"""
+    import core.timezone as _tz
+    monkeypatch.setattr(_tz, "_utcnow_naive", lambda: datetime(2026, 6, 9, 3, 0, 0))
+    assert _tz.business_now() == datetime(2026, 6, 9, 10, 0, 0)

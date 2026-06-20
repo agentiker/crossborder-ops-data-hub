@@ -23,12 +23,15 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from core.config import settings
 from core.timezone import (
+    business_now,
     business_today,
     describe_window,
     previous_window,
     resolve_period,
 )
+from services.order_metrics import get_gmv_summary_intraday
 from web.routes.data import (
+    _resolve_scope,
     get_ad_spend,
     get_ad_spend_trend,
     get_low_stock,
@@ -92,10 +95,13 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
     """
     sd, ed, period_label = _resolve_dates(start_date, end_date, period)
     is_single_day = sd == ed
+    # 当日（数据不全）：环比走"截至此刻 vs 昨日同一时刻"；过去的某天一律整天对整天
+    is_today = is_single_day and ed == business_today()
 
     # 版型：单日→日报（当日数 + 近 7 天迷你趋势参照）；多日→区间报（区间汇总 + 完整趋势）
     if is_single_day:
-        kind, title, change_label = "daily", "经营日报", "较昨日"
+        kind, title = "daily", "经营日报"
+        change_label = "较昨日同期" if is_today else "较前一日"
         trend_title, trend_mini = "近 7 天趋势（参考）", True
         trend_sd, trend_ed = ed - timedelta(days=6), ed  # 迷你背景图画近 7 天
     else:
@@ -111,17 +117,29 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
         platform=None, country=None, shop_id=None,
         scope_id=None, shop_ids=None, open_id=open_id,
     ))
-    # 订单 KPI 按 [sd, ed] 取数（修正：原先取 overview 固定近 7 天，不随 period 变）
-    orders_cur = _asdict(await get_orders_summary(
-        start_date=sd.isoformat(), end_date=ed.isoformat(), period=None,
-        platform=None, country=None, shop_id=None,
-        scope_id=None, shop_ids=None, open_id=open_id,
-    ))
-    orders_prev = _asdict(await get_orders_summary(
-        start_date=prev_sd.isoformat(), end_date=prev_ed.isoformat(), period=None,
-        platform=None, country=None, shop_id=None,
-        scope_id=None, shop_ids=None, open_id=open_id,
-    ))
+    # 订单 KPI：
+    #   当日 → 截至此刻 vs 昨日同一时刻（intraday 同期对比，避免半天 vs 昨日全天的假暴跌）
+    #   其余 → 按 [sd, ed] 整天对整天（修正：原先取 overview 固定近 7 天，不随 period 变）
+    cutoff_label = None
+    if is_today:
+        scope = _resolve_scope(open_id=open_id)
+        now = business_now()
+        cutoff = now.time()
+        _sc = dict(platform=scope.platform, country=scope.country, shop_ids=scope.shop_ids)
+        orders_cur = get_gmv_summary_intraday(day=ed, cutoff=cutoff, **_sc)
+        orders_prev = get_gmv_summary_intraday(day=ed - timedelta(days=1), cutoff=cutoff, **_sc)
+        cutoff_label = "数据截至 " + now.strftime("%H:%M") + "（印尼时间）· 当日累计 vs 昨日同期"
+    else:
+        orders_cur = _asdict(await get_orders_summary(
+            start_date=sd.isoformat(), end_date=ed.isoformat(), period=None,
+            platform=None, country=None, shop_id=None,
+            scope_id=None, shop_ids=None, open_id=open_id,
+        ))
+        orders_prev = _asdict(await get_orders_summary(
+            start_date=prev_sd.isoformat(), end_date=prev_ed.isoformat(), period=None,
+            platform=None, country=None, shop_id=None,
+            scope_id=None, shop_ids=None, open_id=open_id,
+        ))
     # 趋势（订单 + 广告，按趋势窗口：单日近 7 天 / 多日选定区间）
     trend = _asdict(await get_orders_trend(
         start_date=trend_sd.isoformat(), end_date=trend_ed.isoformat(), period=None,
@@ -239,6 +257,8 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
         "change_label": change_label,
         "trend_title": trend_title,
         "trend_mini": trend_mini,
+        "intraday": is_today,
+        "cutoff_label": cutoff_label,
         "scope": overview.get("scope") or "全店",
         "period_label": period_label,
         "generated_at": generated_at,
@@ -322,8 +342,13 @@ _INSIGHT_SYSTEM = (
     "禁止编造任何未提供的数据或原因。输出**严格 JSON**（不要 markdown 围栏、不要多余文字）："
     '{"headline": "一句话结论", "problems": ["..."], "actions": ["..."]}。'
     "headline≤40字、点明经营好坏与最关键信号；problems 今日问题 0-3 条、每条≤30字、"
-    "只挑数字暴露的真问题（如环比骤降、断货、广告异常）；actions 明日动作 1-3 条、具体可执行。"
+    "只挑数字暴露的真问题（如环比骤降、断货）；actions 明日动作 1-3 条、具体可执行。"
     "全部用中文。无明显问题时 problems 可为空数组。"
+    "重要约束："
+    "(1) 广告消耗为 0 通常是广告数据尚未接通（不是没投广告），**不要**当作问题、"
+    "**不要**建议投放/启动广告。"
+    "(2) 若数据标注为『当日累计』：数字是当日进行中的累计、环比已是『昨日同期』口径，"
+    "**不要**因当日绝对值偏小而判断经营崩盘；如确有同期环比骤降才提示。"
 )
 
 
@@ -393,6 +418,8 @@ def _build_insight_prompt(data: dict) -> str:
     )
     payload = {
         "报告类型": "日报" if data.get("kind") == "daily" else "区间报告",
+        "数据口径": (data.get("cutoff_label") or "完整窗口") if data.get("intraday")
+                    else "完整窗口",
         "范围": data.get("scope"),
         "周期": data.get("period_label"),
         "环比基准": data.get("change_label"),
@@ -723,8 +750,9 @@ kpisEl.querySelectorAll('.qmark').forEach(q => {
 });
 document.addEventListener('click', () =>
   kpisEl.querySelectorAll('.tip.show').forEach(t => t.classList.remove('show')));
-document.getElementById('kpi-note').textContent =
-  '↑↓ 为环比变化（' + (DATA.change_label || '较上期') + '）';
+document.getElementById('kpi-note').textContent = DATA.cutoff_label
+  ? DATA.cutoff_label
+  : '↑↓ 为环比变化（' + (DATA.change_label || '较上期') + '）';
 
 // -- 趋势卡标题 + 迷你视图（单日报告画近 7 天作背景参照，弱化呈现）--
 document.getElementById('trend-title').textContent = DATA.trend_title || 'GMV / 广告 / 订单趋势';

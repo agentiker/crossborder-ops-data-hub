@@ -254,6 +254,18 @@ def _patch_collect_data_sources(monkeypatch):
     monkeypatch.setattr("web.routes.report.get_orders_top_skus", fake_top)
     monkeypatch.setattr("web.routes.report.get_low_stock", fake_low)
 
+    # 当日 intraday 分支依赖：scope 解析 / 此刻 / 同期 GMV（避免连库）
+    from datetime import datetime as _dt
+    from services.scope_resolution import ScopeFilters
+
+    monkeypatch.setattr("web.routes.report._resolve_scope",
+                        lambda **k: ScopeFilters(platform=None, country=None, shop_ids=None,
+                                                 scope_key=None, display_text="全店"))
+    monkeypatch.setattr("web.routes.report.business_now", lambda: _dt(2026, 6, 20, 14, 30))
+    monkeypatch.setattr("web.routes.report.get_gmv_summary_intraday",
+                        lambda **k: {"gmv": 1000, "order_count": 50, "units_sold": 80,
+                                     "avg_order_value": 20})
+
 
 def test_collect_single_day_is_daily(monkeypatch):
     """单日 period → 日报版型：标题/环比口径/迷你趋势 + 近 7 天趋势点。"""
@@ -263,10 +275,24 @@ def test_collect_single_day_is_daily(monkeypatch):
     data = _run(_collect("ou_x", None, None, "today"))
     assert data["kind"] == "daily"
     assert data["title"] == "经营日报"
-    assert data["change_label"] == "较昨日"
+    assert data["change_label"] == "较昨日同期"   # 当日走 intraday 同期对比
+    assert data["intraday"] is True
+    assert data["cutoff_label"] and "数据截至" in data["cutoff_label"]
     assert data["trend_mini"] is True
     assert len(data["trend"]["dates"]) == 7  # 单日报告画近 7 天迷你趋势
-    assert data["kpi"]["gmv"]["value"] == 1000  # KPI 走 orders_summary 而非 overview 固定 7 天
+    assert data["kpi"]["gmv"]["value"] == 1000  # 当日 KPI 走 intraday 取数
+
+
+def test_collect_yesterday_full_day_not_intraday(monkeypatch):
+    """明确『昨天』→ 整天对整天（非 intraday）：较前一日、无 cutoff。"""
+    _patch_collect_data_sources(monkeypatch)
+    from web.routes.report import _collect
+
+    data = _run(_collect("ou_x", None, None, "yesterday"))
+    assert data["kind"] == "daily"
+    assert data["change_label"] == "较前一日"
+    assert data["intraday"] is False
+    assert data["cutoff_label"] is None
 
 
 def test_collect_multi_day_is_period(monkeypatch):

@@ -33,6 +33,21 @@ def to_business_day(dt: datetime) -> date:
     return (dt + OFFSET).date()
 
 
+def business_now() -> datetime:
+    """业务时区（印尼）的"此刻"（naive）。用于当日报告的"截至现在"时点。"""
+    return _utcnow_naive() + OFFSET
+
+
+def intraday_window_utc(day: date, cutoff: time) -> tuple[datetime, datetime]:
+    """业务日 day 从 00:00 到 cutoff 时刻 → naive UTC 查询边界。
+
+    用于"当日截至此刻 / 昨日截至同一时刻"的同期对比（与 paid_window_utc 同口径，仅上界换成时点）。
+    """
+    start_dt = datetime.combine(day, time.min) - OFFSET
+    end_dt = datetime.combine(day, cutoff) - OFFSET
+    return start_dt, end_dt
+
+
 def paid_window_utc(start_date: date, end_date: date) -> tuple[datetime, datetime]:
     """业务日闭区间 [start_date, end_date] → 对应的 naive UTC 查询边界 [start_dt, end_dt]。
 

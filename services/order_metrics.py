@@ -11,14 +11,14 @@
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import func
 
 from core.db import SessionLocal
-from core.timezone import paid_window_utc, to_business_day
+from core.timezone import intraday_window_utc, paid_window_utc, to_business_day
 from models.base_models import OrderHeader, OrderLineItem
 
 
@@ -46,17 +46,15 @@ def _scope_filters(query, model, platform, country, shop_id, shop_ids=None):
     return query
 
 
-def get_gmv_summary(
-    *,
-    start_date: date,
-    end_date: date,
-    platform: Optional[str] = None,
-    country: Optional[str] = None,
-    shop_id: Optional[str] = None,
-    shop_ids: Optional[list[str]] = None,
+def _gmv_aggregates(
+    start_dt: datetime,
+    end_dt: datetime,
+    platform: Optional[str],
+    country: Optional[str],
+    shop_id: Optional[str],
+    shop_ids: Optional[list[str]],
 ) -> dict:
-    """Return paid-order GMV aggregates for AI explanation."""
-    start_dt, end_dt = _paid_window(start_date, end_date)
+    """已付款订单 GMV/订单/销量/客单价聚合（给定 naive UTC 窗口边界）。"""
     session = SessionLocal()
     try:
         header_q = session.query(
@@ -86,10 +84,7 @@ def get_gmv_summary(
         order_count = int(order_count or 0)
         gmv_f = _to_float(gmv)
         avg_order_value = round(gmv_f / order_count, 2) if order_count else 0.0
-
         return {
-            "start_date": start_date.isoformat(),
-            "end_date": end_date.isoformat(),
             "gmv": gmv_f,
             "order_count": order_count,
             "units_sold": int(units_sold),
@@ -97,6 +92,37 @@ def get_gmv_summary(
         }
     finally:
         session.close()
+
+
+def get_gmv_summary(
+    *,
+    start_date: date,
+    end_date: date,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_id: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
+) -> dict:
+    """Return paid-order GMV aggregates for AI explanation（业务日闭区间，整天口径）。"""
+    start_dt, end_dt = _paid_window(start_date, end_date)
+    agg = _gmv_aggregates(start_dt, end_dt, platform, country, shop_id, shop_ids)
+    return {"start_date": start_date.isoformat(), "end_date": end_date.isoformat(), **agg}
+
+
+def get_gmv_summary_intraday(
+    *,
+    day: date,
+    cutoff: time,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_id: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
+) -> dict:
+    """业务日 day 从 00:00 到 cutoff 时刻的已付款 GMV 聚合（当日累计 / 同期对比用）。"""
+    start_dt, end_dt = intraday_window_utc(day, cutoff)
+    agg = _gmv_aggregates(start_dt, end_dt, platform, country, shop_id, shop_ids)
+    return {"start_date": day.isoformat(), "end_date": day.isoformat(),
+            "cutoff": cutoff.strftime("%H:%M"), **agg}
 
 
 def get_top_skus(
