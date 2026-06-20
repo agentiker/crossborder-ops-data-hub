@@ -933,9 +933,12 @@ async def get_dashboard_link(
 #   - path 不能带 ?/#(官方明令)；官方变通：把 query 拆到 applink 顶层，飞书重组成 主页/path?query
 #     （见 open-an-h5-app 文档「使用示例2」）。报告 token 是 b64url、period 等是 ASCII，天然
 #     URL-safe，照搬顶层即可。
-#   - path / path_pc 同传(PC 端优先 path_pc)。path 用相对路径(不带 /board 前缀)，对飞书
-#     「替换 or 追加 主页 path」两种解释都落到有效路由：替换→/report/*，追加→/board/report/*
-#     (别名)，且前端 insight 请求按 location.pathname 相对取，两种落点都对。
+#   - path / path_pc 同传(PC 端优先 path_pc)。path 是「替换主页 path」语义(实测
+#     path_pc=/report/... → 落到 board.agenticker.cc/report/...)，故 path 必须带 /board 前缀，
+#     替换后 = /board/report/*，落在桌面端主页 /board 范围内——否则 PC 端判「离开应用可信范围」
+#     仍弹「非官方链接」(这正是早前只换 path、没带 /board 时 PC 仍被拦的真因)。url 由
+#     get_report_link 直接以 /board/report/* 拼好，这里照搬其 path 即可。前端 insight 请求按
+#     location.pathname 相对取，落点 /board/report/* 也对。
 #   - path 与 lk_target_url 互斥(同传 lk_target_url 优先)，故彻底弃用后者。
 # 见 https://open.feishu.cn/document/common-capabilities/applink-protocol/supported-protocol/open-an-h5-app
 _FEISHU_WEBAPP_APPLINK = "https://applink.feishu.cn/client/web_app/open"
@@ -982,10 +985,11 @@ async def get_report_link(
         token = make_token(open_id, ttl=ttl)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=503, detail=str(exc))
-    # 用 /report/*（裸链/WebUI 直访有效）；飞书渠道由 _wrap_feishu_applink 拆成 path 走
-    # web_app/open。path 的「替换 or 追加 主页」两种解释分别落到 /report/* 与别名 /board/report/*，
-    # 都有效（见 _wrap_feishu_applink 注释与 web/routes/report.py 别名路由）。
-    url = base.rstrip("/") + "/report/" + template_name + "?t=" + token + "&period=" + period
+    # 用 /board/report/*（/report/* 的别名）：飞书 applink 的 path 是「替换主页 path」语义
+    # （实测 path_pc=/report/... → 落到 board.agenticker.cc/report/...），必须让结果落在桌面端
+    # 主页 /board 范围内，PC 端才不判「离开应用可信范围」弹「非飞书官方链接」。故 path 带 /board
+    # 前缀 → 替换后 = /board/report/*（主页范围内）。裸链/WebUI 直访该别名路由同样有效。
+    url = base.rstrip("/") + "/board/report/" + template_name + "?t=" + token + "&period=" + period
     if start_date and isinstance(start_date, str):
         url += "&start_date=" + start_date
     if end_date and isinstance(end_date, str):

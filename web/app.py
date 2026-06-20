@@ -26,6 +26,7 @@ from web.web_security import register_web_auth_handlers
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    force=True,  # 抢占 root：uvicorn.run 串式加载下若已有 handler，no-op 的 basicConfig 会被架空
 )
 
 app = FastAPI(

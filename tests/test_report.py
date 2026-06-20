@@ -158,9 +158,10 @@ def test_report_link_feishu_wraps_applink():
         "https://applink.feishu.cn/client/web_app/open?appId=cli_test123&mode=window"
     )
     q = parse_qs(urlsplit(result.url).query)
-    # path 是相对路径（不带 /board），PC 端优先 path_pc；二者一致
-    assert q["path"] == ["/report/daily_brief"]
-    assert q["path_pc"] == ["/report/daily_brief"]
+    # path 带 /board 前缀（替换主页 path 后落在桌面端主页 /board 范围内，PC 端才不弹外链），
+    # PC 端优先 path_pc；二者一致
+    assert q["path"] == ["/board/report/daily_brief"]
+    assert q["path_pc"] == ["/board/report/daily_brief"]
     # 报告参数搬到 applink 顶层（飞书重组成 主页/path?query）
     assert q["period"] == ["last_7d"]
     assert q["t"] and q["t"][0]  # 签名 token 存在
@@ -181,7 +182,7 @@ def test_report_link_webui_raw_no_applink():
         period="last_7d",
         wrap_applink=False,
     ))
-    assert result.url.startswith("https://board.example.com/report/daily_brief?t=")
+    assert result.url.startswith("https://board.example.com/board/report/daily_brief?t=")
     assert "applink.feishu.cn" not in result.url
 
 
