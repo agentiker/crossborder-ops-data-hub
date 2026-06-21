@@ -21,8 +21,12 @@ import requests
 
 from core.config import settings
 
-# 飞书 OAuth v2 端点（authorize 在 accounts 域，token/user_info 在 open 域）
-AUTHORIZE_URL = "https://accounts.feishu.cn/open-apis/authen/v1/authorize"
+# 飞书登录端点。授权入口刻意用 authen/v1/index 而非 accounts 域的 authen/v1/authorize：
+#   - index：网页应用登录入口，复用浏览器/飞书客户端已有的登录态自动发码，已授权用户
+#     不再每次弹"权限同意卡片"（竹云/Logto 等外部浏览器免密方案均用此端点）。入参用 app_id。
+#   - authorize（accounts 域）：OAuth 同意页流程，外部浏览器下每次都展示同意卡片——即本次
+#     "反复要授权"的根因。index 发的 code 同样被下面的 v2 token 端点接受（Logto 实证）。
+AUTHORIZE_URL = "https://open.feishu.cn/open-apis/authen/v1/index"
 TOKEN_URL = "https://open.feishu.cn/open-apis/authen/v2/oauth/token"
 USER_INFO_URL = "https://open.feishu.cn/open-apis/authen/v1/user_info"
 
@@ -40,8 +44,8 @@ class FeishuOAuthError(RuntimeError):
 def build_authorize_url(state: str, *, scope: Optional[str] = None) -> str:
     """拼飞书授权页 URL。app_id/redirect_uri 未配置则拒绝生成（抛错）。
 
-    scope 缺省取 settings.feishu_oauth.oauth_scope（默认空=不传）。不传 scope 时，已授权
-    用户静默发码、不再弹同意页（权限累积，无新增权限即无需重复授权，见飞书 authorize 文档）。
+    走 authen/v1/index 登录入口：复用已有飞书登录态，已授权用户静默发码、不再弹同意页。
+    scope 缺省取 settings.feishu_oauth.oauth_scope（默认空=不传）。
     """
     cfg = settings.feishu_oauth
     if not cfg.app_id or not cfg.redirect_uri:
@@ -50,10 +54,10 @@ def build_authorize_url(state: str, *, scope: Optional[str] = None) -> str:
         raise FeishuOAuthError("state 不能为空（防 CSRF）")
     if scope is None:
         scope = cfg.oauth_scope
+    # authen/v1/index 入参约定：app_id（非 client_id）+ redirect_uri + state；回调照旧带 code。
     params = {
-        "client_id": cfg.app_id,
+        "app_id": cfg.app_id,
         "redirect_uri": cfg.redirect_uri,
-        "response_type": "code",
         "state": state,
     }
     if scope:

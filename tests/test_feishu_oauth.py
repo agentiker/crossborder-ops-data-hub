@@ -48,10 +48,12 @@ def test_authorize_url_has_required_query(configured):
     url = build_authorize_url("state-abc")
     parsed = urlparse(url)
     q = parse_qs(parsed.query)
-    assert parsed.netloc == "accounts.feishu.cn"
-    assert q["client_id"] == ["cli_test"]
+    # 走 authen/v1/index 登录入口（open 域、入参 app_id）：复用飞书登录态静默发码，
+    # 不再每次弹同意页（accounts 域 authorize 的同意卡片是"反复要授权"的根因）。
+    assert parsed.netloc == "open.feishu.cn"
+    assert parsed.path.endswith("/authen/v1/index")
+    assert q["app_id"] == ["cli_test"]
     assert q["redirect_uri"] == ["https://board.agenticker.cc/board/auth/feishu/callback"]
-    assert q["response_type"] == ["code"]
     assert q["state"] == ["state-abc"]
     # 默认不带 scope：登录只需基础"获取用户身份标识"，不请求登录用不到的 contact:user.id:readonly
     assert "scope" not in q
