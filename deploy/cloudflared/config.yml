@@ -33,5 +33,17 @@ ingress:
   # 同 hostname 下其余路径 → 404（挡住 swagger/旧看板/内部端点/api/data）。
   - hostname: board.agenticker.cc
     service: http_status:404
-  # 兜底：其余 hostname 一律 404，避免隧道沦为开放反代。
+
+  # 多租户（plan/crystalline-sleeping-squirrel）：gtl 客户子域名，规则镜像 board。
+  # 同一条 board 隧道服务两个 hostname；account 由子域名 Host 决定（core/tenancy）。
+  - hostname: gtl.board.agenticker.cc
+    path: "^/(board|app|report)($|/)"
+    service: http://127.0.0.1:8000
+  - hostname: gtl.board.agenticker.cc
+    path: "^/api/(me|chat|conversations|admin)($|/)"
+    service: http://127.0.0.1:8000
+  - hostname: gtl.board.agenticker.cc
+    service: http_status:404
+
+  # 兜底：其余 hostname 一律 404，避免隧道沦为开放反代。必须是最后一条（cloudflared 强制）。
   - service: http_status:404
