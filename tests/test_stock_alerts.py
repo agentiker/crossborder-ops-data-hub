@@ -146,6 +146,37 @@ def test_get_stock_risk_classifies_and_excludes_dead_stock(db, monkeypatch):
     assert out["items"][0]["sku_id"] == "FAST_OUT"
 
 
+def test_get_stock_risk_include_all_full_ranking(db, monkeypatch):
+    """include_all=True（报告展示口径）：列全部 SKU，按可售天数升序，无销量(idle)排末尾、
+    其内按库存升序；buckets 计数仍只算真实风险桶（与告警口径一致）。"""
+    session = db()
+    _inv(session, "FAST_OUT", 0, name="爆款断货")    # stock0+有销量 → stockout
+    _inv(session, "CRIT", 6, name="告急")             # 6/3=2 <3 → critical
+    _inv(session, "OK", 100, name="充足")             # cover 高 → ok
+    _inv(session, "IDLE_HI", 50, name="无销量高库存")  # 无销量 → idle，库存高排更后
+    _inv(session, "IDLE_LO", 3, name="无销量低库存")   # 无销量 → idle，库存低先冒头
+    session.commit()
+    monkeypatch.setattr(
+        stock_metrics, "get_units_by_sku",
+        lambda **kw: {"FAST_OUT": 35, "CRIT": 21, "OK": 7},  # daily 5/3/1；两个 IDLE 无销量
+    )
+    out = stock_metrics.get_stock_risk(
+        critical_days=3, warning_days=7, velocity_window_days=7, include_all=True)
+
+    skus = [i["sku_id"] for i in out["items"]]
+    # 全部 5 个 SKU 都在
+    assert set(skus) == {"FAST_OUT", "CRIT", "OK", "IDLE_HI", "IDLE_LO"}
+    # 断货最前；无销量 idle 排末尾，低库存的 IDLE_LO 先于高库存的 IDLE_HI
+    assert skus[0] == "FAST_OUT"
+    assert skus[-2:] == ["IDLE_LO", "IDLE_HI"]
+    by = {i["sku_id"]: i for i in out["items"]}
+    assert by["OK"]["bucket"] == "ok"
+    assert by["IDLE_LO"]["bucket"] == "idle"
+    assert by["IDLE_LO"]["days_of_cover"] is None       # 无销量 → 可售天数为 None
+    # buckets 仍只算真实风险（stockout+critical），不含 ok/idle
+    assert out["buckets"] == {"stockout": 1, "critical": 1, "warning": 0, "total": 2}
+
+
 def test_get_stock_risk_aggregates_stock_across_shops(db, monkeypatch):
     session = db()
     _inv(session, "X", 4, shop="s1")

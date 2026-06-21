@@ -335,8 +335,8 @@ class LowStockItem(BaseModel):
     shop_id: Optional[str] = None
     available_stock: int
     daily_velocity: float  # 近期日均销量
-    days_of_cover: float  # 可售天数 = 可用库存 ÷ 日均销速
-    bucket: str  # stockout / critical / warning
+    days_of_cover: Optional[float] = None  # 可售天数 = 可用库存 ÷ 日均销速；无销量(销速0)时为 None
+    bucket: str  # stockout / critical / warning / ok（充足）/ idle（近期无销量）
 
 
 class LowStockBuckets(BaseModel):
@@ -447,13 +447,15 @@ async def get_low_stock(
     shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
     critical_days: Optional[int] = Query(None, description="告急阈值：可售天数低于此值记『告急』（默认 3）"),
     warning_days: Optional[int] = Query(None, description="预警阈值：可售天数低于此值记『预警』（默认 7）"),
+    include_all: bool = Query(False, description="True=报告展示口径，返回全部在库 SKU 按可售天数升序（含充足/无销量）；False=告警口径，只返回卖得动且落风险桶的"),
     open_id: Optional[str] = Query(None, description="飞书用户 open_id（ou_xxx，用于自动应用会话默认范围）"),
 ):
-    """低库存 / 断货风险（按可售天数）。只列仍卖得动却快断货的 SKU，断货排最前。
+    """低库存 / 断货风险（按可售天数）。
 
     口径随响应 caliber 字段返回。与 ops_inventory 的静态阈值（库存<10）不同，本端点用
-    可售天数 = 可用库存 ÷ 日均销速，能识别『库存看着不少但卖得快、即将断货』的爆款；
-    无销量的死货不打扰。利润/ROI 本期未上线，不在此端点。
+    可售天数 = 可用库存 ÷ 日均销速。include_all=False（默认/告警）只列仍卖得动却快断货的 SKU、
+    断货排最前；include_all=True（报告展示）列全部在库 SKU 按可售天数升序、无销量排末尾。
+    buckets 计数恒为真实风险桶（告警口径）。利润/ROI 本期未上线，不在此端点。
     """
     scope = _resolve_scope(
         scope_id=scope_id, platform=platform, country=country,
@@ -465,6 +467,7 @@ async def get_low_stock(
         shop_ids=scope.shop_ids or None,
         critical_days=critical_days,
         warning_days=warning_days,
+        include_all=include_all,
     )
     return LowStockResponse(
         items=[LowStockItem(**i) for i in risk["items"]],

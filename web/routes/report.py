@@ -174,7 +174,7 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
     low = _asdict(await get_low_stock(
         platform=None, country=None, shop_id=None,
         scope_id=None, shop_ids=None,
-        critical_days=None, warning_days=None, open_id=open_id,
+        critical_days=None, warning_days=None, include_all=True, open_id=open_id,
     ))
     # 广告 KPI（当期 + 上期，按 KPI 窗口）
     ad = _asdict(await get_ad_spend(
@@ -237,26 +237,24 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
             "share": share,
         })
 
-    # 断货预警：按严重度（断货 > 告急 > 预警）排序，同级最紧急（可售天数最少）在前
+    # 断货预警（报告展示口径 include_all=True）：列全部在库 SKU，已由 get_stock_risk 按可售天数
+    # 升序排好（断货最前、库存充足居中、近期无销量排末尾），直接取其顺序，展示前 20。
     low_items = []
-    level_map = {"stockout": "断货", "critical": "告急", "warning": "预警"}
-    _severity = {"stockout": 0, "critical": 1, "warning": 2}
-    low_sorted = sorted(
-        low.get("items", []),
-        key=lambda it: (_severity.get(it.get("bucket", ""), 9), it.get("days_of_cover", 0)),
-    )
-    # 断货风险计数统一用销速模型（与下方表格同源），而非 overview 的静态「库存<10」计数
-    # ——后者含卖不动的滞销死货，会和「按可售天数」的表格自相矛盾
+    level_map = {"stockout": "断货", "critical": "告急", "warning": "预警",
+                 "ok": "充足", "idle": "无销量"}
+    low_sorted = low.get("items", [])
+    # 断货风险计数恒为真实风险桶（告警口径，buckets.total），与监控告警一致；不含充足/无销量。
     risk_count = low.get("buckets", {}).get("total")
     if risk_count is None:
-        risk_count = len(low.get("items", []))
+        risk_count = 0
     for item in low_sorted[:20]:
         bucket = item.get("bucket", "")
+        days = item.get("days_of_cover")
         low_items.append({
             "name": item.get("product_name") or item.get("sku_id") or "?",
             "stock": item.get("available_stock", 0),
             "velocity": round(item.get("daily_velocity", 0), 1),
-            "days": round(item.get("days_of_cover", 0), 1),
+            "days": round(days, 1) if days is not None else None,
             "level": bucket,
             "level_label": level_map.get(bucket, bucket),
         })
@@ -423,7 +421,7 @@ async def _collect_weekly(open_id: str, period) -> dict:
     # 断货预警（快照，同日报）
     low = _asdict(await get_low_stock(
         platform=None, country=None, shop_id=None, scope_id=None, shop_ids=None,
-        critical_days=None, warning_days=None, open_id=open_id,
+        critical_days=None, warning_days=None, include_all=True, open_id=open_id,
     ))
     low_items = []
     level_map = {"stockout": "断货", "critical": "告急", "warning": "预警"}
@@ -1005,6 +1003,8 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
   .pill.stockout { background:rgba(220,38,38,.1); color:var(--danger); }
   .pill.critical { background:rgba(214,140,20,.14); color:var(--warn); }
   .pill.warning  { background:rgba(25,36,32,.08); color:var(--txt2); }
+  .pill.ok       { background:rgba(34,139,90,.12); color:var(--success); }
+  .pill.idle     { background:rgba(25,36,32,.06); color:var(--sub); }
   .kpi-note { color:var(--sub); font-size:11px; margin-top:6px; padding:0 2px; }
   /* 问号 tip */
   .qmark { display:inline-flex; align-items:center; justify-content:center; cursor:pointer;
@@ -1067,7 +1067,7 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
   </div>
 
   <div class="card">
-    <h2>断货预警 <small>按可售天数（库存÷日均销速）排序</small></h2>
+    <h2>断货预警 <small>全部 SKU 按可售天数升序 · 无销量排末尾</small></h2>
     <div id="low-wrap"></div>
   </div>
 
@@ -1253,7 +1253,7 @@ if (!DATA.top_skus || !DATA.top_skus.length) {
 const lowWrap = document.getElementById('low-wrap');
 const lowItems = DATA.low_stock || [];
 if (!lowItems.length) {
-  lowWrap.innerHTML = '<div style="text-align:center;color:var(--sub);padding:16px 0">暂无断货风险 SKU</div>';
+  lowWrap.innerHTML = '<div style="text-align:center;color:var(--sub);padding:16px 0">暂无在库 SKU</div>';
 } else {
   let html = '<table><thead><tr><th>商品</th><th>风险</th><th class="num">库存</th>'
     + '<th class="num">日均销速</th><th class="num">可售天数</th></tr></thead><tbody>';
@@ -1263,7 +1263,7 @@ if (!lowItems.length) {
       + '<td><span class="pill ' + it.level + '">' + it.level_label + '</span></td>'
       + '<td class="num">' + fmtInt(it.stock) + '</td>'
       + '<td class="num">' + it.velocity + '</td>'
-      + '<td class="num">' + it.days + '</td></tr>';
+      + '<td class="num">' + (it.days == null ? '—' : it.days) + '</td></tr>';
   });
   html += '</tbody></table>';
   lowWrap.innerHTML = html;
@@ -1367,6 +1367,8 @@ WEEKLY_REVIEW_HTML = r"""<!DOCTYPE html>
   .pill.stockout { background:rgba(220,38,38,.1); color:var(--danger); }
   .pill.critical { background:rgba(214,140,20,.14); color:var(--warn); }
   .pill.warning  { background:rgba(25,36,32,.08); color:var(--txt2); }
+  .pill.ok       { background:rgba(34,139,90,.12); color:var(--success); }
+  .pill.idle     { background:rgba(25,36,32,.06); color:var(--sub); }
   .kpi-note { color:var(--sub); font-size:11px; margin-top:6px; padding:0 2px; }
   .qmark { display:inline-flex; align-items:center; justify-content:center; cursor:pointer;
            width:14px; height:14px; margin-left:4px; border-radius:50%; font-size:10px;
@@ -1445,7 +1447,7 @@ WEEKLY_REVIEW_HTML = r"""<!DOCTYPE html>
   </div>
 
   <div class="card">
-    <h2>断货预警 <small>按可售天数（库存÷日均销速）排序</small></h2>
+    <h2>断货预警 <small>全部 SKU 按可售天数升序 · 无销量排末尾</small></h2>
     <div id="low-wrap"></div>
   </div>
 
@@ -1659,7 +1661,7 @@ if (!DATA.top_skus || !DATA.top_skus.length) {
 const lowWrap = document.getElementById('low-wrap');
 const lowItems = DATA.low_stock || [];
 if (!lowItems.length) {
-  lowWrap.innerHTML = '<div style="text-align:center;color:var(--sub);padding:16px 0">暂无断货风险 SKU</div>';
+  lowWrap.innerHTML = '<div style="text-align:center;color:var(--sub);padding:16px 0">暂无在库 SKU</div>';
 } else {
   let html = '<table><thead><tr><th>商品</th><th>风险</th><th class="num">库存</th>'
     + '<th class="num">日均销速</th><th class="num">可售天数</th></tr></thead><tbody>';
@@ -1669,7 +1671,7 @@ if (!lowItems.length) {
       + '<td><span class="pill ' + it.level + '">' + it.level_label + '</span></td>'
       + '<td class="num">' + fmtInt(it.stock) + '</td>'
       + '<td class="num">' + it.velocity + '</td>'
-      + '<td class="num">' + it.days + '</td></tr>';
+      + '<td class="num">' + (it.days == null ? '—' : it.days) + '</td></tr>';
   });
   html += '</tbody></table>';
   lowWrap.innerHTML = html;

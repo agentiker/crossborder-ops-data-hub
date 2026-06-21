@@ -46,10 +46,17 @@ def get_stock_risk(
     critical_days: Optional[int] = None,
     warning_days: Optional[int] = None,
     velocity_window_days: Optional[int] = None,
+    include_all: bool = False,
 ) -> dict:
     """返回低库存/断货风险 SKU + 分桶计数 + 快照时间（供 AI 解释 / 主动推送）。
 
-    items 仅含有销量(velocity>0)且落入风险桶的 SKU，按 days_of_cover 升序（断货排最前）。
+    两套口径：
+    - include_all=False（默认，**监控告警**用）：items 仅含有销量(velocity>0)且落入风险桶的
+      SKU，按 days_of_cover 升序（断货排最前）。这是"只盯卖得动快断货"的告警口径。
+    - include_all=True（**报告展示**用）：items 含全部在库 SKU，按可售天数升序（断货最前、库存
+      充足居中、近期无销量 idle 排末尾，idle 内按库存升序让低库存的先冒头），bucket 取
+      stockout/critical/warning/ok（充足）/idle（无销量）。无论哪种口径，buckets 计数始终只算
+      真实风险桶（与告警一致），供"断货风险数"KPI 用。
     """
     critical_days = critical_days or settings.stock_cover_critical_days
     warning_days = warning_days or settings.stock_cover_warning_days
@@ -104,16 +111,37 @@ def get_stock_risk(
     items: list[dict] = []
     for sku_id, entry in agg.items():
         units = units_by_sku.get(sku_id, 0)
-        if units <= 0:
-            continue  # 只盯卖得动的：无销量 SKU 不计入预警
-        daily_velocity = units / velocity_window_days
         available = entry["available"]
+        daily_velocity = units / velocity_window_days
         cover = (available / daily_velocity) if daily_velocity > 0 else None
-        bucket = _classify(available, cover, critical_days, warning_days)
-        if bucket is None:
-            continue
-        buckets[bucket] += 1
-        buckets["total"] += 1
+
+        # 风险桶（仅有销量的 SKU 参与）→ 始终用于 buckets 计数（告警口径，不受 include_all 影响）
+        risk_bucket = _classify(available, cover, critical_days, warning_days) if units > 0 else None
+        if risk_bucket is not None:
+            buckets[risk_bucket] += 1
+            buckets["total"] += 1
+
+        if not include_all:
+            # 告警口径：只留有销量且落风险桶的
+            if risk_bucket is None:
+                continue
+            display_bucket = risk_bucket
+            cover_display = round(cover, 1) if cover is not None else 0.0
+        else:
+            # 报告展示口径：全量，给每个 SKU 一个展示桶
+            if available <= 0:
+                display_bucket = "stockout"
+                cover_display = 0.0
+            elif units <= 0:
+                display_bucket = "idle"          # 近期无销量
+                cover_display = None
+            elif risk_bucket is not None:
+                display_bucket = risk_bucket
+                cover_display = round(cover, 1) if cover is not None else 0.0
+            else:
+                display_bucket = "ok"            # 库存充足
+                cover_display = round(cover, 1) if cover is not None else None
+
         items.append(
             {
                 "sku_id": sku_id,
@@ -121,13 +149,21 @@ def get_stock_risk(
                 "shop_id": entry["top_shop"],
                 "available_stock": available,
                 "daily_velocity": round(daily_velocity, 2),
-                "days_of_cover": round(cover, 1) if cover is not None else 0.0,
-                "bucket": bucket,
+                "days_of_cover": cover_display,
+                "bucket": display_bucket,
             }
         )
 
-    # 断货（cover=0）排最前，其余按可售天数升序。
-    items.sort(key=lambda i: i["days_of_cover"])
+    # 排序：断货(available<=0)最前，其余按可售天数升序，无销量(cover=None)排末尾、其内按库存升序
+    # （让低库存的无销量 SKU 先冒头）。
+    def _sort_key(i):
+        if i["available_stock"] <= 0:
+            return (-1.0, i["available_stock"])
+        if i["days_of_cover"] is None:
+            return (float("inf"), i["available_stock"])
+        return (i["days_of_cover"], i["available_stock"])
+
+    items.sort(key=_sort_key)
 
     return {
         "items": items,
