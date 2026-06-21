@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from core.config import settings
 from core.db import SessionLocal
-from core.timezone import PERIOD_KEYS, business_today, describe_window, resolve_period
+from core.timezone import PERIOD_KEYS, business_now, business_today, describe_window, resolve_period
 from models.base_models import Inventory, Product
 from services.ad_metrics import (
     get_ad_spend_summary,
@@ -1021,9 +1021,27 @@ async def get_report_link(
         label = "查看经营日报"
     else:
         label = "查看经营报告"
+    # 引导语：随收件人钟点的问候 + 随版型/时间窗的报告指代 + 句尾时段 emoji。
+    # 晨报 8:30（印尼 7:30）/周报周一上午 → 自然落「早上好」；ad-hoc 任意时段也始终贴切。
+    _h = business_now().hour
+    if _h < 11:
+        greet, tod_emoji = "早上好", "🌅"
+    elif _h < 13:
+        greet, tod_emoji = "中午好", "☀️"
+    elif _h < 18:
+        greet, tod_emoji = "下午好", "🌤️"
+    else:
+        greet, tod_emoji = "晚上好", "🌙"
+    if template_name == "weekly_review":
+        noun = {"last_week": "上周经营周报", "this_week": "本周经营周报"}.get(period, "经营周报")
+    elif is_daily:
+        noun = {"yesterday": "昨日经营日报", "today": "今日经营日报"}.get(period, "经营日报")
+    else:
+        noun = "经营报告"
     markdown = (
-        "📊 [{label}]({link})\n> 链接 {ttl_text}内有效，点击查看可视化报告"
-    ).format(label=label, link=link, ttl_text=ttl_text)
+        "{greet}，请查收{noun} {tod_emoji}\n📊 [{label}]({link})\n> 链接 {ttl_text}内有效"
+    ).format(greet=greet, noun=noun, tod_emoji=tod_emoji,
+             label=label, link=link, ttl_text=ttl_text)
     logger.info("report link issued: open_id=%s template=%s ttl=%ds applink=%s",
                 open_id, template_name, ttl, wrap)
     return ReportLinkResponse(url=link, expires_in=ttl, markdown=markdown)
