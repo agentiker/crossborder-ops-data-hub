@@ -335,10 +335,14 @@ def _weekly_windows(intraday: bool):
     if intraday:
         cur_sd, cur_ed = resolve_period("this_week")
         cutoff = business_now().time()
+        # 基准=上周同期，**周对齐**（上周一 ~ 上周同一星期几）。必须 cur-7：previous_window
+        # 给的是「紧邻等长前窗」，会把本周一~周三错位成上周五~日，环比基准全错（仅周日触发碰巧对）。
+        prev_sd, prev_ed = cur_sd - timedelta(days=7), cur_ed - timedelta(days=7)
     else:
+        # 定时整周：上周整周 vs 上上周整周，previous_window 正好落位。
         cur_sd, cur_ed = resolve_period("last_week")
         cutoff = None
-    prev_sd, prev_ed = previous_window(cur_sd, cur_ed)
+        prev_sd, prev_ed = previous_window(cur_sd, cur_ed)
     return cur_sd, cur_ed, prev_sd, prev_ed, cutoff
 
 

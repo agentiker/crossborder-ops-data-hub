@@ -514,8 +514,9 @@ def test_weekly_windows_intraday_this_week():
     assert cur_sd.weekday() == 0
     # 本周已过天数 == 上周同期天数（杜绝"本周3天 vs 上周整周"）
     assert (cur_ed - cur_sd).days == (prev_ed - prev_sd).days
-    assert prev_ed == cur_sd - timedelta(days=1)
+    # 周对齐：上周一 ~ 上周同一星期几（不是紧邻前窗），与触发在周几无关
     assert prev_sd == cur_sd - timedelta(days=7)  # 上周一
+    assert prev_ed == cur_ed - timedelta(days=7)  # 上周同一星期几
 
 
 def test_window_bounds_intraday_vs_fullday():
