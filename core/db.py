@@ -34,7 +34,12 @@ def _inject_tenant_filter(execute_context):
     """ORM SELECT 自动注入 WHERE account_id = ?（opt-in：仅在 contextvar 显式设定时生效）。
 
     - current_account_or_none() 返回 None → 不过滤（未设定 / TENANT_BYPASS）
-    - with_loader_criteria(Base, ...) 自动跳过无 account_id 列的 mapper
+    - 只对本次查询涉及、且真正含 account_id 列的具体 mapper 注入
+
+    注意：必须按 mapper 逐个用「纯比较表达式」的 lambda，让 SQLAlchemy 把 account_id
+    识别为每次重新求值的绑定参数。早期写法 `lambda cls: ... if hasattr else True` 的
+    三元会让 account_id 不可缓存而被迫加 track_closure_variables=False，那会把首个请求的
+    account_id 固化进进程级 lambda 缓存 → 后续所有租户都读到第一个租户的数据（跨租户泄漏）。
     """
     from core.tenancy import current_account_or_none
 
@@ -43,18 +48,20 @@ def _inject_tenant_filter(execute_context):
         return
     if not execute_context.is_select:
         return
-    from models.base_models import Base
+    # 关系/列的延迟或预加载已被父查询过滤，跳过避免二次注入
+    if execute_context.is_column_load or execute_context.is_relationship_load:
+        return
     from sqlalchemy.orm import with_loader_criteria
 
-    criteria = lambda cls: cls.account_id == account_id if hasattr(cls, "account_id") else True
-    execute_context.statement = execute_context.statement.options(
-        with_loader_criteria(
-            Base,
-            criteria,
-            include_aliases=True,
-            track_closure_variables=False,
-        )
-    )
+    for mapper in execute_context.all_mappers:
+        if hasattr(mapper.class_, "account_id"):
+            execute_context.statement = execute_context.statement.options(
+                with_loader_criteria(
+                    mapper.class_,
+                    lambda cls: cls.account_id == account_id,
+                    include_aliases=True,
+                )
+            )
 
 
 event.listen(SessionLocal, "do_orm_execute", _inject_tenant_filter)

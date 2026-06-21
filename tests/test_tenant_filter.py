@@ -134,3 +134,36 @@ def test_filter_on_order_header(tenant_session):
     rows = tenant_session.query(OrderHeader).all()
     assert len(rows) == 1
     assert rows[0].order_id == "ORD-2"
+
+
+def test_switching_tenants_same_session_no_fixation(tenant_session):
+    """同一 session 连续切租户必须各取各的（回归：防 lambda 缓存固化跨租户泄漏）。
+
+    生产 SessionLocal 是模块级单例、被多请求复用。早期 track_closure_variables=False
+    会把首个请求的 account_id 烤进进程级 lambda 缓存，导致第二个租户读到第一个租户的数据。
+    每个用例只查一次的测试抓不到，必须在同一 session 上连续切租户才能暴露。
+    """
+    from core.tenancy import set_current_account
+
+    tenant_session.add_all([
+        OrderHeader(platform="tiktok_shop", country="ID", shop_id="s1",
+                    order_id="ORD-ecom", account_id="ecom-app",
+                    idempotency_key="ek1"),
+        OrderHeader(platform="tiktok_shop", country="ID", shop_id="s2",
+                    order_id="ORD-gtl", account_id="gtl",
+                    idempotency_key="ek2"),
+    ])
+    tenant_session.commit()
+
+    # 来回切多次，每次都必须只看到自己租户的行
+    for account_id, expected in [
+        ("ecom-app", "ORD-ecom"),
+        ("gtl", "ORD-gtl"),
+        ("ecom-app", "ORD-ecom"),
+        ("gtl", "ORD-gtl"),
+    ]:
+        set_current_account(account_id)
+        rows = tenant_session.query(OrderHeader).all()
+        assert [r.order_id for r in rows] == [expected], (
+            f"set {account_id} 却看到 {[r.order_id for r in rows]}（疑似 lambda 缓存固化跨租户泄漏）"
+        )
