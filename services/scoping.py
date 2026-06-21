@@ -26,13 +26,19 @@ def build_scope_key(
     warehouse_id: Optional[str] = None,
     resource: Optional[str] = None,
 ) -> str:
-    """Build a deterministic key for account-scoped records."""
+    """Build a deterministic key for scoped records.
+
+    account_id is an *isolation* dimension carried by the ``account_id`` column,
+    NOT a *uniqueness* dimension — so it is deliberately omitted from the key
+    string (Option C). The parameter is accepted but ignored, kept for call-site
+    compatibility. Tenant isolation is enforced 100% via the ``account_id``
+    column (scope_resolution / data API / user_authz), never via this string.
+    """
     parts = {
         "platform": normalize_scope_value(platform),
         "country": normalize_scope_value(country).upper(),
         "shop": normalize_scope_value(shop_id),
         "seller": normalize_scope_value(seller_id),
-        "account": normalize_scope_value(account_id),
         "warehouse": normalize_scope_value(warehouse_id),
     }
     if resource is not None:

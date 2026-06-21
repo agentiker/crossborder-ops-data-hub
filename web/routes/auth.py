@@ -30,9 +30,9 @@ async def tiktok_callback(
     init_db()
 
     try:
-        # account_id=DEFAULT_ACCOUNT：授权落库的 scope_key 含 account=ecom-app，与
-        # discover_single_shop（读 account_id 列重建 scope_key）一致，否则 sync 的
-        # load_existing_token 查不到 token（见 scripts/migrate_phase3b_token_scope_key）。
+        # account_id=DEFAULT_ACCOUNT 决定 save_token 写进 platform_tokens.account_id
+        # 列（隔离命脉，discover_single_shop 读它重建 scope）。Option C 后该值不再进
+        # scope_key 串，但仍必须用它把这家店的租户归属落成 ecom-app。
         client = TikTokShopClient(auto_load_token=False, account_id=DEFAULT_ACCOUNT)
 
         result = client.authenticate(code)
@@ -75,9 +75,9 @@ async def tiktok_callback_html(
     init_db()
 
     try:
-        # account_id=DEFAULT_ACCOUNT：授权落库的 scope_key 含 account=ecom-app，与
-        # discover_single_shop（读 account_id 列重建 scope_key）一致，否则 sync 的
-        # load_existing_token 查不到 token（见 scripts/migrate_phase3b_token_scope_key）。
+        # account_id=DEFAULT_ACCOUNT 决定 save_token 写进 platform_tokens.account_id
+        # 列（隔离命脉，discover_single_shop 读它重建 scope）。Option C 后该值不再进
+        # scope_key 串，但仍必须用它把这家店的租户归属落成 ecom-app。
         client = TikTokShopClient(auto_load_token=False, account_id=DEFAULT_ACCOUNT)
 
         logger.info("[OAuth回调] 开始用授权码换取Token...")

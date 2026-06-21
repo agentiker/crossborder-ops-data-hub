@@ -14,9 +14,10 @@ def test_build_token_key_includes_multi_shop_scope():
         )
     )
 
+    # Option C：account 不入键串（由 account_id 列隔离）。
     assert key == (
         "platform=TikTok_Shop|country=VN|shop=Shop-9|"
-        "seller=Seller-1|account=Ads-3|warehouse=_"
+        "seller=Seller-1|warehouse=_"
     )
 
 
