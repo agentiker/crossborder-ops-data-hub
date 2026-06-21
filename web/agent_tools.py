@@ -94,12 +94,12 @@ TOOL_SPECS: list[ToolSpec] = [
     ),
     ToolSpec(
         name="ops_report",
-        description="生成经营报告签名链接（可视化图表），可附加在回复中。问'经营日报/数据报告/可视化报告'时用。",
+        description="生成经营报告签名链接（可视化图表），可附加在回复中。问'经营日报/周报/数据报告/可视化报告'时用。",
         parameters={
             "type": "object",
             "properties": {
-                "template_name": {"type": "string", "description": "固定 daily_brief（版型按时间窗自动判定，无需选择）", "default": "daily_brief"},
-                "period": {"type": "string", "description": "时间窗口：today/yesterday/this_week/last_week/last_7d/last_30d/this_month。单日(today/yesterday)出日报版型(当日数+近7天迷你趋势)，多日出区间报版型(区间汇总+完整趋势)，系统自动判定。问'今天/日报'传 today；'本周/周报'传 this_week 或 last_7d；'近30天/月报'传 last_30d", "default": "last_7d"},
+                "template_name": {"type": "string", "enum": ["daily_brief", "weekly_review"], "description": "报告类型：daily_brief=日报/区间报（KPI+趋势+爆款+断货，版型按时间窗自动判定）；weekly_review=经营周报（商品健康度视角：客单价+爆款集中度+动销率+新品表现+周度复盘建议）。问'周报/周度复盘/本周经营'用 weekly_review，其余用 daily_brief。", "default": "daily_brief"},
+                "period": {"type": "string", "description": "时间窗口：today/yesterday/this_week/last_week/last_7d/last_30d/this_month。【日报】单日(today/yesterday)出日报版型、多日出区间报版型；问'今天/日报'传 today、'近30天/月报'传 last_30d。【周报 weekly_review】传 last_week=上周整周(周对周)、this_week=本周截至此刻(vs 上周同期)；问'上周周报'传 last_week，'本周到现在'传 this_week。", "default": "last_7d"},
             },
             "required": [],
         },

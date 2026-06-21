@@ -29,7 +29,13 @@ from core.timezone import (
     previous_window,
     resolve_period,
 )
-from services.order_metrics import get_gmv_summary_intraday
+from services.order_metrics import (
+    get_gmv_summary,
+    get_gmv_summary_intraday,
+    get_gmv_summary_intraday_range,
+    get_new_product_performance,
+    get_sell_through,
+)
 from web.routes.data import (
     _resolve_scope,
     get_ad_spend,
@@ -317,7 +323,229 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
     }
 
 
-_VALID_TEMPLATES = {"daily_brief"}
+def _weekly_windows(intraday: bool):
+    """周报两种触发的窗口/基准统一，返回 (cur_sd, cur_ed, prev_sd, prev_ed, cutoff)。
+
+    定时（intraday=False）：当期=上周整周，基准=上上周（previous_window 自动落位）；整天对整天，
+      cutoff=None。
+    实时（intraday=True）：当期=本周一~今天，基准=上周一~上周同一相对日（天数与本周已过天数严格
+      相等），cutoff=此刻 → 两边都钉"截至此刻"，杜绝"本周3天 vs 上周整周"假暴跌。
+    """
+    if intraday:
+        cur_sd, cur_ed = resolve_period("this_week")
+        cutoff = business_now().time()
+    else:
+        cur_sd, cur_ed = resolve_period("last_week")
+        cutoff = None
+    prev_sd, prev_ed = previous_window(cur_sd, cur_ed)
+    return cur_sd, cur_ed, prev_sd, prev_ed, cutoff
+
+
+async def _collect_weekly(open_id: str, period) -> dict:
+    """周报数据层（商品健康度视角）。按 open_id binding scope 强制软隔离（scope_id/shop_id 钉 None）。
+
+    两种触发由 period 分流：period=="last_week" → 定时整周；其余（this_week 等）→ 实时 intraday
+    周对周。KPI=GMV/订单/客单价/广告/ROAS；商品健康度=爆款集中度+动销率+新品表现。
+    """
+    intraday = (period != "last_week")
+    cur_sd, cur_ed, prev_sd, prev_ed, cutoff = _weekly_windows(intraday)
+
+    scope = _resolve_scope(open_id=open_id)
+    _sc = dict(platform=scope.platform, country=scope.country, shop_ids=scope.shop_ids)
+
+    # GMV / 订单 / 客单价（当期 + 上期）。intraday 用连续区间截至此刻，否则整天对整天。
+    if intraday:
+        cur = get_gmv_summary_intraday_range(start_date=cur_sd, end_date=cur_ed, cutoff=cutoff, **_sc)
+        prev = get_gmv_summary_intraday_range(start_date=prev_sd, end_date=prev_ed, cutoff=cutoff, **_sc)
+        change_label = "较上周同期"
+        cutoff_label = ("数据截至 " + business_now().strftime("%m-%d %H:%M")
+                        + "（印尼时间）· 本周累计 vs 上周同期")
+    else:
+        cur = get_gmv_summary(start_date=cur_sd, end_date=cur_ed, **_sc)
+        prev = get_gmv_summary(start_date=prev_sd, end_date=prev_ed, **_sc)
+        change_label = "较上周"
+        cutoff_label = None
+
+    cur_gmv = cur.get("gmv", 0) or 0
+    cur_orders = cur.get("order_count", 0) or 0
+    cur_aov = cur.get("avg_order_value", 0) or 0
+    prev_gmv = prev.get("gmv", 0) or 0
+    prev_orders = prev.get("order_count", 0) or 0
+    prev_aov = prev.get("avg_order_value", 0) or 0
+
+    # 广告消耗（整窗口结算口径；v1 无 intraday，见 ad_tip 注明）+ ROAS（与展示的 GMV/广告同源）
+    ad = _asdict(await get_ad_spend(
+        start_date=cur_sd.isoformat(), end_date=cur_ed.isoformat(), period=None,
+        platform=None, country=None, shop_id=None, scope_id=None, shop_ids=None, open_id=open_id,
+    ))
+    ad_prev = _asdict(await get_ad_spend(
+        start_date=prev_sd.isoformat(), end_date=prev_ed.isoformat(), period=None,
+        platform=None, country=None, shop_id=None, scope_id=None, shop_ids=None, open_id=open_id,
+    ))
+    cur_ad = ad.get("total_ad_spend", 0) or 0
+    prev_ad = ad_prev.get("total_ad_spend", 0) or 0
+    cur_roas = round(cur_gmv / cur_ad, 2) if cur_ad else None
+    prev_roas = round(prev_gmv / prev_ad, 2) if prev_ad else None
+
+    # 趋势（周内日维度：GMV / 广告 / 订单）
+    trend = _asdict(await get_orders_trend(
+        start_date=cur_sd.isoformat(), end_date=cur_ed.isoformat(), period=None,
+        platform=None, country=None, shop_id=None, scope_id=None, shop_ids=None, open_id=open_id,
+    ))
+    ad_trend = _asdict(await get_ad_spend_trend(
+        start_date=cur_sd.isoformat(), end_date=cur_ed.isoformat(), period=None,
+        platform=None, country=None, shop_id=None, scope_id=None, shop_ids=None, open_id=open_id,
+    ))
+    trend_points = trend.get("points", [])
+    dates = [p.get("date", "")[5:] for p in trend_points]  # MM-DD
+    gmv_series = [p.get("gmv", 0) for p in trend_points]
+    orders_series = [p.get("order_count", 0) for p in trend_points]
+    ad_by_date = {p.get("date"): p.get("total_ad_spend", 0) for p in ad_trend.get("points", [])}
+    ad_series = [ad_by_date.get(p.get("date"), 0) for p in trend_points]
+
+    # Top SKU（爆款集中度用）
+    top = _asdict(await get_orders_top_skus(
+        start_date=cur_sd.isoformat(), end_date=cur_ed.isoformat(), period=None,
+        platform=None, country=None, shop_id=None, scope_id=None, shop_ids=None,
+        limit=10, open_id=open_id,
+    ))
+    top_items = []
+    for item in top.get("items", [])[:10]:
+        item_gmv = item.get("gmv", 0) or 0
+        share = round(item_gmv / cur_gmv * 100, 1) if cur_gmv else None
+        top_items.append({
+            "name": item.get("product_name") or item.get("sku_name") or item.get("sku_id") or "?",
+            "units": item.get("units_sold", 0),
+            "gmv": item_gmv,
+            "share": share,
+        })
+
+    # 断货预警（快照，同日报）
+    low = _asdict(await get_low_stock(
+        platform=None, country=None, shop_id=None, scope_id=None, shop_ids=None,
+        critical_days=None, warning_days=None, open_id=open_id,
+    ))
+    low_items = []
+    level_map = {"stockout": "断货", "critical": "告急", "warning": "预警"}
+    _severity = {"stockout": 0, "critical": 1, "warning": 2}
+    low_sorted = sorted(
+        low.get("items", []),
+        key=lambda it: (_severity.get(it.get("bucket", ""), 9), it.get("days_of_cover", 0)),
+    )
+    risk_count = low.get("buckets", {}).get("total")
+    if risk_count is None:
+        risk_count = len(low.get("items", []))
+    for item in low_sorted[:20]:
+        bucket = item.get("bucket", "")
+        low_items.append({
+            "name": item.get("product_name") or item.get("sku_id") or "?",
+            "stock": item.get("available_stock", 0),
+            "velocity": round(item.get("daily_velocity", 0), 1),
+            "days": round(item.get("days_of_cover", 0), 1),
+            "level": bucket,
+            "level_label": level_map.get(bucket, bucket),
+        })
+
+    # 库存 SKU 数（概览快照）
+    overview = _asdict(await get_overview(
+        platform=None, country=None, shop_id=None, scope_id=None, shop_ids=None, open_id=open_id,
+    ))
+
+    # ── 商品结构健康度 ──
+    # 1) 爆款集中度：Top1 / Top3 贡献 GMV 占比
+    top1_share = top_items[0]["share"] if top_items else None
+    top1_name = top_items[0]["name"] if top_items else None
+    top3_share = round(sum((t["share"] or 0) for t in top_items[:3]), 1) if top_items else None
+    # 2) 动销率
+    sell = get_sell_through(start_date=cur_sd, end_date=cur_ed, cutoff=cutoff, **_sc)
+    # 3) 新品表现
+    new_prods = get_new_product_performance(
+        start_date=cur_sd, end_date=cur_ed, cutoff=cutoff, limit=10, **_sc,
+    )
+
+    # 低单量护栏（同日报）：当期或基准单量个位数时不显示环比%（小样本噪声）
+    low_volume = (cur_orders < 10) or (prev_orders < 10)
+    baseline_label = change_label.lstrip("较").strip()
+
+    generated_at = datetime.now(_JAKARTA_TZ).strftime("%Y-%m-%d %H:%M")
+    gmv_tip = (
+        "GMV=已付款订单买家实付额（含运费/税/优惠，非平台结算）。"
+        f"环比={change_label}（紧邻等长上周窗口）。"
+    )
+    aov_tip = "客单价=GMV/订单数（已付款口径）。"
+    ad_tip = (
+        "广告消耗=结算口径，含 GMV Max / TAP / 联盟三项拆分。"
+        f"环比={change_label}。广告为**整周累计口径**（暂无 intraday），实时周报里与 GMV"
+        "『截至此刻』不完全对齐；广告数据接通中，可能偏低或为 0。"
+    )
+
+    return {
+        "kind": "weekly",
+        "title": "经营周报",
+        "change_label": change_label,
+        "low_volume": low_volume,
+        "baseline_label": baseline_label,
+        "trend_title": "GMV / 广告 / 订单趋势（本周日维度）",
+        "trend_mini": False,
+        "intraday": intraday,
+        "cutoff_label": cutoff_label,
+        "scope": overview.get("scope") or "全店",
+        "period_label": describe_window(cur_sd, cur_ed),
+        "generated_at": generated_at,
+        "kpi": {
+            "gmv": {
+                "value": cur_gmv,
+                "change": None if low_volume else _calc_change(cur_gmv, prev_gmv),
+                "baseline": round(prev_gmv),
+                "currency": "IDR",
+                "tip": gmv_tip,
+            },
+            "orders": {
+                "value": cur_orders,
+                "change": None if low_volume else _calc_change(cur_orders, prev_orders),
+                "baseline": round(prev_orders, 1),
+            },
+            "aov": {
+                "value": cur_aov,
+                "change": None if low_volume else _calc_change(cur_aov, prev_aov),
+                "baseline": round(prev_aov),
+                "currency": "IDR",
+                "tip": aov_tip,
+            },
+            "ad_spend": {
+                "value": cur_ad,
+                "change": _calc_change(cur_ad, prev_ad),
+                "currency": "IDR",
+                "tip": ad_tip,
+            },
+            "roas": {
+                "value": cur_roas,
+                "change": _calc_change(cur_roas, prev_roas) if cur_roas and prev_roas else None,
+            },
+            "sku_count": overview.get("inventory", {}).get("total_sku", 0),
+            "low_stock_count": risk_count,
+        },
+        "health": {
+            "concentration": {
+                "top1_name": top1_name,
+                "top1_share": top1_share,
+                "top3_share": top3_share,
+            },
+            "sell_through": sell,
+            "new_products": new_prods,
+        },
+        "trend": {
+            "dates": dates,
+            "gmv": gmv_series,
+            "orders": orders_series,
+            "ad_spend": ad_series,
+        },
+        "top_skus": top_items[:5],
+        "low_stock": low_items,
+    }
+
+
+_VALID_TEMPLATES = {"daily_brief", "weekly_review"}
 
 
 # /board/report/... 是 /report/... 的别名：飞书 applink(web_app/open + lk_target_url)在 PC 端
@@ -359,7 +587,10 @@ async def report(
         return HTMLResponse(_render_forbidden(), status_code=403)
 
     # 3) 本人：照常取数渲染（软隔离按 open_id 的 binding）
-    data = await _collect(open_id, start_date, end_date, period)
+    if template_name == "weekly_review":
+        data = await _collect_weekly(open_id, period)
+    else:
+        data = await _collect(open_id, start_date, end_date, period)
     return HTMLResponse(_render(data))
 
 
@@ -487,6 +718,111 @@ def _build_insight_prompt(data: dict) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+_WEEKLY_INSIGHT_SYSTEM = (
+    "你是跨境电商运营分析助手，为老板写每周经营复盘。严格只依据给定数字，禁止编造未提供的数据或"
+    "原因。输出**严格 JSON**（不要 markdown 围栏、不要多余文字）："
+    '{"headline": "一句话周度结论", "review": ["..."], "learnings": ["..."], "next_actions": ["..."]}。'
+    "headline≤40字、点明本周经营好坏与最关键信号；review 问题复盘 1-4 条、每条≤40字、"
+    "聚焦本周数字暴露的真问题（周环比骤降、单款依赖过高、动销率低、断货、新品测款失败等）；"
+    "learnings 经验总结 1-3 条、从本周表现提炼可复用的规律（什么品类/打法有效、什么无效）；"
+    "next_actions 下周建议 1-4 条、具体可执行（补货/调整选品/控制单款依赖等）。全部用中文。"
+    "重要约束："
+    "(1) 广告消耗为 0 通常是广告数据尚未接通（不是没投广告），**不要**当问题、不要建议投放。"
+    "(2) 若数据标注为『本周累计』：本周尚未结束、环比已是同期口径，不要因绝对值偏小判断崩盘。"
+    "(3) **低单量护栏**：单量个位数时环比%是小样本噪声，禁用骤降/暴跌措辞、如实陈述绝对值。"
+    "(4) 商品健康度是周报重点：爆款集中度过高（Top1>50%或Top3>90%）= 单款依赖风险；动销率低"
+    "（出单SKU少）= 选品效率低；新品零销量 = 测款失败——请据这些信号给复盘与建议。"
+)
+
+
+def _build_weekly_insight_prompt(data: dict) -> str:
+    """把周报指标（含商品健康度）压成喂给 LLM 的精简数字上下文。"""
+    kpi = data.get("kpi", {})
+    health = data.get("health", {})
+    conc = health.get("concentration", {})
+    sell = health.get("sell_through", {})
+    anomalies = _detect_anomalies(
+        data.get("trend", {}).get("dates", []), data.get("trend", {}).get("gmv", [])
+    )
+    payload = {
+        "报告类型": "经营周报",
+        "数据口径": (data.get("cutoff_label") or "完整整周") if data.get("intraday") else "完整整周",
+        "范围": data.get("scope"),
+        "周期": data.get("period_label"),
+        "环比基准": data.get("change_label"),
+        "GMV": kpi.get("gmv", {}).get("value"),
+        "GMV基准值": kpi.get("gmv", {}).get("baseline"),
+        "GMV环比%": kpi.get("gmv", {}).get("change"),
+        "订单数": kpi.get("orders", {}).get("value"),
+        "订单环比%": kpi.get("orders", {}).get("change"),
+        "客单价": kpi.get("aov", {}).get("value"),
+        "客单价环比%": kpi.get("aov", {}).get("change"),
+        "广告消耗": kpi.get("ad_spend", {}).get("value"),
+        "广告环比%": kpi.get("ad_spend", {}).get("change"),
+        "ROAS": kpi.get("roas", {}).get("value"),
+        "断货风险SKU数": kpi.get("low_stock_count"),
+        "爆款集中度": {
+            "Top1款": conc.get("top1_name"),
+            "Top1贡献GMV%": conc.get("top1_share"),
+            "Top3贡献GMV%": conc.get("top3_share"),
+        },
+        "动销率": {
+            "出单SKU数": sell.get("active_sku"),
+            "在库SKU数": sell.get("total_sku"),
+            "动销率%": sell.get("rate"),
+        },
+        "本周新品表现": [
+            {"名称": p.get("title"), "销量": p.get("units_sold"), "GMV": p.get("gmv")}
+            for p in health.get("new_products", [])[:10]
+        ],
+        "Top爆款": [
+            {"名称": t.get("name"), "销量": t.get("units"), "GMV占比%": t.get("share")}
+            for t in data.get("top_skus", [])[:5]
+        ],
+        "断货预警Top": [
+            {"名称": l.get("name"), "风险": l.get("level_label"),
+             "库存": l.get("stock"), "可售天数": l.get("days")}
+            for l in data.get("low_stock", [])[:5]
+        ],
+        "趋势异常日": anomalies,
+        "币种": "IDR（印尼盾）",
+    }
+    cur_orders = kpi.get("orders", {}).get("value") or 0
+    if cur_orders < 10:
+        payload["低单量提示"] = (
+            "本周单量很小（个位数），环比百分比为小样本噪声，勿用骤降/暴跌措辞、勿当严重问题。"
+        )
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _parse_weekly_insight(text: str) -> dict | None:
+    """容错解析周报 LLM 返回的 JSON（剥围栏）。失败返回 None。结构含复盘/经验/下周建议。"""
+    if not text:
+        return None
+    s = text.strip()
+    if s.startswith("```"):
+        s = s.split("```", 2)[1] if "```" in s[3:] else s.strip("`")
+        s = s[4:].strip() if s.lower().startswith("json") else s.strip()
+    try:
+        obj = json.loads(s)
+    except (ValueError, TypeError):
+        i, j = s.find("{"), s.rfind("}")
+        if i == -1 or j == -1 or j <= i:
+            return None
+        try:
+            obj = json.loads(s[i : j + 1])
+        except (ValueError, TypeError):
+            return None
+    if not isinstance(obj, dict) or "headline" not in obj:
+        return None
+    return {
+        "headline": str(obj.get("headline", "")).strip(),
+        "review": [str(x).strip() for x in (obj.get("review") or []) if str(x).strip()][:4],
+        "learnings": [str(x).strip() for x in (obj.get("learnings") or []) if str(x).strip()][:3],
+        "next_actions": [str(x).strip() for x in (obj.get("next_actions") or []) if str(x).strip()][:4],
+    }
+
+
 @router.get("/report/{template_name}/insight", include_in_schema=False)
 @router.get("/board/report/{template_name}/insight", include_in_schema=False)
 async def report_insight(
@@ -506,7 +842,9 @@ async def report_insight(
     if not viewer or viewer != open_id:
         return JSONResponse({"available": False, "reason": "forbidden"})
 
-    cache_key = (open_id, start_date or "", end_date or "", period or "", str(business_today()))
+    # 缓存键须含 template_name，否则日报/周报同 open_id+period 会串味（拿到对方的洞察）。
+    cache_key = (template_name, open_id, start_date or "", end_date or "", period or "",
+                 str(business_today()))
     if cache_key in _INSIGHT_CACHE:
         return JSONResponse(_INSIGHT_CACHE[cache_key])
 
@@ -514,14 +852,22 @@ async def report_insight(
         from services.llm import get_provider
         from services.llm.types import ChatMessage
 
-        data = await _collect(open_id, start_date, end_date, period)
+        is_weekly = template_name == "weekly_review"
+        if is_weekly:
+            data = await _collect_weekly(open_id, period)
+            system_prompt = _WEEKLY_INSIGHT_SYSTEM
+            user_prompt = _build_weekly_insight_prompt(data)
+        else:
+            data = await _collect(open_id, start_date, end_date, period)
+            system_prompt = _INSIGHT_SYSTEM
+            user_prompt = _build_insight_prompt(data)
         provider = get_provider()
         messages = [
-            ChatMessage(role="system", content=_INSIGHT_SYSTEM),
-            ChatMessage(role="user", content=_build_insight_prompt(data)),
+            ChatMessage(role="system", content=system_prompt),
+            ChatMessage(role="user", content=user_prompt),
         ]
         text = _llm_complete(provider, messages)
-        parsed = _parse_insight(text)
+        parsed = _parse_weekly_insight(text) if is_weekly else _parse_insight(text)
         if not parsed:
             return JSONResponse({"available": False, "reason": "parse"})
         result = {
@@ -539,7 +885,8 @@ async def report_insight(
 
 def _render(data: dict) -> str:
     payload = json.dumps(data, ensure_ascii=False)
-    return DAILY_BRIEF_HTML.replace("__DATA__", payload)
+    template = WEEKLY_REVIEW_HTML if data.get("kind") == "weekly" else DAILY_BRIEF_HTML
+    return template.replace("__DATA__", payload)
 
 
 def _render_error() -> str:
@@ -955,6 +1302,409 @@ document.getElementById('foot').textContent =
       const model = d.model ? '<div style="color:var(--sub);font-size:11px;margin-top:8px">🤖 由 '
         + _esc(d.model) + ' 总结，仅供参考</div>' : '';
       body.innerHTML = (html || '<div class="ai-loading">今日无突出问题</div>') + model;
+    })
+    .catch(() => { hl.style.display = 'none'; card.style.display = 'none'; });
+})();
+</script>
+</body>
+</html>"""
+
+
+# 周报模板：与 daily_brief 同 CSS/趋势图/表格骨架，差异在 KPI（5 张结果卡）、商品结构健康度卡、
+# 新品表现卡，以及 AI 三段复盘（复盘/经验/下周建议）。共享部分刻意逐字对齐，便于一处样式改两处生效。
+WEEKLY_REVIEW_HTML = r"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>经营周报</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+  :root { --primary:hsl(158 18% 12%); --success:hsl(152 52% 36%);
+          --warn:hsl(32 84% 44%); --danger:hsl(0 72% 50%);
+          --bg:hsl(58 20% 96%); --card:hsl(56 38% 99%);
+          --txt:rgba(25,36,32,.88); --txt2:rgba(25,36,32,.7); --sub:rgba(25,36,32,.5);
+          --border:rgba(0,0,0,.1); --border-shallow:rgba(0,0,0,.05);
+          --fill:rgba(0,0,0,.04); --fill-shallow:rgba(0,0,0,.02); }
+  @font-face { font-family:"GoogleSansFlex"; font-display:swap;
+               src:url("/app/fonts/GoogleSansFlex.woff2") format("woff2"); }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html { background:rgba(107,104,31,.05); }
+  body { background:var(--bg); color:var(--txt);
+         font:14px/1.5 "GoogleSansFlex",ui-sans-serif,system-ui,-apple-system,
+              "PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+         -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:800px; margin:0 auto; padding:16px 12px 40px; }
+  header { margin-bottom:16px; }
+  header h1 { font-size:20px; font-weight:700; color:var(--primary); letter-spacing:-.01em; }
+  .meta { color:var(--sub); font-size:12px; margin-top:4px; }
+  .kpis { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  .kpi { background:var(--card); border:1px solid var(--border-shallow); border-radius:12px;
+         padding:14px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .kpi .label { color:var(--sub); font-size:11px; }
+  .kpi .val { font-size:19px; font-weight:700; margin-top:3px;
+              font-variant-numeric:tabular-nums; letter-spacing:-.01em; }
+  .kpi .chg { display:inline-flex; align-items:center; gap:2px; margin-top:6px;
+              padding:1px 7px; border-radius:8px; font-size:11px; font-weight:600;
+              font-variant-numeric:tabular-nums; }
+  .chg.up { color:var(--success); background:rgba(34,139,90,.12); }
+  .chg.down { color:var(--danger); background:rgba(220,38,38,.1); }
+  .chg.base { color:var(--sub); background:transparent; padding:1px 0; font-weight:500; }
+  .card { background:var(--card); border:1px solid var(--border-shallow); border-radius:12px;
+          padding:14px; margin-top:12px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .card h2 { font-size:14px; font-weight:600; color:var(--txt); margin-bottom:10px;
+             display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .card h2 small { font-weight:400; font-size:12px; color:var(--sub); }
+  #trend-chart { width:100%; height:280px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--border-shallow); }
+  tbody tr:last-child td { border-bottom:none; }
+  tbody tr:hover td { background:var(--fill-shallow); }
+  th { color:var(--sub); font-weight:500; font-size:12px; }
+  th.num, td.num { text-align:right; }
+  td.num { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:8px; font-size:11px; font-weight:600; }
+  .pill.stockout { background:rgba(220,38,38,.1); color:var(--danger); }
+  .pill.critical { background:rgba(214,140,20,.14); color:var(--warn); }
+  .pill.warning  { background:rgba(25,36,32,.08); color:var(--txt2); }
+  .kpi-note { color:var(--sub); font-size:11px; margin-top:6px; padding:0 2px; }
+  .qmark { display:inline-flex; align-items:center; justify-content:center; cursor:pointer;
+           width:14px; height:14px; margin-left:4px; border-radius:50%; font-size:10px;
+           color:var(--sub); background:var(--fill); vertical-align:middle; }
+  .kpi { position:relative; }
+  .kpi .tip { display:none; position:absolute; z-index:5; left:10px; right:10px; top:100%;
+              margin-top:4px; padding:8px 10px; border-radius:8px; font-size:11px; line-height:1.5;
+              font-weight:400; color:var(--card); background:rgba(25,36,32,.92);
+              box-shadow:0 4px 12px rgba(0,0,0,.18); }
+  .kpi .tip.show { display:block; }
+  .ai-headline { margin:0 0 12px; padding:12px 14px; border-radius:12px;
+                 background:linear-gradient(135deg, rgba(44,140,95,.10), rgba(25,36,32,.04));
+                 border:1px solid var(--border-shallow); color:var(--txt);
+                 font-size:15px; font-weight:600; line-height:1.5; }
+  .ai-headline .tag { display:inline-block; margin-right:6px; padding:1px 6px; border-radius:6px;
+                      font-size:10px; font-weight:600; color:var(--success);
+                      background:rgba(44,140,95,.14); vertical-align:middle; }
+  .ai-headline.loading, .ai-card .ai-loading { color:var(--sub); font-weight:400; }
+  .ai-block { margin-bottom:10px; }
+  .ai-block:last-child { margin-bottom:0; }
+  .ai-block .h { font-size:12px; font-weight:600; color:var(--sub); margin-bottom:4px; }
+  .ai-block ul { margin:0; padding-left:18px; }
+  .ai-block li { font-size:13px; line-height:1.7; }
+  .ai-block.next li { color:var(--success); }
+  td.name { max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .foot { color:var(--sub); font-size:11px; margin-top:20px; text-align:center; }
+  /* 商品结构健康度卡：统计块网格 */
+  .health-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  .stat { padding:10px 12px; border-radius:10px; background:var(--fill-shallow);
+          border:1px solid var(--border-shallow); }
+  .stat .k { color:var(--sub); font-size:11px; }
+  .stat .v { font-size:18px; font-weight:700; margin-top:3px; font-variant-numeric:tabular-nums; }
+  .stat .s { color:var(--sub); font-size:11px; margin-top:3px;
+             overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .stat .s.warn { color:var(--warn); font-weight:600; }
+  @media (max-width:480px){
+    .kpis { grid-template-columns:repeat(2,1fr); }
+    .kpi .val { font-size:18px; }
+    .health-grid { grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 id="title">经营周报</h1>
+    <div class="meta" id="meta"></div>
+  </header>
+
+  <div class="ai-headline loading" id="ai-headline" style="display:none">
+    <span class="tag">🤖 AI 周度总结</span><span id="ai-headline-text">正在生成洞察…</span>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+  <div class="kpi-note" id="kpi-note"></div>
+
+  <div class="card">
+    <h2><span id="trend-title">GMV / 广告 / 订单趋势</span> <small id="trend-title-note"></small></h2>
+    <div id="trend-chart"></div>
+  </div>
+
+  <div class="card">
+    <h2>商品结构健康度 <small>爆款集中度 · 动销率</small></h2>
+    <div class="health-grid" id="health"></div>
+  </div>
+
+  <div class="card" id="newprod-card">
+    <h2>本周新品表现 <small>本周上新款的测款结果</small></h2>
+    <div id="newprod-wrap"></div>
+  </div>
+
+  <div class="card">
+    <h2>Top 5 爆款 <small>占比 = 该商品 GMV ÷ 本周总 GMV</small></h2>
+    <table><thead><tr><th>商品</th><th class="num">销量</th><th class="num">GMV</th><th class="num">占比</th></tr></thead>
+    <tbody id="top-body"></tbody></table>
+  </div>
+
+  <div class="card">
+    <h2>断货预警 <small>按可售天数（库存÷日均销速）排序</small></h2>
+    <div id="low-wrap"></div>
+  </div>
+
+  <div class="card" id="ai-card" style="display:none">
+    <h2>🤖 本周复盘 &amp; 下周建议 <small>AI 总结</small></h2>
+    <div id="ai-body"><div class="ai-loading">正在生成…</div></div>
+  </div>
+
+  <div class="foot" id="foot"></div>
+</div>
+
+<script>
+const DATA = __DATA__;
+
+document.getElementById('title').textContent = DATA.title || '经营周报';
+document.title = DATA.title || '经营周报';
+document.getElementById('meta').textContent =
+  DATA.scope + '  ·  ' + DATA.period_label + '  ·  生成于 ' + DATA.generated_at;
+
+const abbr = n => {
+  n = Number(n); const a = Math.abs(n);
+  if (a >= 1e9) return (n/1e9).toFixed(2) + 'B';
+  if (a >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  if (a >= 1e3) return (n/1e3).toFixed(0) + 'K';
+  return String(Math.round(n));
+};
+const fmtMoney = n => (n == null ? '—' : 'Rp ' + abbr(n));
+const fmtInt = n => (n == null ? '—' : Number(n).toLocaleString('en-US'));
+const fmtDec = n => (n == null ? '—' : Number(n).toFixed(2));
+const _esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function chgHtml(c) {
+  if (c == null) return '';
+  const cls = c >= 0 ? 'up' : 'down';
+  const arrow = c >= 0 ? '↑' : '↓';
+  return '<span class="chg ' + cls + '">' + arrow + ' ' + Math.abs(c) + '%</span>';
+}
+
+// -- KPI cards：周报固定 5 张结果卡（GMV / 订单 / 客单价 / 广告 / ROAS）--
+const _LV = !!DATA.low_volume;
+const _BL = DATA.baseline_label || '上周';
+const baseHtml = valHtml => '<span class="chg base">vs ' + _BL + ' ' + valHtml + '</span>';
+const kpiDefs = [
+  {label:'GMV', val: fmtMoney(DATA.kpi.gmv.value),
+   chg: _LV ? baseHtml(fmtMoney(DATA.kpi.gmv.baseline)) : chgHtml(DATA.kpi.gmv.change),
+   tip: DATA.kpi.gmv.tip},
+  {label:'订单数', val: fmtInt(DATA.kpi.orders.value),
+   chg: _LV ? baseHtml(fmtInt(DATA.kpi.orders.baseline) + ' 单') : chgHtml(DATA.kpi.orders.change)},
+  {label:'客单价', val: fmtMoney(DATA.kpi.aov.value),
+   chg: _LV ? baseHtml(fmtMoney(DATA.kpi.aov.baseline)) : chgHtml(DATA.kpi.aov.change),
+   tip: DATA.kpi.aov.tip},
+  {label:'广告消耗', val: fmtMoney(DATA.kpi.ad_spend.value),
+   chg: chgHtml(DATA.kpi.ad_spend.change), tip: DATA.kpi.ad_spend.tip},
+  {label:'ROAS', val: fmtDec(DATA.kpi.roas.value), chg: chgHtml(DATA.kpi.roas.change)},
+];
+const kpisEl = document.getElementById('kpis');
+kpiDefs.forEach(d => {
+  const div = document.createElement('div');
+  div.className = 'kpi';
+  const q = d.tip ? '<span class="qmark" title="点击查看口径">?</span>' : '';
+  const tip = d.tip ? '<div class="tip">' + d.tip + '</div>' : '';
+  div.innerHTML = '<div class="label">' + d.label + q + '</div>'
+    + '<div class="val">' + d.val + '</div>' + d.chg + tip;
+  kpisEl.appendChild(div);
+});
+kpisEl.querySelectorAll('.qmark').forEach(q => {
+  q.addEventListener('click', e => {
+    e.stopPropagation();
+    const tip = q.closest('.kpi').querySelector('.tip');
+    const open = tip.classList.contains('show');
+    kpisEl.querySelectorAll('.tip.show').forEach(t => t.classList.remove('show'));
+    if (!open) tip.classList.add('show');
+  });
+});
+document.addEventListener('click', () =>
+  kpisEl.querySelectorAll('.tip.show').forEach(t => t.classList.remove('show')));
+document.getElementById('kpi-note').textContent =
+  (DATA.cutoff_label ? DATA.cutoff_label
+                     : '↑↓ 为环比变化（' + (DATA.change_label || '较上周') + '）')
+  + (DATA.low_volume ? ' · 单量小，环比百分比噪声大已隐藏，改示绝对基准对比' : '');
+
+// -- 商品结构健康度 --
+(function renderHealth(){
+  const h = DATA.health || {};
+  const c = h.concentration || {};
+  const st = h.sell_through || {};
+  const el = document.getElementById('health');
+  // 单款依赖风险：Top1>50% 或 Top3>90%
+  const depRisk = (c.top1_share != null && c.top1_share > 50)
+               || (c.top3_share != null && c.top3_share > 90);
+  const stats = [
+    {k:'Top1 款贡献 GMV', v: c.top1_share == null ? '—' : c.top1_share + '%',
+     s: c.top1_name ? _esc(c.top1_name) : '—',
+     warn: c.top1_share != null && c.top1_share > 50},
+    {k:'Top3 款贡献 GMV', v: c.top3_share == null ? '—' : c.top3_share + '%',
+     s: depRisk ? '单款依赖偏高，注意风险' : '结构较均衡', warn: depRisk},
+    {k:'动销率', v: st.rate == null ? '—' : st.rate + '%',
+     s: (st.active_sku == null ? '—' : st.active_sku) + ' / '
+        + (st.total_sku == null ? '—' : st.total_sku) + ' SKU 出单',
+     warn: st.rate != null && st.rate < 40},
+  ];
+  el.innerHTML = stats.map(s =>
+    '<div class="stat"><div class="k">' + s.k + '</div>'
+    + '<div class="v">' + s.v + '</div>'
+    + '<div class="s' + (s.warn ? ' warn' : '') + '">' + s.s + '</div></div>'
+  ).join('');
+})();
+
+// -- 本周新品表现 --
+(function renderNewProducts(){
+  const wrap = document.getElementById('newprod-wrap');
+  const items = DATA.health && DATA.health.new_products || [];
+  if (!items.length) {
+    wrap.innerHTML = '<div style="text-align:center;color:var(--sub);padding:16px 0">本周无上新商品</div>';
+    return;
+  }
+  let html = '<table><thead><tr><th>新品</th><th class="num">销量</th><th class="num">GMV</th></tr></thead><tbody>';
+  items.forEach(p => {
+    const nm = _esc(p.title);
+    const zero = (p.units_sold || 0) === 0;
+    html += '<tr><td class="name" title="' + nm + '">' + nm + '</td>'
+      + '<td class="num">' + (zero ? '<span class="pill warning">0 测款待察</span>' : fmtInt(p.units_sold)) + '</td>'
+      + '<td class="num">' + fmtMoney(p.gmv) + '</td></tr>';
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+})();
+
+// -- 趋势卡 --
+document.getElementById('trend-title').textContent = DATA.trend_title || 'GMV / 广告 / 订单趋势';
+
+const C_GMV = 'rgb(25,36,32)', C_AD = 'rgb(206,118,18)', C_ORD = 'rgb(44,140,95)';
+const C_SUB = 'rgba(25,36,32,.5)', C_GRID = 'rgba(0,0,0,.06)';
+const chart = echarts.init(document.getElementById('trend-chart'));
+const _dates = DATA.trend.dates || [];
+const _isSingleDay = _dates.length <= 1;
+
+function _median(arr){ const a=arr.filter(v=>v!=null).slice().sort((x,y)=>x-y);
+  if(!a.length) return 0; const m=Math.floor(a.length/2); return a.length%2?a[m]:(a[m-1]+a[m])/2; }
+const _g = DATA.trend.gmv || [];
+const _mk = [];
+if (_g.length >= 3) {
+  const m = _median(_g);
+  if (m > 0) {
+    let hi=0, lo=0;
+    _g.forEach((v,i)=>{ if(v>_g[hi]) hi=i; if(v<_g[lo]) lo=i; });
+    if (_g[hi] > m*1.5)
+      _mk.push({coord:[_dates[hi],_g[hi]], value:'爆单', symbol:'pin', symbolSize:42,
+                itemStyle:{color:'rgba(206,118,18,.92)'}, label:{color:'#fff',fontSize:10,fontWeight:600}});
+    if (_g[lo] > 0 && _g[lo] < m*0.5 && lo!==hi)
+      _mk.push({coord:[_dates[lo],_g[lo]], value:'骤降', symbol:'pin', symbolSize:42,
+                itemStyle:{color:'rgba(220,38,38,.92)'}, label:{color:'#fff',fontSize:10,fontWeight:600}});
+  }
+}
+
+chart.setOption({
+  tooltip: { trigger:'axis',
+    formatter: function(ps){
+      let s = ps[0].axisValue + '<br/>';
+      ps.forEach(p => {
+        const v = p.seriesName === '订单数' ? fmtInt(p.value) : fmtMoney(p.value);
+        s += p.marker + p.seriesName + '：<b>' + v + '</b><br/>';
+      });
+      return s;
+    } },
+  legend: { data:['GMV','广告消耗','订单数'], bottom:0, left:'center', type:'scroll',
+            itemWidth:14, itemHeight:8, itemGap:16,
+            textStyle:{color:C_SUB}, pageTextStyle:{color:C_SUB} },
+  grid: { top:30, left:48, right:44, bottom:54 },
+  xAxis: { type:'category', data: _dates, boundaryGap:true,
+    axisLabel:{ color:C_SUB }, axisLine:{ lineStyle:{ color:C_GRID } },
+    axisTick:{ show:false } },
+  yAxis: [
+    { type:'value', name:'GMV/广告', position:'left', nameTextStyle:{ color:C_SUB, fontSize:11 },
+      axisLabel:{ color:C_SUB, formatter:v=> abbr(v) },
+      splitLine:{ lineStyle:{ color:C_GRID } } },
+    { type:'value', name:'订单', position:'right', nameTextStyle:{ color:C_SUB, fontSize:11 },
+      axisLabel:{ color:C_SUB }, splitLine:{ show:false } },
+  ],
+  series: [
+    { name:'GMV', type:'line', data: DATA.trend.gmv, smooth:true, showSymbol:_isSingleDay,
+      symbolSize:6, lineStyle:{ width:2.5 }, itemStyle:{color:C_GMV},
+      areaStyle:{color:'rgba(25,36,32,.06)'},
+      markPoint:{ data:_mk, silent:true } },
+    { name:'广告消耗', type:'line', data: DATA.trend.ad_spend || [], smooth:true, showSymbol:_isSingleDay,
+      symbolSize:6, lineStyle:{ width:2 }, itemStyle:{color:C_AD} },
+    { name:'订单数', type:'bar', yAxisIndex:1, data: DATA.trend.orders,
+      barMaxWidth: _isSingleDay ? 44 : 26,
+      itemStyle:{color:'rgba(44,140,95,.55)', borderRadius:[4,4,0,0]} },
+  ],
+});
+window.addEventListener('resize', () => chart.resize());
+
+// -- Top 5 SKU --
+const topBody = document.getElementById('top-body');
+(DATA.top_skus || []).forEach(s => {
+  const tr = document.createElement('tr');
+  const nm = _esc(s.name);
+  tr.innerHTML = '<td class="name" title="' + nm + '">' + nm + '</td>'
+    + '<td class="num">' + fmtInt(s.units) + '</td>'
+    + '<td class="num">' + fmtMoney(s.gmv) + '</td>'
+    + '<td class="num">' + (s.share == null ? '—' : s.share + '%') + '</td>';
+  topBody.appendChild(tr);
+});
+if (!DATA.top_skus || !DATA.top_skus.length) {
+  topBody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--sub)">暂无数据</td></tr>';
+}
+
+// -- Low stock --
+const lowWrap = document.getElementById('low-wrap');
+const lowItems = DATA.low_stock || [];
+if (!lowItems.length) {
+  lowWrap.innerHTML = '<div style="text-align:center;color:var(--sub);padding:16px 0">暂无断货风险 SKU</div>';
+} else {
+  let html = '<table><thead><tr><th>商品</th><th>风险</th><th class="num">库存</th>'
+    + '<th class="num">日均销速</th><th class="num">可售天数</th></tr></thead><tbody>';
+  lowItems.forEach(it => {
+    const nm = _esc(it.name);
+    html += '<tr><td class="name" title="' + nm + '">' + nm + '</td>'
+      + '<td><span class="pill ' + it.level + '">' + it.level_label + '</span></td>'
+      + '<td class="num">' + fmtInt(it.stock) + '</td>'
+      + '<td class="num">' + it.velocity + '</td>'
+      + '<td class="num">' + it.days + '</td></tr>';
+  });
+  html += '</tbody></table>';
+  lowWrap.innerHTML = html;
+}
+
+document.getElementById('foot').textContent =
+  '数据由 Data Hub 提供 · 结算口径 · ' + DATA.generated_at;
+
+// -- AI 周度复盘：渐进加载，三段（复盘 / 经验 / 下周建议）--
+(function loadInsight(){
+  const hl = document.getElementById('ai-headline');
+  const hlText = document.getElementById('ai-headline-text');
+  const card = document.getElementById('ai-card');
+  const body = document.getElementById('ai-body');
+  hl.style.display = 'block';
+  card.style.display = 'block';
+  const url = location.pathname + '/insight' + location.search;
+  fetch(url, {credentials:'same-origin'})
+    .then(r => r.json())
+    .then(d => {
+      if (!d || !d.available) {
+        hl.style.display = 'none'; card.style.display = 'none'; return;
+      }
+      hl.classList.remove('loading');
+      hlText.textContent = d.headline || '';
+      const sect = (cls, title, arr) => (arr && arr.length)
+        ? '<div class="ai-block ' + cls + '"><div class="h">' + title + '</div><ul>'
+          + arr.map(x => '<li>' + _esc(x) + '</li>').join('') + '</ul></div>'
+        : '';
+      let html = sect('review', '问题复盘', d.review)
+               + sect('learnings', '经验总结', d.learnings)
+               + sect('next', '下周建议', d.next_actions);
+      const model = d.model ? '<div style="color:var(--sub);font-size:11px;margin-top:8px">🤖 由 '
+        + _esc(d.model) + ' 总结，仅供参考</div>' : '';
+      body.innerHTML = (html || '<div class="ai-loading">本周无突出问题</div>') + model;
     })
     .catch(() => { hl.style.display = 'none'; card.style.display = 'none'; });
 })();

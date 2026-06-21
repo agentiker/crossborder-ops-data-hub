@@ -8,6 +8,8 @@
 """
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -479,3 +481,317 @@ import asyncio
 def _run(coro):
     """Run async function synchronously (same pattern as agent_tools._run)."""
     return asyncio.run(coro)
+
+
+# ════════════════════════════════════════════════════════════════════
+# 经营周报 weekly_review
+# ════════════════════════════════════════════════════════════════════
+
+
+# ── _weekly_windows / _window_bounds：窗口与基准 ─────────────────────
+
+
+def test_weekly_windows_scheduled_last_week():
+    """定时（非 intraday）：当期=上周整周（7天），基准=上上周（7天），cutoff=None，紧邻。"""
+    from web.routes.report import _weekly_windows
+
+    cur_sd, cur_ed, prev_sd, prev_ed, cutoff = _weekly_windows(intraday=False)
+    assert cutoff is None
+    assert (cur_ed - cur_sd).days == 6          # 上周一~上周日 = 7 天
+    assert (prev_ed - prev_sd).days == 6         # 上上周也 7 天
+    assert prev_ed == cur_sd - timedelta(days=1)  # 基准紧邻当期之前
+    assert cur_sd.weekday() == 0                  # 周一起算
+
+
+def test_weekly_windows_intraday_this_week():
+    """实时（intraday）：当期=本周一~今天，基准=上周同期（天数严格相等），cutoff 非空。"""
+    from web.routes.report import _weekly_windows
+    from core.timezone import business_today
+
+    cur_sd, cur_ed, prev_sd, prev_ed, cutoff = _weekly_windows(intraday=True)
+    assert cutoff is not None
+    assert cur_ed == business_today()
+    assert cur_sd.weekday() == 0
+    # 本周已过天数 == 上周同期天数（杜绝"本周3天 vs 上周整周"）
+    assert (cur_ed - cur_sd).days == (prev_ed - prev_sd).days
+    assert prev_ed == cur_sd - timedelta(days=1)
+    assert prev_sd == cur_sd - timedelta(days=7)  # 上周一
+
+
+def test_window_bounds_intraday_vs_fullday():
+    """_window_bounds：cutoff 非空→连续区间[起当地00:00, 末当地cutoff]；为空→整天闭区间。"""
+    from datetime import date, time
+    from core.timezone import intraday_window_utc, paid_window_utc
+    from services.order_metrics import _window_bounds
+
+    sd, ed = date(2026, 6, 8), date(2026, 6, 10)
+    cut = time(14, 30)
+    # intraday：起点 = 起始日当地 00:00 的 UTC；终点 = 末日当地 cutoff 的 UTC
+    s, e = _window_bounds(sd, ed, cut)
+    assert s == paid_window_utc(sd, sd)[0]
+    assert e == intraday_window_utc(ed, cut)[1]
+    # 非 intraday：整天闭区间
+    s2, e2 = _window_bounds(sd, ed, None)
+    assert (s2, e2) == paid_window_utc(sd, ed)
+
+
+# ── _collect_weekly：商品健康度 + KPI（patch 数据源，免连库）──────────
+
+
+def _patch_weekly_data_sources(monkeypatch):
+    """monkeypatch _collect_weekly 依赖的端点 + 服务函数，避免连库。"""
+    from datetime import date, datetime as _dt, timedelta as _td
+    from services.scope_resolution import ScopeFilters
+
+    async def fake_overview(**k):
+        return {"scope": "全店", "inventory": {"total_sku": 120, "low_stock_count": 4},
+                "orders": {"gmv": 1000, "order_count": 50}}
+
+    async def fake_orders_trend(*, start_date, end_date, **k):
+        sd, ed = date.fromisoformat(start_date), date.fromisoformat(end_date)
+        pts, d = [], sd
+        while d <= ed:
+            pts.append({"date": d.isoformat(), "gmv": 100, "order_count": 5})
+            d += _td(days=1)
+        return {"points": pts}
+
+    async def fake_ad_spend(**k):
+        return {"total_ad_spend": 200, "roas": 5.0}
+
+    async def fake_ad_trend(*, start_date, end_date, **k):
+        return {"points": []}
+
+    async def fake_top(**k):
+        return {"items": [
+            {"product_name": "爆款A", "units_sold": 60, "gmv": 600},
+            {"product_name": "爆款B", "units_sold": 20, "gmv": 200},
+            {"product_name": "爆款C", "units_sold": 10, "gmv": 100},
+        ]}
+
+    async def fake_low(**k):
+        return {"items": [
+                    {"product_name": "断货品", "available_stock": 0, "daily_velocity": 5.0,
+                     "days_of_cover": 0.0, "bucket": "stockout"}],
+                "buckets": {"stockout": 1, "critical": 0, "warning": 0, "total": 1}}
+
+    monkeypatch.setattr("web.routes.report.get_overview", fake_overview)
+    monkeypatch.setattr("web.routes.report.get_orders_trend", fake_orders_trend)
+    monkeypatch.setattr("web.routes.report.get_ad_spend", fake_ad_spend)
+    monkeypatch.setattr("web.routes.report.get_ad_spend_trend", fake_ad_trend)
+    monkeypatch.setattr("web.routes.report.get_orders_top_skus", fake_top)
+    monkeypatch.setattr("web.routes.report.get_low_stock", fake_low)
+
+    monkeypatch.setattr("web.routes.report._resolve_scope",
+                        lambda **k: ScopeFilters(platform=None, country=None, shop_ids=None,
+                                                 scope_key=None, display_text="全店"))
+    monkeypatch.setattr("web.routes.report.business_now", lambda: _dt(2026, 6, 20, 14, 30))
+    # 服务层聚合（同步函数，已 import 进 report 命名空间）
+    monkeypatch.setattr("web.routes.report.get_gmv_summary",
+                        lambda **k: {"gmv": 1000, "order_count": 50, "units_sold": 80,
+                                     "avg_order_value": 20})
+    monkeypatch.setattr("web.routes.report.get_gmv_summary_intraday_range",
+                        lambda **k: {"gmv": 500, "order_count": 25, "units_sold": 40,
+                                     "avg_order_value": 20})
+    monkeypatch.setattr("web.routes.report.get_sell_through",
+                        lambda **k: {"active_sku": 5, "total_sku": 14, "rate": 35.7})
+    monkeypatch.setattr("web.routes.report.get_new_product_performance",
+                        lambda **k: [{"product_id": "p1", "title": "新品A", "units_sold": 10, "gmv": 300},
+                                     {"product_id": "p2", "title": "新品B", "units_sold": 0, "gmv": 0}])
+
+
+def test_collect_weekly_scheduled_last_week(monkeypatch):
+    """定时周报（period=last_week）：kind=weekly、整周口径、较上周、5 KPI 齐全。"""
+    _patch_weekly_data_sources(monkeypatch)
+    from web.routes.report import _collect_weekly
+
+    data = _run(_collect_weekly("ou_x", "last_week"))
+    assert data["kind"] == "weekly"
+    assert data["title"] == "经营周报"
+    assert data["change_label"] == "较上周"
+    assert data["intraday"] is False
+    assert data["cutoff_label"] is None
+    # 5 张结果卡口径
+    assert data["kpi"]["gmv"]["value"] == 1000
+    assert data["kpi"]["aov"]["value"] == 20            # 客单价
+    assert data["kpi"]["ad_spend"]["value"] == 200
+    assert data["kpi"]["roas"]["value"] == 5.0          # 1000/200
+
+
+def test_collect_weekly_intraday_this_week(monkeypatch):
+    """实时周报（period=this_week）：intraday、较上周同期、cutoff_label 存在、GMV 走 intraday。"""
+    _patch_weekly_data_sources(monkeypatch)
+    from web.routes.report import _collect_weekly
+
+    data = _run(_collect_weekly("ou_x", "this_week"))
+    assert data["intraday"] is True
+    assert data["change_label"] == "较上周同期"
+    assert data["cutoff_label"] and "本周累计" in data["cutoff_label"]
+    assert data["kpi"]["gmv"]["value"] == 500           # intraday 区间取数
+
+
+def test_collect_weekly_concentration_and_health(monkeypatch):
+    """爆款集中度 Top1/Top3 占比 + 动销率 + 新品表现正确装配。"""
+    _patch_weekly_data_sources(monkeypatch)
+    from web.routes.report import _collect_weekly
+
+    data = _run(_collect_weekly("ou_x", "last_week"))
+    health = data["health"]
+    conc = health["concentration"]
+    assert conc["top1_name"] == "爆款A"
+    assert conc["top1_share"] == 60.0                    # 600 / 1000
+    assert conc["top3_share"] == 90.0                    # (600+200+100)/1000
+    assert health["sell_through"]["rate"] == 35.7
+    assert len(health["new_products"]) == 2
+    assert health["new_products"][1]["units_sold"] == 0  # 新品B 测款零销量
+
+
+def test_collect_weekly_aov_in_kpi_tip(monkeypatch):
+    """客单价卡含口径 tip；广告 tip 注明整周累计口径（实时无 intraday 边界）。"""
+    _patch_weekly_data_sources(monkeypatch)
+    from web.routes.report import _collect_weekly
+
+    data = _run(_collect_weekly("ou_x", "last_week"))
+    assert "客单价" in data["kpi"]["aov"]["tip"]
+    assert "整周累计" in data["kpi"]["ad_spend"]["tip"]
+
+
+# ── weekly 渲染 + insight ────────────────────────────────────────────
+
+
+_FAKE_WEEKLY_DATA = {
+    "kind": "weekly",
+    "title": "经营周报",
+    "change_label": "较上周",
+    "low_volume": False,
+    "baseline_label": "上周",
+    "trend_title": "GMV / 广告 / 订单趋势（本周日维度）",
+    "trend_mini": False,
+    "intraday": False,
+    "cutoff_label": None,
+    "scope": "全店",
+    "period_label": "印尼时间 6/8（周一） ~ 6/14（周日），共 7 天",
+    "generated_at": "2026-06-15 09:05",
+    "kpi": {
+        "gmv": {"value": 100000, "change": 12.0, "baseline": 89000, "currency": "IDR", "tip": "GMV..."},
+        "orders": {"value": 1500, "change": 8.0, "baseline": 1380},
+        "aov": {"value": 66, "change": 3.0, "baseline": 64, "currency": "IDR", "tip": "客单价=GMV/订单数"},
+        "ad_spend": {"value": 15000, "change": 5.0, "currency": "IDR", "tip": "广告..."},
+        "roas": {"value": 6.67, "change": 2.0},
+        "sku_count": 120,
+        "low_stock_count": 3,
+    },
+    "health": {
+        "concentration": {"top1_name": "爆款A", "top1_share": 55.0, "top3_share": 92.0},
+        "sell_through": {"active_sku": 5, "total_sku": 14, "rate": 35.7},
+        "new_products": [{"title": "新品A", "units_sold": 10, "gmv": 300},
+                         {"title": "新品B", "units_sold": 0, "gmv": 0}],
+    },
+    "trend": {"dates": ["06-08", "06-09"], "gmv": [12000, 14000],
+              "orders": [200, 230], "ad_spend": [2000, 2200]},
+    "top_skus": [{"name": "爆款A", "units": 800, "gmv": 55000, "share": 55.0}],
+    "low_stock": [],
+}
+
+
+async def _fake_collect_weekly(open_id, period):
+    return _FAKE_WEEKLY_DATA
+
+
+def test_weekly_report_renders_200(monkeypatch):
+    """/report/weekly_review 200 + kind=weekly + 周报特有内容块。"""
+    monkeypatch.setattr("web.routes.report._collect_weekly", _fake_collect_weekly)
+    token = make_token("ou_test_user", ttl=1800)
+    client = TestClient(app, cookies=_login_cookie("ou_test_user"))
+    r = client.get(f"/report/weekly_review?t={token}&period=last_week")
+    assert r.status_code == 200
+    assert "__DATA__" not in r.text
+    assert "经营周报" in r.text
+    assert "商品结构健康度" in r.text     # 健康度卡
+    assert "本周新品表现" in r.text       # 新品卡
+    assert "客单价" in r.text             # 周报 KPI
+    assert "动销率" in r.text
+    assert "echarts" in r.text
+
+
+def test_weekly_report_invalid_token_401():
+    """weekly_review token 无效 → 401。"""
+    client = TestClient(app)
+    r = client.get("/report/weekly_review?t=bad&period=last_week")
+    assert r.status_code == 401
+
+
+def test_weekly_insight_success(monkeypatch):
+    """周报 insight：返回 review/learnings/next_actions 三段（不同于日报 problems/actions）。"""
+    monkeypatch.setattr("web.routes.report._collect_weekly", _fake_collect_weekly)
+    fake = _FakeProvider(
+        '{"headline":"本周稳健增长","review":["单款依赖偏高"],'
+        '"learnings":["上衣类有效"],"next_actions":["拓展新品","补货爆款A"]}'
+    )
+    monkeypatch.setattr("services.llm.get_provider", lambda *a, **k: fake)
+    token = make_token("ou_test_user", ttl=1800)
+    client = TestClient(app, cookies=_login_cookie("ou_test_user"))
+    r = client.get(f"/report/weekly_review/insight?t={token}&period=last_week")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["available"] is True
+    assert d["headline"] == "本周稳健增长"
+    assert d["review"] == ["单款依赖偏高"]
+    assert d["learnings"] == ["上衣类有效"]
+    assert d["next_actions"] == ["拓展新品", "补货爆款A"]
+
+
+def test_parse_weekly_insight_tolerant():
+    """_parse_weekly_insight：剥围栏 + 缺字段降级（缺 headline 返 None）。"""
+    from web.routes.report import _parse_weekly_insight
+
+    ok = _parse_weekly_insight(
+        '```json\n{"headline":"x","review":["a"],"learnings":[],"next_actions":["b","c"]}\n```'
+    )
+    assert ok["headline"] == "x"
+    assert ok["review"] == ["a"]
+    assert ok["next_actions"] == ["b", "c"]
+    # 缺 headline → None（降级，前端隐藏 AI 块）
+    assert _parse_weekly_insight('{"review":["a"]}') is None
+    assert _parse_weekly_insight("") is None
+
+
+def test_insight_cache_key_includes_template(monkeypatch):
+    """缓存键含 template_name：同 open_id+period 下日报与周报互不串味。"""
+    monkeypatch.setattr("web.routes.report._collect", _fake_collect)
+    monkeypatch.setattr("web.routes.report._collect_weekly", _fake_collect_weekly)
+    daily = _FakeProvider('{"headline":"日报结论","problems":[],"actions":["x"]}')
+    weekly = _FakeProvider(
+        '{"headline":"周报结论","review":["r"],"learnings":[],"next_actions":["n"]}')
+
+    token = make_token("ou_test_user", ttl=1800)
+    client = TestClient(app, cookies=_login_cookie("ou_test_user"))
+
+    # 先打日报 insight（落缓存）
+    monkeypatch.setattr("services.llm.get_provider", lambda *a, **k: daily)
+    rd = client.get(f"/report/daily_brief/insight?t={token}&period=last_week").json()
+    assert rd["headline"] == "日报结论"
+    # 再打周报 insight（同 open_id+period）：必须拿到周报结论，而非日报缓存
+    monkeypatch.setattr("services.llm.get_provider", lambda *a, **k: weekly)
+    rw = client.get(f"/report/weekly_review/insight?t={token}&period=last_week").json()
+    assert rw["headline"] == "周报结论"
+    assert "review" in rw and rw["review"] == ["r"]
+
+
+def test_ops_report_tool_weekly(monkeypatch):
+    """agent_tool ops_report 传 weekly_review → markdown 文案为「查看经营周报」。"""
+    from services.user_authz import UserPermission
+    from services.scope_resolution import ScopeFilters
+    from web.agent_tools import run_tool
+
+    perm = UserPermission(
+        open_id="ou_test_user", role="boss", allowed_scope_key=None,
+        channel="feishu", account_id="ecom-app",
+    )
+    monkeypatch.setattr(
+        "web.agent_tools.resolve_authorized_scope",
+        lambda p: ScopeFilters(platform=None, country=None, shop_ids=None,
+                               scope_key=None, display_text="全店"),
+    )
+    result = run_tool("ops_report",
+                      {"template_name": "weekly_review", "period": "last_week"}, perm)
+    assert "查看经营周报" in result

@@ -1006,7 +1006,12 @@ async def get_report_link(
         (_sd and _ed and _sd == _ed)
         or (not _sd and not _ed and period in ("today", "yesterday"))
     )
-    label = "查看经营日报" if is_daily else "查看经营报告"
+    if template_name == "weekly_review":
+        label = "查看经营周报"
+    elif is_daily:
+        label = "查看经营日报"
+    else:
+        label = "查看经营报告"
     markdown = (
         "📊 [{label}]({link})\n> 链接 {mins} 分钟内有效，点击查看可视化报告"
     ).format(label=label, link=link, mins=mins)

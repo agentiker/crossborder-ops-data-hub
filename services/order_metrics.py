@@ -19,7 +19,7 @@ from sqlalchemy import func
 
 from core.db import SessionLocal
 from core.timezone import intraday_window_utc, paid_window_utc, to_business_day
-from models.base_models import OrderHeader, OrderLineItem
+from models.base_models import Inventory, OrderHeader, OrderLineItem, Product
 
 
 def _to_float(value) -> float:
@@ -122,6 +122,30 @@ def get_gmv_summary_intraday(
     start_dt, end_dt = intraday_window_utc(day, cutoff)
     agg = _gmv_aggregates(start_dt, end_dt, platform, country, shop_id, shop_ids)
     return {"start_date": day.isoformat(), "end_date": day.isoformat(),
+            "cutoff": cutoff.strftime("%H:%M"), **agg}
+
+
+def get_gmv_summary_intraday_range(
+    *,
+    start_date: date,
+    end_date: date,
+    cutoff: time,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_id: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
+) -> dict:
+    """业务日区间 [start_date 00:00 → end_date 的 cutoff 时刻] 的已付款 GMV 聚合（连续区间）。
+
+    供周维度 intraday 同期对比用：本周一 00:00~今天此刻 vs 上周一 00:00~上周同一相对日此刻。
+    注意是**连续区间**——中间各天整天计入，仅末日截到 cutoff；不是"逐天截至 cutoff 求和"
+    （那会漏掉中间天 cutoff 之后的单）。起点取 paid_window 的当地 00:00，终点取 intraday 的
+    当地 cutoff 时点，口径与单日 intraday 完全一致。
+    """
+    start_dt, _ = paid_window_utc(start_date, start_date)
+    _, end_dt = intraday_window_utc(end_date, cutoff)
+    agg = _gmv_aggregates(start_dt, end_dt, platform, country, shop_id, shop_ids)
+    return {"start_date": start_date.isoformat(), "end_date": end_date.isoformat(),
             "cutoff": cutoff.strftime("%H:%M"), **agg}
 
 
@@ -286,5 +310,125 @@ def get_gmv_trend(
             )
             cursor += timedelta(days=1)
         return points
+    finally:
+        session.close()
+
+
+def _window_bounds(start_date: date, end_date: date, cutoff: Optional[time]):
+    """统一窗口边界：cutoff 非空 → 连续 intraday 区间 [start 00:00, end cutoff]；否则整天闭区间。"""
+    if cutoff is not None:
+        start_dt, _ = paid_window_utc(start_date, start_date)
+        _, end_dt = intraday_window_utc(end_date, cutoff)
+        return start_dt, end_dt
+    return paid_window_utc(start_date, end_date)
+
+
+def get_sell_through(
+    *,
+    start_date: date,
+    end_date: date,
+    cutoff: Optional[time] = None,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_id: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
+) -> dict:
+    """动销率 = 出单 SKU 数 / 在库 SKU 数（均按 distinct sku_id，分子分母口径自洽）。
+
+    分子：窗口内有已付款销量的 distinct SKU 数（OrderLineItem，口径同 get_units_by_sku）。
+    分母：当前库存快照里 distinct sku_id 数（Inventory 表按 scope 过滤）。注意分母用 distinct
+    （非 overview 的库存行数——同一 SKU 多仓会多行），保证与分子同口径、动销率不被多仓虚低。
+    cutoff 非空时分子用周维度 intraday 连续区间（与周报实时口径一致）。
+    """
+    start_dt, end_dt = _window_bounds(start_date, end_date, cutoff)
+    session = SessionLocal()
+    try:
+        # 分子：出单 distinct SKU 数
+        active_q = (
+            session.query(func.count(func.distinct(OrderLineItem.sku_id)))
+            .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
+            .filter(
+                OrderHeader.paid_time.isnot(None),
+                OrderHeader.paid_time >= start_dt,
+                OrderHeader.paid_time <= end_dt,
+            )
+        )
+        active_q = _scope_filters(active_q, OrderHeader, platform, country, shop_id, shop_ids)
+        active_sku = int(active_q.scalar() or 0)
+
+        # 分母：在库 distinct SKU 数（当前快照，与时间窗无关）
+        total_q = session.query(func.count(func.distinct(Inventory.sku_id)))
+        total_q = _scope_filters(total_q, Inventory, platform, country, shop_id, shop_ids)
+        total_sku = int(total_q.scalar() or 0)
+
+        rate = round(active_sku / total_sku * 100, 1) if total_sku else None
+        return {"active_sku": active_sku, "total_sku": total_sku, "rate": rate}
+    finally:
+        session.close()
+
+
+def get_new_product_performance(
+    *,
+    start_date: date,
+    end_date: date,
+    cutoff: Optional[time] = None,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_id: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
+    limit: int = 20,
+) -> list[dict]:
+    """本周上新商品（Product.source_create_time 落窗口内）的本周销量/GMV 表现。
+
+    上新判定与销量统计同窗：source_create_time 落 [start, end]（按 UTC 边界过滤，±时区偏移
+    误差对"本周新品"判定无碍）。新品即便零销量也列出（测款失败信号），按销量降序。
+    product↔line_item 用 product_id 关联（两表都有且带索引）。
+    """
+    start_dt, end_dt = _window_bounds(start_date, end_date, cutoff)
+    session = SessionLocal()
+    try:
+        # 1) 窗口内上新的商品（scope 过滤）
+        prod_q = session.query(Product.product_id, Product.title).filter(
+            Product.source_create_time.isnot(None),
+            Product.source_create_time >= start_dt,
+            Product.source_create_time <= end_dt,
+        )
+        prod_q = _scope_filters(prod_q, Product, platform, country, shop_id, shop_ids)
+        new_products = {pid: title for pid, title in prod_q.all() if pid}
+        if not new_products:
+            return []
+
+        # 2) 这些新品在窗口内的已付款销量/GMV（按 product_id 聚合）
+        sales_q = (
+            session.query(
+                OrderLineItem.product_id,
+                func.count(OrderLineItem.line_item_id),
+                func.coalesce(func.sum(OrderLineItem.sale_price), 0),
+            )
+            .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
+            .filter(
+                OrderHeader.paid_time.isnot(None),
+                OrderHeader.paid_time >= start_dt,
+                OrderHeader.paid_time <= end_dt,
+                OrderLineItem.product_id.in_(list(new_products.keys())),
+            )
+        )
+        sales_q = _scope_filters(sales_q, OrderHeader, platform, country, shop_id, shop_ids)
+        sales = {
+            pid: (int(units or 0), _to_float(gmv))
+            for pid, units, gmv in sales_q.group_by(OrderLineItem.product_id).all()
+        }
+
+        items = []
+        for pid, title in new_products.items():
+            units, gmv = sales.get(pid, (0, 0.0))
+            items.append({
+                "product_id": pid,
+                "title": title or pid,
+                "units_sold": units,
+                "gmv": gmv,
+            })
+        items.sort(key=lambda it: (it["units_sold"], it["gmv"]), reverse=True)
+        return items[:limit]
     finally:
         session.close()
