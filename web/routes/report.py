@@ -56,8 +56,10 @@ logger = logging.getLogger("report")
 
 router = APIRouter()
 
-# 印尼时区 UTC+7
+# 印尼时区 UTC+7（数据/业务窗口口径）
 _JAKARTA_TZ = timezone(timedelta(hours=7))
+# 北京时区 UTC+8（报告生成时间用，运营在国内，看"几点生成的"更直观）
+_BEIJING_TZ = timezone(timedelta(hours=8))
 
 # AI 洞察当天缓存：key=(open_id, period/dates, business_date) → 三段 dict（刷新不重复烧 LLM）
 _INSIGHT_CACHE: dict[tuple, dict] = {}
@@ -260,7 +262,7 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
             "level_label": level_map.get(bucket, bucket),
         })
 
-    generated_at = datetime.now(_JAKARTA_TZ).strftime("%Y-%m-%d %H:%M") + "（印尼时间）"
+    generated_at = datetime.now(_BEIJING_TZ).strftime("%Y-%m-%d %H:%M") + "（北京时间）"
 
     # KPI 问号 tip：精简取数口径 + 环比基准
     gmv_tip = (
@@ -467,7 +469,7 @@ async def _collect_weekly(open_id: str, period) -> dict:
     low_volume = (cur_orders < 10) or (prev_orders < 10)
     baseline_label = change_label.lstrip("较").strip()
 
-    generated_at = datetime.now(_JAKARTA_TZ).strftime("%Y-%m-%d %H:%M") + "（印尼时间）"
+    generated_at = datetime.now(_BEIJING_TZ).strftime("%Y-%m-%d %H:%M") + "（北京时间）"
     gmv_tip = (
         "GMV=已付款订单买家实付额（含运费/税/优惠，非平台结算）。"
         f"环比={change_label}（紧邻等长上周窗口）。"
@@ -1466,9 +1468,11 @@ WEEKLY_REVIEW_HTML = r"""<!DOCTYPE html>
                font-size:11px; line-height:1.5; font-weight:400; color:var(--card);
                background:rgba(25,36,32,.92); box-shadow:0 4px 12px rgba(0,0,0,.18); }
   /* 商品结构健康度卡：统计块网格 */
-  .health-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  /* minmax(0,1fr)：1fr 实为 minmax(auto,1fr)，长商品名(nowrap)的 min-content 会撑爆 track
+     破坏三等分并让 .stat .s 的 ellipsis 失效；下限改 0 才能让每项严格等宽、文本截断省略号 */
+  .health-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
   .stat { padding:10px 12px; border-radius:10px; background:var(--fill-shallow);
-          border:1px solid var(--border-shallow); }
+          border:1px solid var(--border-shallow); min-width:0; }
   .stat .k { color:var(--sub); font-size:11px; }
   .stat .v { font-size:18px; font-weight:700; margin-top:3px; font-variant-numeric:tabular-nums; }
   .stat .s { color:var(--sub); font-size:11px; margin-top:3px;
@@ -1621,6 +1625,7 @@ document.addEventListener('click', () =>
   const stats = [
     {k:'Top1 款贡献 GMV', v: c.top1_share == null ? '—' : c.top1_share + '%',
      s: c.top1_name ? _esc(c.top1_name) : '—',
+     title: c.top1_name ? _esc(c.top1_name) : '',  // 截断后 hover 看全名
      warn: c.top1_share != null && c.top1_share > 50},
     {k:'Top3 款贡献 GMV', v: c.top3_share == null ? '—' : c.top3_share + '%',
      s: depRisk ? '单款依赖偏高，注意风险' : '结构较均衡', warn: depRisk},
@@ -1632,7 +1637,8 @@ document.addEventListener('click', () =>
   el.innerHTML = stats.map(s =>
     '<div class="stat"><div class="k">' + s.k + '</div>'
     + '<div class="v">' + s.v + '</div>'
-    + '<div class="s' + (s.warn ? ' warn' : '') + '">' + s.s + '</div></div>'
+    + '<div class="s' + (s.warn ? ' warn' : '') + '"'
+    + (s.title ? ' title="' + s.title + '"' : '') + '>' + s.s + '</div></div>'
   ).join('');
 })();
 
