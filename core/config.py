@@ -56,12 +56,12 @@ class FeishuOAuthConfig(BaseModel):
     session_ttl_seconds: int = 604800  # 登录态有效期，默认 7 天
     cookie_name: str = "board_session"  # 登录态 cookie 名
     cookie_secure: bool = True  # Set-Cookie 是否带 Secure（生产 HTTPS 必须 True，本机调试可 False）
-    # authorize 请求的 scope：默认空=不主动请求增量权限。登录拿 open_id 只需基础的
-    # "获取用户身份标识"（基础登录自带、已授予），不需要 contact:user.id:readonly
-    # （= "通过手机号或邮箱获取用户 ID"，按手机/邮箱反查，登录用不到、却触发同意页）。
-    # 同意页是否出现最终由飞书「权限管理」声明的需用户授权权限集决定；若仍弹须去后台移除多余项。
-    # 需显式请求某权限时经 env FEISHU_OAUTH__OAUTH_SCOPE 加回。
-    oauth_scope: str = ""
+    # authorize 请求的 scope：必须带一个稳定 scope，否则飞书不落"已授权记录"→ 每次登录都弹
+    # 同意页（实测：空 scope 连"历史已授予"都不显示）。带上 contact:user.base:readonly
+    # （= "获取用户基本信息"，返回 open_id+姓名，登录够用）后，用户首次点一次授权即被记住，
+    # 之后静默发码不再弹。该权限须在飞书后台「权限管理」开通并发版，否则 authorize 报 20027。
+    # 注意：authorize 链接刻意不带 prompt=consent（它会强制每次确认）。可经 env 覆盖。
+    oauth_scope: str = "contact:user.base:readonly"
     # 对话侧 fail-closed 硬闸灰度开关（防自锁，见 plan/14 Phase 6）：
     # 先 False 部署 → CLI 登记 boss/operator → 确认无误再置 True。
     # False 时 web/routes/data.py::_resolve_scope 维持旧行为（未登记 open_id 不拒）。

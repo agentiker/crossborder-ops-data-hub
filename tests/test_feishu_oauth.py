@@ -48,22 +48,31 @@ def test_authorize_url_has_required_query(configured):
     url = build_authorize_url("state-abc")
     parsed = urlparse(url)
     q = parse_qs(parsed.query)
-    # 走 authen/v1/index 登录入口（open 域、入参 app_id）：复用飞书登录态静默发码，
-    # 不再每次弹同意页（accounts 域 authorize 的同意卡片是"反复要授权"的根因）。
-    assert parsed.netloc == "open.feishu.cn"
-    assert parsed.path.endswith("/authen/v1/index")
-    assert q["app_id"] == ["cli_test"]
+    # 标准 OAuth authorize（accounts 域、入参 client_id + response_type=code）。
+    assert parsed.netloc == "accounts.feishu.cn"
+    assert parsed.path.endswith("/authen/v1/authorize")
+    assert q["client_id"] == ["cli_test"]
     assert q["redirect_uri"] == ["https://board.agenticker.cc/board/auth/feishu/callback"]
+    assert q["response_type"] == ["code"]
     assert q["state"] == ["state-abc"]
-    # 默认不带 scope：登录只需基础"获取用户身份标识"，不请求登录用不到的 contact:user.id:readonly
-    assert "scope" not in q
+    # 默认带 contact:user.base:readonly：飞书按 scope 记授权，带稳定 scope 才能首次后静默。
+    assert q["scope"] == ["contact:user.base:readonly"]
+    # 刻意不带 prompt=consent（它会强制每次确认授权）。
+    assert "prompt" not in q
 
 
 def test_authorize_url_includes_scope_when_configured(configured, monkeypatch):
-    """配置了 oauth_scope（需显式请求某权限）时，scope 才拼进 URL。"""
+    """oauth_scope 可经配置覆盖默认。"""
     monkeypatch.setattr(settings.feishu_oauth, "oauth_scope", "contact:user.id:readonly")
     q = parse_qs(urlparse(build_authorize_url("s")).query)
     assert q["scope"] == ["contact:user.id:readonly"]
+
+
+def test_authorize_url_no_scope_when_empty(configured, monkeypatch):
+    """oauth_scope 显式置空时不拼 scope（兜底，不建议——会导致每次弹同意页）。"""
+    monkeypatch.setattr(settings.feishu_oauth, "oauth_scope", "")
+    q = parse_qs(urlparse(build_authorize_url("s")).query)
+    assert "scope" not in q
 
 
 def test_authorize_url_explicit_scope_arg_wins(configured):

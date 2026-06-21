@@ -21,18 +21,13 @@ import requests
 
 from core.config import settings
 
-# 飞书登录端点。授权入口刻意用 authen/v1/index 而非 accounts 域的 authen/v1/authorize：
-#   - index：网页应用登录入口，复用浏览器/飞书客户端已有的登录态自动发码，已授权用户
-#     不再每次弹"权限同意卡片"（竹云/Logto 等外部浏览器免密方案均用此端点）。入参用 app_id。
-#   - authorize（accounts 域）：OAuth 同意页流程，外部浏览器下每次都展示同意卡片——即本次
-#     "反复要授权"的根因。index 发的 code 同样被下面的 v2 token 端点接受（Logto 实证）。
-AUTHORIZE_URL = "https://open.feishu.cn/open-apis/authen/v1/index"
+# 飞书 OAuth v2 端点（标准 authorize 在 accounts 域，token/user_info 在 open 域）。
+# 反复弹同意页的根因不是端点，而是 scope 置空：飞书的"已授权记录"按 scope 绑定，空 scope
+# 它不落授权记录 → 每次都当新授权弹同意页。修法 = 显式带一个稳定 scope（见 config.oauth_scope
+# 默认 contact:user.base:readonly）且**不**带 prompt=consent → 首次点一次授权后即被记住、之后静默。
+AUTHORIZE_URL = "https://accounts.feishu.cn/open-apis/authen/v1/authorize"
 TOKEN_URL = "https://open.feishu.cn/open-apis/authen/v2/oauth/token"
 USER_INFO_URL = "https://open.feishu.cn/open-apis/authen/v1/user_info"
-
-# 拿 open_id 的最小权限；已在飞书后台为该 app 开通。默认**不**塞进 authorize（见下），
-# 避免每次登录弹同意页；保留常量供需要显式增量授权时引用。
-DEFAULT_SCOPE = "contact:user.id:readonly"
 
 _TIMEOUT = 10
 
@@ -44,8 +39,9 @@ class FeishuOAuthError(RuntimeError):
 def build_authorize_url(state: str, *, scope: Optional[str] = None) -> str:
     """拼飞书授权页 URL。app_id/redirect_uri 未配置则拒绝生成（抛错）。
 
-    走 authen/v1/index 登录入口：复用已有飞书登录态，已授权用户静默发码、不再弹同意页。
-    scope 缺省取 settings.feishu_oauth.oauth_scope（默认空=不传）。
+    scope 缺省取 settings.feishu_oauth.oauth_scope（默认 contact:user.base:readonly）。带一个
+    稳定 scope 是关键：飞书按 scope 记授权，首次点一次后即记住、之后静默发码不再弹同意页；
+    刻意**不**带 prompt=consent（它会强制每次确认授权）。
     """
     cfg = settings.feishu_oauth
     if not cfg.app_id or not cfg.redirect_uri:
@@ -54,10 +50,10 @@ def build_authorize_url(state: str, *, scope: Optional[str] = None) -> str:
         raise FeishuOAuthError("state 不能为空（防 CSRF）")
     if scope is None:
         scope = cfg.oauth_scope
-    # authen/v1/index 入参约定：app_id（非 client_id）+ redirect_uri + state；回调照旧带 code。
     params = {
-        "app_id": cfg.app_id,
+        "client_id": cfg.app_id,
         "redirect_uri": cfg.redirect_uri,
+        "response_type": "code",
         "state": state,
     }
     if scope:
