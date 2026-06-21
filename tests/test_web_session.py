@@ -17,13 +17,25 @@ def secret(monkeypatch):
 
 def test_round_trip(secret):
     token = web_session.make_session_cookie("ou_abc123", ttl=300)
-    assert web_session.verify_session_cookie(token) == "ou_abc123"
+    assert web_session.verify_session_cookie(token) == ("ou_abc123", "ecom-app")
+
+
+def test_round_trip_with_account(secret):
+    """多租户：cookie 编码 open_id + account_id，验签原样返回二元组。"""
+    token = web_session.make_session_cookie("ou_abc123", account_id="ecom-app-gtl", ttl=300)
+    assert web_session.verify_session_cookie(token) == ("ou_abc123", "ecom-app-gtl")
+
+
+def test_legacy_cookie_falls_back_to_default_account(secret):
+    """向后兼容：旧格式 cookie（value 只含 open_id、无 '|'）回落 DEFAULT_ACCOUNT，老 session 不失效。"""
+    legacy = web_session._make_signed("ou_legacy", ttl=300)  # 模拟旧版只签 open_id
+    assert web_session.verify_session_cookie(legacy) == ("ou_legacy", "ecom-app")
 
 
 def test_default_ttl_from_settings(secret, monkeypatch):
     monkeypatch.setattr(settings.feishu_oauth, "session_ttl_seconds", 600)
     token = web_session.make_session_cookie("ou_abc123")  # 不传 ttl，走配置
-    assert web_session.verify_session_cookie(token) == "ou_abc123"
+    assert web_session.verify_session_cookie(token) == ("ou_abc123", "ecom-app")
 
 
 def test_expired_returns_none(secret):

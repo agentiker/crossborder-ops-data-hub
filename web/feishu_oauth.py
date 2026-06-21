@@ -36,23 +36,29 @@ class FeishuOAuthError(RuntimeError):
     """飞书 OAuth 交互失败（配置缺失 / 网络错 / 飞书返回非 0 code）。"""
 
 
-def build_authorize_url(state: str, *, scope: Optional[str] = None) -> str:
-    """拼飞书授权页 URL。app_id/redirect_uri 未配置则拒绝生成（抛错）。
+def build_authorize_url(
+    state: str, *, account_id: str, redirect_uri: str, scope: Optional[str] = None
+) -> str:
+    """拼飞书授权页 URL。app_id（按 account_id 取）/redirect_uri 未配置则拒绝生成（抛错）。
 
-    scope 缺省取 settings.feishu_oauth.oauth_scope（默认 contact:user.base:readonly）。带一个
-    稳定 scope 是关键：飞书按 scope 记授权，首次点一次后即记住、之后静默发码不再弹同意页；
-    刻意**不**带 prompt=consent（它会强制每次确认授权）。
+    多租户：用 `credential(account_id)` 取对应飞书 app 的 client_id；redirect_uri 由调用方按
+    当前子域名 Host 重建（须与 token 交换时逐字一致，且在该 app 后台 redirect_uri 白名单中）。
+    scope 缺省取 settings.feishu_oauth.oauth_scope。带一个稳定 scope 是关键：飞书按 scope 记
+    授权，首次点一次后即记住、之后静默发码不再弹同意页；刻意**不**带 prompt=consent。
     """
     cfg = settings.feishu_oauth
-    if not cfg.app_id or not cfg.redirect_uri:
-        raise FeishuOAuthError("FEISHU_OAUTH__APP_ID / REDIRECT_URI 未配置，无法发起登录")
+    cred = cfg.credential(account_id)
+    if not cred.app_id or not redirect_uri:
+        raise FeishuOAuthError(
+            f"飞书 app 凭据未配置（account={account_id}）或 redirect_uri 为空，无法发起登录"
+        )
     if not state:
         raise FeishuOAuthError("state 不能为空（防 CSRF）")
     if scope is None:
         scope = cfg.oauth_scope
     params = {
-        "client_id": cfg.app_id,
-        "redirect_uri": cfg.redirect_uri,
+        "client_id": cred.app_id,
+        "redirect_uri": redirect_uri,
         "response_type": "code",
         "state": state,
     }
@@ -61,11 +67,15 @@ def build_authorize_url(state: str, *, scope: Optional[str] = None) -> str:
     return f"{AUTHORIZE_URL}?{urlencode(params)}"
 
 
-def exchange_code_for_token(code: str) -> str:
-    """用回调 code 换 user_access_token。code 5 分钟单次有效。"""
-    cfg = settings.feishu_oauth
-    if not cfg.app_id or not cfg.app_secret:
-        raise FeishuOAuthError("FEISHU_OAUTH__APP_ID / APP_SECRET 未配置")
+def exchange_code_for_token(code: str, *, account_id: str, redirect_uri: str) -> str:
+    """用回调 code 换 user_access_token。code 5 分钟单次有效。
+
+    多租户：用 `credential(account_id)` 取对应飞书 app 的凭据；redirect_uri 必须与 authorize
+    时逐字一致（飞书校验），由调用方按当前子域名 Host 重建。
+    """
+    cred = settings.feishu_oauth.credential(account_id)
+    if not cred.app_id or not cred.app_secret:
+        raise FeishuOAuthError(f"飞书 app 凭据未配置（account={account_id}）")
     if not code:
         raise FeishuOAuthError("code 不能为空")
     try:
@@ -73,10 +83,10 @@ def exchange_code_for_token(code: str) -> str:
             TOKEN_URL,
             json={
                 "grant_type": "authorization_code",
-                "client_id": cfg.app_id,
-                "client_secret": cfg.app_secret,
+                "client_id": cred.app_id,
+                "client_secret": cred.app_secret,
                 "code": code,
-                "redirect_uri": cfg.redirect_uri,
+                "redirect_uri": redirect_uri,
             },
             headers={"Content-Type": "application/json; charset=utf-8"},
             timeout=_TIMEOUT,

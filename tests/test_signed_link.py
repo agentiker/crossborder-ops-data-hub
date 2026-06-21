@@ -18,13 +18,28 @@ def secret(monkeypatch):
 
 def test_round_trip(secret):
     token = signed_link.make_token("ou_abc123", ttl=300)
-    assert signed_link.verify_token(token) == "ou_abc123"
+    assert signed_link.verify_token(token) == ("ou_abc123", "ecom-app")
+
+
+def test_round_trip_with_account(secret):
+    """多租户：token 编码 open_id + account_id，验签原样返回二元组。"""
+    token = signed_link.make_token("ou_abc123", account_id="ecom-app-gtl", ttl=300)
+    assert signed_link.verify_token(token) == ("ou_abc123", "ecom-app-gtl")
+
+
+def test_legacy_token_falls_back_to_default_account(secret):
+    """向后兼容：旧格式 token（payload 'open_id:exp'、无 '|'）回落 DEFAULT_ACCOUNT。"""
+    secret_val = settings.dashboard.link_secret
+    payload = "ou_legacy:9999999999"  # 模拟旧版只签 open_id
+    sig = signed_link._sign(payload, secret_val)
+    legacy = f"{signed_link._b64url_encode(payload.encode())}.{sig}"
+    assert signed_link.verify_token(legacy) == ("ou_legacy", "ecom-app")
 
 
 def test_default_ttl_from_settings(secret, monkeypatch):
     monkeypatch.setattr(settings.dashboard, "token_ttl_seconds", 600)
     token = signed_link.make_token("ou_abc123")  # 不传 ttl，走配置
-    assert signed_link.verify_token(token) == "ou_abc123"
+    assert signed_link.verify_token(token) == ("ou_abc123", "ecom-app")
 
 
 def test_expired_returns_none(secret):
@@ -81,4 +96,4 @@ def test_garbage_input_returns_none(secret, garbage):
 def test_open_id_with_underscore_round_trip(secret):
     """真实 open_id 形如 ou_xxx，含下划线但不含冒号；rsplit 切 exp 必须稳。"""
     token = signed_link.make_token("ou_7f3a_b9c2_d1", ttl=300)
-    assert signed_link.verify_token(token) == "ou_7f3a_b9c2_d1"
+    assert signed_link.verify_token(token) == ("ou_7f3a_b9c2_d1", "ecom-app")

@@ -46,7 +46,7 @@ def test_no_cookie_redirects_to_login():
 
 def test_logged_in_pending_403_friendly(monkeypatch):
     # cookie 验签通过但权限为 None，且登记状态=pending → 友好"申请已提交"页（不回显 open_id）
-    monkeypatch.setattr(web_security, "verify_session_cookie", lambda raw: "ou_unknown")
+    monkeypatch.setattr(web_security, "verify_session_cookie", lambda raw: ("ou_unknown", "ecom-app"))
     monkeypatch.setattr(web_security, "get_user_permission", lambda oid, **k: None)
     monkeypatch.setattr(web_security, "get_registration_status", lambda oid, **k: "pending")
     client = TestClient(app, follow_redirects=False)
@@ -59,7 +59,7 @@ def test_logged_in_pending_403_friendly(monkeypatch):
 
 def test_logged_in_unregistered_403_generic(monkeypatch):
     # 无登记记录（none）/ 已停用 → 通用"未获授权"页，仍 403 fail closed
-    monkeypatch.setattr(web_security, "verify_session_cookie", lambda raw: "ou_unknown")
+    monkeypatch.setattr(web_security, "verify_session_cookie", lambda raw: ("ou_unknown", "ecom-app"))
     monkeypatch.setattr(web_security, "get_user_permission", lambda oid, **k: None)
     monkeypatch.setattr(web_security, "get_registration_status", lambda oid, **k: "none")
     client = TestClient(app, follow_redirects=False)

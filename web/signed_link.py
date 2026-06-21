@@ -22,6 +22,7 @@ import time
 from typing import Optional
 
 from core.config import settings
+from core.tenancy import DEFAULT_ACCOUNT
 
 
 def _b64url_encode(raw: bytes) -> str:
@@ -40,10 +41,13 @@ def _sign(payload: str, secret: str) -> str:
     return _b64url_encode(sig)
 
 
-def make_token(open_id: str, ttl: Optional[int] = None) -> str:
-    """签发一个在 ttl 秒后过期、绑定 open_id 的 token。
+def make_token(
+    open_id: str, account_id: str = DEFAULT_ACCOUNT, ttl: Optional[int] = None
+) -> str:
+    """签发一个在 ttl 秒后过期、绑定 open_id + 租户 account_id 的 token。
 
     ttl 缺省取 settings.dashboard.token_ttl_seconds。密钥未配置时抛 RuntimeError。
+    多租户：payload value 内用 `|` 拼 ``open_id|account_id``（report 路由据此做跨租户校验）。
     """
     secret = settings.dashboard.link_secret
     if not secret:
@@ -53,13 +57,16 @@ def make_token(open_id: str, ttl: Optional[int] = None) -> str:
     if ttl is None:
         ttl = settings.dashboard.token_ttl_seconds
     exp = int(time.time()) + int(ttl)
-    payload = f"{open_id}:{exp}"
+    payload = f"{open_id}|{account_id}:{exp}"
     sig = _sign(payload, secret)
     return f"{_b64url_encode(payload.encode('utf-8'))}.{sig}"
 
 
-def verify_token(token: str) -> Optional[str]:
-    """验签并返回 open_id；任何失败（密钥缺失/格式错/签名不符/过期）均返回 None。"""
+def verify_token(token: str) -> Optional[tuple[str, str]]:
+    """验签并返回 ``(open_id, account_id)``；任何失败均返回 None。
+
+    向后兼容：旧格式 token（value 只含 open_id、无 `|`）回落 account_id=DEFAULT_ACCOUNT。
+    """
     secret = settings.dashboard.link_secret
     if not secret or not token:
         return None
@@ -73,12 +80,15 @@ def verify_token(token: str) -> Optional[str]:
     if not hmac.compare_digest(sig, expected_sig):
         return None
 
-    # open_id 不含 ':'，从右切出 exp，兼顾稳健
+    # value 不含 ':'，从右切出 exp，兼顾稳健
     try:
-        open_id, exp_str = payload.rsplit(":", 1)
+        value, exp_str = payload.rsplit(":", 1)
         exp = int(exp_str)
     except ValueError:
         return None
-    if not open_id or exp < int(time.time()):
+    if not value or exp < int(time.time()):
         return None
-    return open_id
+    if "|" in value:
+        open_id, account_id = value.split("|", 1)
+        return open_id, (account_id or DEFAULT_ACCOUNT)
+    return value, DEFAULT_ACCOUNT

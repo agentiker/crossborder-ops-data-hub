@@ -24,6 +24,7 @@ import time
 from typing import Optional
 
 from core.config import settings
+from core.tenancy import DEFAULT_ACCOUNT
 
 
 def _b64url_encode(raw: bytes) -> str:
@@ -80,13 +81,31 @@ def _verify_signed(token: str) -> Optional[str]:
     return value
 
 
-def make_session_cookie(open_id: str, ttl: Optional[int] = None) -> str:
-    """签发登录态 cookie 值（绑定 open_id）。ttl 缺省取 session_ttl_seconds。"""
+def make_session_cookie(
+    open_id: str, account_id: str = DEFAULT_ACCOUNT, ttl: Optional[int] = None
+) -> str:
+    """签发登录态 cookie 值（绑定 open_id + 租户 account_id）。ttl 缺省取 session_ttl_seconds。
+
+    多租户：value 内用 `|` 拼 ``open_id|account_id``（外层 payload 仍 ``value:exp``，
+    `_make_signed` 的禁 `:` 约束不破——open_id/account_id 都不含 `:`/`|`）。
+    """
+    if not open_id:
+        raise ValueError("open_id 不能为空")
     if ttl is None:
         ttl = settings.feishu_oauth.session_ttl_seconds
-    return _make_signed(open_id, ttl)
+    return _make_signed(f"{open_id}|{account_id}", ttl)
 
 
-def verify_session_cookie(raw: str) -> Optional[str]:
-    """验签登录态 cookie，返回 open_id；失败返回 None（fail closed）。"""
-    return _verify_signed(raw)
+def verify_session_cookie(raw: str) -> Optional[tuple[str, str]]:
+    """验签登录态 cookie，返回 ``(open_id, account_id)``；失败返回 None（fail closed）。
+
+    向后兼容：旧格式 cookie（value 只含 open_id、无 `|`）回落 account_id=DEFAULT_ACCOUNT
+    （存量 cookie 都是 ecom-app，回落语义正确）→ 已签发的 7 天老 session 零失效。
+    """
+    value = _verify_signed(raw)
+    if value is None:
+        return None
+    if "|" in value:
+        open_id, account_id = value.split("|", 1)
+        return open_id, (account_id or DEFAULT_ACCOUNT)
+    return value, DEFAULT_ACCOUNT

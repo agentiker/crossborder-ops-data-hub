@@ -20,6 +20,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from core.config import settings
+from core.tenancy import account_from_request
 from services.user_authz import ensure_registration
 from web.feishu_oauth import (
     FeishuOAuthError,
@@ -56,20 +57,36 @@ def _b64url_decode(s: str) -> bytes:
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 
+def _redirect_uri(request: Request) -> str:
+    """按当前子域名 Host 重建回调地址（须与 token 交换时逐字一致、且在该 app 白名单中）。
+
+    cloudflared 终止 TLS 后转发 http 给本服务，request.url.scheme 会是 http；公网回调一律 https。
+    """
+    host = (request.headers.get("host") or "").split(",")[0].strip()
+    return f"https://{host}{settings.feishu_oauth.redirect_path}"
+
+
 @router.get("/login", include_in_schema=False)
 async def login(request: Request, next_: str = Query("", alias="next")):
-    """发起登录：生成签名 state（可携带白名单 next）→ 跳飞书授权页。"""
+    """发起登录：从子域名定 account → 生成签名 state（含 account + 白名单 next）→ 跳对应 app 授权页。"""
+    account = account_from_request(request)
     # 诊断日志（PC/移动端 webview 定位）：是哪种客户端把请求带到了 OAuth 发起这一步。
-    logger.info("feishu login 发起：next=%s ua=%r", next_, request.headers.get("user-agent", ""))
+    logger.info("feishu login 发起：account=%s next=%s ua=%r",
+                account, next_, request.headers.get("user-agent", ""))
     nonce = secrets.token_urlsafe(16)
     safe = _safe_next(next_)
-    # next 编进 state 的 value（b64url，避免 ':'/特殊字符破坏底层 payload 分隔），与 nonce 同签。
-    value = f"{nonce}|{_b64url(safe.encode('utf-8'))}" if safe else nonce
-    state = _make_signed(value, _STATE_TTL)
+    # state value = account|nonce[|b64url(next)]（均不含 ':'/'|'，与底层 payload 分隔不冲突）。
+    # account 编进 state：回调以 state 里的 account 为准选凭据（防 Host 头被篡改）。
+    parts = [account, nonce]
+    if safe:
+        parts.append(_b64url(safe.encode("utf-8")))
+    state = _make_signed("|".join(parts), _STATE_TTL)
     try:
-        url = build_authorize_url(state)
+        url = build_authorize_url(
+            state, account_id=account, redirect_uri=_redirect_uri(request)
+        )
     except FeishuOAuthError as exc:
-        logger.error("build_authorize_url 失败：%s", exc)
+        logger.error("build_authorize_url 失败（account=%s）：%s", account, exc)
         return HTMLResponse(_auth_error("登录暂不可用（飞书应用未正确配置）"), status_code=500)
     return RedirectResponse(url, status_code=302)
 
@@ -90,35 +107,40 @@ async def callback(
     if not code:
         return HTMLResponse(_auth_error("未收到授权码，请重新登录"), status_code=400)
 
-    # 从签名 state 解出回跳目标；缺失/非白名单一律回 _HOME（开放重定向防护）。
+    # state value = account|nonce[|b64url(next)]。解出 account（选凭据用）与回跳目标。
+    # 缺失/非白名单 next 一律回 _HOME（开放重定向防护）。
+    parts = state_value.split("|")
+    account = parts[0]
     dest = _HOME
-    if "|" in state_value:
+    if len(parts) >= 3:
         try:
-            nxt = _b64url_decode(state_value.split("|", 1)[1]).decode("utf-8")
+            nxt = _b64url_decode(parts[2]).decode("utf-8")
             dest = _safe_next(nxt) or _HOME
         except (ValueError, UnicodeDecodeError):
             dest = _HOME
 
     try:
-        token = exchange_code_for_token(code)
+        token = exchange_code_for_token(
+            code, account_id=account, redirect_uri=_redirect_uri(request)
+        )
         open_id, name = fetch_user_identity(token)
     except FeishuOAuthError as exc:
-        logger.warning("飞书 OAuth 回调失败：%s", exc)
+        logger.warning("飞书 OAuth 回调失败（account=%s）：%s", account, exc)
         return HTMLResponse(_auth_error("飞书登录失败，请重试"), status_code=502)
 
-    # 自助申请登记：首登者 bootstrap 为 boss、其余落"待审批"自动进老板审批列表，
-    # 免去运维抄 open_id + SSH 跑 CLI。范围由老板在网页开通前不可用（fail-closed 不变）。
+    # 自助申请登记：首登者（该 account 下 user_roles 表空）bootstrap 为本租户 boss、其余落
+    # "待审批"自动进该租户老板审批列表。范围由老板在网页开通前不可用（fail-closed 不变）。
     try:
-        reg = ensure_registration(open_id, name=name)
+        reg = ensure_registration(open_id, name=name, account_id=account)
     except Exception:  # 登记失败不阻断登录（设了 cookie 仍能走到 403 页），仅记日志
-        logger.exception("自助登记失败：open_id=%s", open_id)
+        logger.exception("自助登记失败：open_id=%s account=%s", open_id, account)
         reg = "existing"
-    logger.info("看板登录成功：open_id=%s name=%s reg=%s", open_id, name, reg)
+    logger.info("看板登录成功：open_id=%s account=%s name=%s reg=%s", open_id, account, name, reg)
     cfg = settings.feishu_oauth
     resp = RedirectResponse(dest, status_code=302)
     resp.set_cookie(
         key=cfg.cookie_name,
-        value=make_session_cookie(open_id),
+        value=make_session_cookie(open_id, account_id=account),
         max_age=cfg.session_ttl_seconds,
         httponly=True,
         secure=cfg.cookie_secure,

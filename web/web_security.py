@@ -15,6 +15,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from core.config import settings
+from core.tenancy import account_from_request
 from services.user_authz import (
     UserPermission,
     get_registration_status,
@@ -41,15 +42,25 @@ class WebAuthForbidden(Exception):
 
 
 def require_web_user(request: Request) -> UserPermission:
-    """看板鉴权依赖：返回登录用户的权限快照，或抛重定向/403。"""
+    """看板鉴权依赖：返回登录用户的权限快照，或抛重定向/403。
+
+    多租户：account 由子域名 Host 决定（account_from_request）。cookie 里编码的租户必须与
+    当前子域名一致，否则视为未登录、跳本子域名登录（防跨租户串：gtl 的 cookie 不能开 board）。
+    """
     cfg = settings.feishu_oauth
+    host_account = account_from_request(request)
     raw = request.cookies.get(cfg.cookie_name, "")
-    open_id = verify_session_cookie(raw) if raw else None
-    if not open_id:
+    sess = verify_session_cookie(raw) if raw else None
+    if not sess:
         raise WebAuthRedirect()
-    perm = get_user_permission(open_id)
+    open_id, cookie_account = sess
+    if cookie_account != host_account:
+        raise WebAuthRedirect()
+    perm = get_user_permission(open_id, account_id=host_account)
     if perm is None:
-        raise WebAuthForbidden(open_id, get_registration_status(open_id))
+        raise WebAuthForbidden(
+            open_id, get_registration_status(open_id, account_id=host_account)
+        )
     return perm
 
 
@@ -61,15 +72,19 @@ def require_web_user_api(request: Request) -> UserPermission:
     鉴权口径与 require_web_user 完全一致（同一 cookie + 同一 user_roles 真相）。
     """
     cfg = settings.feishu_oauth
+    host_account = account_from_request(request)
     raw = request.cookies.get(cfg.cookie_name, "")
-    open_id = verify_session_cookie(raw) if raw else None
-    if not open_id:
+    sess = verify_session_cookie(raw) if raw else None
+    if not sess:
         raise HTTPException(status_code=401, detail="未登录")
-    perm = get_user_permission(open_id)
+    open_id, cookie_account = sess
+    if cookie_account != host_account:
+        raise HTTPException(status_code=401, detail="未登录")
+    perm = get_user_permission(open_id, account_id=host_account)
     if perm is None:
         detail = (
             "申请已提交，等待管理员开通"
-            if get_registration_status(open_id) == "pending"
+            if get_registration_status(open_id, account_id=host_account) == "pending"
             else "账号未获授权，请联系管理员"
         )
         raise HTTPException(status_code=403, detail=detail)

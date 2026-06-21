@@ -560,32 +560,35 @@ async def report(
     end_date: str = Query(None, description="结束日期 YYYY-MM-DD"),
     period: str = Query("last_7d", description="时间窗口: last_7d / last_30d / today"),
 ):
-    # 1) 签名 token → 报告的"签发对象"open_id（时效 + 参数 + 防篡改）
-    open_id = verify_token(t)
-    if not open_id:
+    # 1) 签名 token → 报告的"签发对象"(open_id, 租户 account)（时效 + 参数 + 防篡改）
+    tok = verify_token(t)
+    if not tok:
         return HTMLResponse(_render_error(), status_code=401)
+    open_id, token_account = tok
     if template_name not in _VALID_TEMPLATES:
         return HTMLResponse(_render_error(), status_code=404)
 
-    # 2) 飞书登录态 → "打开者"open_id（与 /board、/app 同一 board_session cookie）
+    # 2) 飞书登录态 → "打开者"(open_id, 租户)（与 /board、/app 同一 board_session cookie）
     raw = request.cookies.get(settings.feishu_oauth.cookie_name, "")
-    viewer = verify_session_cookie(raw) if raw else None
+    sess = verify_session_cookie(raw) if raw else None
+    viewer_open_id, viewer_account = sess if sess else (None, None)
     # 诊断日志（PC/移动端飞书 webview 行为定位）：UA + 是否已带有效 session。
     # 飞书 PC webview UA 含 Lark/Feishu + Windows/Macintosh；移动端含 iPhone/Android。
-    logger.info("report view: tmpl=%s open_id=%s has_session=%s ua=%r",
-                template_name, open_id, bool(viewer), request.headers.get("user-agent", ""))
-    if not viewer:
+    logger.info("report view: tmpl=%s open_id=%s account=%s has_session=%s ua=%r",
+                template_name, open_id, token_account, bool(viewer_open_id),
+                request.headers.get("user-agent", ""))
+    if not viewer_open_id:
         # 未登录：跳飞书登录，登录后回跳本报告 URL（飞书内免登静默，飞书外自然被挡）
         nxt = request.url.path + (("?" + request.url.query) if request.url.query else "")
         logger.info("report → 302 跳飞书登录(无有效 session)：open_id=%s", open_id)
         return RedirectResponse(
             f"{_LOGIN_PATH}?{urlencode({'next': nxt})}", status_code=302
         )
-    if viewer != open_id:
-        # 已登录但非本人（同企业同事/他人转发）：拒绝
+    # 双因子校验：打开者必须 == 签发对象本人，且二者租户一致（防跨租户 token 被另一租户登录态打开）
+    if viewer_open_id != open_id or viewer_account != token_account:
         return HTMLResponse(_render_forbidden(), status_code=403)
 
-    # 3) 本人：照常取数渲染（软隔离按 open_id 的 binding）
+    # 3) 本人：照常取数渲染（软隔离按 open_id 的 binding；account 透传见 Phase 4 data 层）
     if template_name == "weekly_review":
         data = await _collect_weekly(open_id, period)
     else:
@@ -833,12 +836,14 @@ async def report_insight(
     period: str = Query("last_7d"),
 ):
     """AI 三段洞察（结论/问题/动作）。鉴权同 report()，失败一律降级 {available:false}，绝不 500。"""
-    open_id = verify_token(t)
-    if not open_id or template_name not in _VALID_TEMPLATES:
+    tok = verify_token(t)
+    if not tok or template_name not in _VALID_TEMPLATES:
         return JSONResponse({"available": False, "reason": "invalid"})
+    open_id, token_account = tok
     raw = request.cookies.get(settings.feishu_oauth.cookie_name, "")
-    viewer = verify_session_cookie(raw) if raw else None
-    if not viewer or viewer != open_id:
+    sess = verify_session_cookie(raw) if raw else None
+    viewer_open_id, viewer_account = sess if sess else (None, None)
+    if not viewer_open_id or viewer_open_id != open_id or viewer_account != token_account:
         return JSONResponse({"available": False, "reason": "forbidden"})
 
     # 缓存键须含 template_name，否则日报/周报同 open_id+period 会串味（拿到对方的洞察）。

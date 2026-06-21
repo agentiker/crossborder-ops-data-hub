@@ -41,14 +41,28 @@ class DashboardConfig(BaseModel):
     token_ttl_seconds: int = 1800  # token 默认有效期（30 分钟）
 
 
+class FeishuAppCredential(BaseModel):
+    """单个飞书 app 的 OAuth 凭据（多租户：每个 account_id 对应一组）。"""
+    app_id: str = ""      # client_id（如 cli_aaa9302… = ecom-app，cli_aaaf… = ecom-app-gtl）
+    app_secret: str = ""  # client_secret
+
+
 class FeishuOAuthConfig(BaseModel):
     """独立运营看板的飞书 OAuth v2 网页免登 + 登录态配置（方案 B，见 plan/14）。
 
     浏览器跳飞书授权（飞书客户端内自动免登）→ 回调拿一次性 token 取 `open_id` 即丢弃，
     登录态由独立无状态 HMAC 签名 cookie 承载（同构 web/signed_link.py，不建 session 表）。
-    `open_id` 是 per-app 的：看板 OAuth 与运营对话必须同一飞书 app（建议 ecom-app），
-    user_roles 存的 open_id 才能三处串起来。
+
+    多租户（多飞书 app）：`open_id` 是 per-app 的，不同飞书租户用各自的 app。`apps` 按
+    account_id（= 租户主键）索引多组凭据；冷登录用哪套由子域名 Host 决定（core/tenancy）。
+    顶层 `app_id/app_secret/redirect_uri` 保留为**单 app 兼容垫片**：未配 `apps` 时回落它
+    （= 旧单租户行为，等价 ecom-app），让旧 .env 与旧部署零改动仍可跑。
     """
+    # account_id → 凭据。例：{"ecom-app": {...}, "ecom-app-gtl": {...}}（.env 用 JSON 串）
+    apps: dict[str, FeishuAppCredential] = {}
+    # 回调路径，所有 app 共用同一 path、各自子域名各自在飞书后台白名单登记完整 URL。
+    redirect_path: str = "/board/auth/feishu/callback"
+    # —— 单 app 兼容垫片（旧字段，apps 未配时回落）——
     app_id: str = ""  # 选定统一飞书 app 的 client_id（需用户提供，见 Phase 0）
     app_secret: str = ""  # 对应 client_secret
     redirect_uri: str = ""  # 回调地址，须在飞书后台 redirect_uri 白名单中
@@ -66,6 +80,28 @@ class FeishuOAuthConfig(BaseModel):
     # 先 False 部署 → CLI 登记 boss/operator → 确认无误再置 True。
     # False 时 web/routes/data.py::_resolve_scope 维持旧行为（未登记 open_id 不拒）。
     enforce_dialog_authz: bool = False
+
+    def credential(self, account_id: str) -> "FeishuAppCredential":
+        """取某租户（account_id）的飞书 app 凭据。
+
+        未在 `apps` 配置时回落顶层单 app 字段（= 旧单租户行为，等价 ecom-app），
+        保证旧 .env 仍可用。回落出的凭据 app_id 可能为空 → 上层据此判未配置并拒绝。
+        """
+        if account_id in self.apps:
+            return self.apps[account_id]
+        return FeishuAppCredential(app_id=self.app_id, app_secret=self.app_secret)
+
+
+class TenancyConfig(BaseModel):
+    """多租户拓扑映射（env 驱动，属部署拓扑，与 cloudflared/飞书凭据同处管理）。
+
+    .env 用 JSON 串（pydantic 原生支持 dict env）：
+      TENANCY__HOST_TO_ACCOUNT='{"board.agenticker.cc":"ecom-app","gtl.board.agenticker.cc":"ecom-app-gtl"}'
+      TENANCY__PUBLIC_BASE_URL='{"ecom-app":"https://board.agenticker.cc","ecom-app-gtl":"https://gtl.board.agenticker.cc"}'
+    未配时 core/tenancy 回落 DEFAULT_ACCOUNT / dashboard.public_base_url。
+    """
+    host_to_account: dict[str, str] = {}   # 子域名 host → account_id
+    public_base_url: dict[str, str] = {}   # account_id → 该租户公网根
 
 
 class LLMConfig(BaseModel):
@@ -97,6 +133,7 @@ class Settings(BaseSettings):
     api: APIConfig = APIConfig()
     dashboard: DashboardConfig = DashboardConfig()
     feishu_oauth: FeishuOAuthConfig = FeishuOAuthConfig()
+    tenancy: TenancyConfig = TenancyConfig()
     llm: LLMConfig = LLMConfig()
     scheduler_interval_minutes: int = 60
     # 业务归日时区偏移（小时）。印尼 WIB 固定 UTC+7（无夏令时）。

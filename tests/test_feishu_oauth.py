@@ -31,6 +31,11 @@ class _FakeResp:
 
 _NO_JSON = object()
 
+# 多租户：build_authorize_url / exchange_code_for_token 现需 account_id + redirect_uri。
+# configured fixture 设顶层 app_id，credential("ecom-app") 在 apps 未配时回落它。
+_ACC = "ecom-app"
+_RU = "https://board.agenticker.cc/board/auth/feishu/callback"
+
 
 @pytest.fixture
 def configured(monkeypatch):
@@ -45,7 +50,7 @@ def configured(monkeypatch):
 # ---------- build_authorize_url ----------
 
 def test_authorize_url_has_required_query(configured):
-    url = build_authorize_url("state-abc")
+    url = build_authorize_url("state-abc", account_id=_ACC, redirect_uri=_RU)
     parsed = urlparse(url)
     q = parse_qs(parsed.query)
     # 标准 OAuth authorize（accounts 域、入参 client_id + response_type=code）。
@@ -64,32 +69,32 @@ def test_authorize_url_has_required_query(configured):
 def test_authorize_url_includes_scope_when_configured(configured, monkeypatch):
     """oauth_scope 可经配置覆盖默认。"""
     monkeypatch.setattr(settings.feishu_oauth, "oauth_scope", "contact:user.id:readonly")
-    q = parse_qs(urlparse(build_authorize_url("s")).query)
+    q = parse_qs(urlparse(build_authorize_url("s", account_id=_ACC, redirect_uri=_RU)).query)
     assert q["scope"] == ["contact:user.id:readonly"]
 
 
 def test_authorize_url_no_scope_when_empty(configured, monkeypatch):
     """oauth_scope 显式置空时不拼 scope（兜底，不建议——会导致每次弹同意页）。"""
     monkeypatch.setattr(settings.feishu_oauth, "oauth_scope", "")
-    q = parse_qs(urlparse(build_authorize_url("s")).query)
+    q = parse_qs(urlparse(build_authorize_url("s", account_id=_ACC, redirect_uri=_RU)).query)
     assert "scope" not in q
 
 
 def test_authorize_url_explicit_scope_arg_wins(configured):
     """显式传 scope 参数覆盖配置默认。"""
-    q = parse_qs(urlparse(build_authorize_url("s", scope="bitable:app")).query)
+    q = parse_qs(urlparse(build_authorize_url("s", account_id=_ACC, redirect_uri=_RU, scope="bitable:app")).query)
     assert q["scope"] == ["bitable:app"]
 
 
 def test_authorize_url_missing_config_raises(monkeypatch):
     monkeypatch.setattr(settings.feishu_oauth, "app_id", "")
     with pytest.raises(FeishuOAuthError):
-        build_authorize_url("state-abc")
+        build_authorize_url("state-abc", account_id=_ACC, redirect_uri=_RU)
 
 
 def test_authorize_url_empty_state_raises(configured):
     with pytest.raises(FeishuOAuthError):
-        build_authorize_url("")
+        build_authorize_url("", account_id=_ACC, redirect_uri=_RU)
 
 
 # ---------- exchange_code_for_token ----------
@@ -99,7 +104,7 @@ def test_exchange_code_success(configured, monkeypatch):
         feishu_oauth.requests, "post",
         lambda *a, **k: _FakeResp({"code": 0, "access_token": "u-tok-123"}),
     )
-    assert exchange_code_for_token("the-code") == "u-tok-123"
+    assert exchange_code_for_token("the-code", account_id=_ACC, redirect_uri=_RU) == "u-tok-123"
 
 
 def test_exchange_code_error_code_raises(configured, monkeypatch):
@@ -108,7 +113,7 @@ def test_exchange_code_error_code_raises(configured, monkeypatch):
         lambda *a, **k: _FakeResp({"code": 20050, "error_description": "bad code"}),
     )
     with pytest.raises(FeishuOAuthError):
-        exchange_code_for_token("the-code")
+        exchange_code_for_token("the-code", account_id=_ACC, redirect_uri=_RU)
 
 
 def test_exchange_code_missing_token_raises(configured, monkeypatch):
@@ -117,12 +122,12 @@ def test_exchange_code_missing_token_raises(configured, monkeypatch):
         lambda *a, **k: _FakeResp({"code": 0}),
     )
     with pytest.raises(FeishuOAuthError):
-        exchange_code_for_token("the-code")
+        exchange_code_for_token("the-code", account_id=_ACC, redirect_uri=_RU)
 
 
 def test_exchange_code_empty_raises(configured):
     with pytest.raises(FeishuOAuthError):
-        exchange_code_for_token("")
+        exchange_code_for_token("", account_id=_ACC, redirect_uri=_RU)
 
 
 # ---------- fetch_open_id ----------

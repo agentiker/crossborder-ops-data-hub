@@ -71,9 +71,10 @@ async def dashboard(
     t: str = Query("", description="签名 token（含 open_id + 过期）"),
     period: str = Query("last_30d", description="趋势/榜单时间窗口"),
 ):
-    open_id = verify_token(t)
-    if not open_id:
+    tok = verify_token(t)
+    if not tok:
         return HTMLResponse(_render_error(), status_code=401)
+    open_id, _account = tok
     data = await _collect(open_id, period)
     return HTMLResponse(_render(data))
 
@@ -87,9 +88,10 @@ async def dashboard_data(
 
     同样验签 + 强制隔离（只认 token 里的 open_id，忽略 URL 其它参数）。验签失败 → 401 JSON。
     """
-    open_id = verify_token(t)
-    if not open_id:
+    tok = verify_token(t)
+    if not tok:
         return JSONResponse({"error": "invalid_token"}, status_code=401)
+    open_id, _account = tok
     data = await _collect(open_id, period)
     return JSONResponse(data)
 
