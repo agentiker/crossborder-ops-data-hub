@@ -248,9 +248,12 @@ def _scan_stock(session, *, account, open_id, scope, scope_id, dry_run: bool) ->
 
 def _scan_one(recipient: dict, *, dry_run: bool) -> list[str]:
     """评估一个收件人的全部告警规则（待发货 + 库存）。返回各规则状态行列表。"""
+    from core.tenancy import set_current_account
+
     account = recipient["account"]
     open_id = recipient["open_id"]
     scope_id = recipient.get("scope_id")
+    set_current_account(account)  # ORM 自动过滤按本收件人租户隔离
 
     # 多租户：按收件人 account 解析范围——gtl 收件人扫 gtl 的店，绝不扫到 ecom 的店
     # （scope_id=None 时由 resolve_filters 收口为本租户可见店并集）。

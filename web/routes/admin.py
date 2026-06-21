@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from core.db import SessionLocal
+from core.tenancy import set_current_account
 from models.base_models import UserRole
 from services.scope_resolution import ScopeError, expand_scope, list_scopes
 from services.user_authz import UserPermission, get_user_permission
@@ -103,6 +104,7 @@ async def list_roles(boss: UserPermission = Depends(require_boss)):
 
     多租户隔离：只返回 boss 自己 (channel, account_id) 下的角色，gtl boss 看不到 ecom-app 的人。
     """
+    set_current_account(boss.account_id)
     session = SessionLocal()
     try:
         rows = (
@@ -126,6 +128,7 @@ async def upsert_role(body: RoleUpsertIn, boss: UserPermission = Depends(require
     多租户防越权：账号维度**强制用 boss 自己的** (channel, account_id)，忽略 body 里的
     account_id/channel——gtl boss 不能往 ecom-app 租户里增删改人。
     """
+    set_current_account(boss.account_id)
     if body.role not in ("boss", "operator"):
         raise HTTPException(status_code=400, detail="role 仅支持 boss / operator")
     account_id, channel = boss.account_id, boss.channel
@@ -185,6 +188,7 @@ async def list_admin_scopes(boss: UserPermission = Depends(require_boss)):
 
     多租户：只列 boss 自己租户的 scope，gtl boss 选不到 ecom-app 的范围。
     """
+    set_current_account(boss.account_id)
     return ScopeListOut(items=[
         ScopeOptionOut(scope_key=s["scope_key"], scope_name=s["scope_name"])
         for s in list_scopes(boss.account_id)
@@ -197,6 +201,7 @@ async def deactivate_role(body: RoleDeactivateIn, boss: UserPermission = Depends
 
     多租户防越权：只能停用 boss 自己 (channel, account_id) 下的人，忽略 body 的 account_id/channel。
     """
+    set_current_account(boss.account_id)
     session = SessionLocal()
     try:
         row = (

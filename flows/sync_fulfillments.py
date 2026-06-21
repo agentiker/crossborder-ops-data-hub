@@ -175,7 +175,9 @@ def sync_fulfillments_flow(
 
 if __name__ == "__main__":
     from flows._shop_discovery import discover_single_shop
+    from core.tenancy import set_current_account
 
     scope = discover_single_shop()
+    set_current_account(scope["account_id"])
     print(f"Auto-discovered shop scope: {scope}")
     sync_fulfillments_flow(**scope)

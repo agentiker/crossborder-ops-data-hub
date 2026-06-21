@@ -151,6 +151,9 @@ def migrate(dry_run: bool = False, skip_truncate: bool = False) -> None:
 
 
 if __name__ == "__main__":
+    from core.tenancy import TENANT_BYPASS, set_current_account
+
+    set_current_account(TENANT_BYPASS)  # 迁移脚本需跨租户操作
     p = argparse.ArgumentParser(
         description="Option C: 去掉 key 字符串的 account 段，隔离纯靠 account_id 列（幂等）"
     )

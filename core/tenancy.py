@@ -24,6 +24,10 @@ from core.config import settings
 # 所有存量数据（cookie/token/binding/user_roles）都是 ecom-app，回落语义完全正确。
 DEFAULT_ACCOUNT = "ecom-app"
 
+# 跨租户操作哨兵：set_current_account(TENANT_BYPASS) 让 ORM 自动过滤跳过，
+# 用于 refresh_tokens（扫描全租户）、迁移脚本（截断全量）等场景。
+TENANT_BYPASS = "__bypass__"
+
 
 # ── 请求级当前租户（对话/MCP 路径用）─────────────────────────────────────────
 # data API/MCP 工具被 openclaw 调用时不走 Host（同进程 ASGI）。租户来源优先级：
@@ -50,6 +54,18 @@ def current_account() -> str:
 def account_is_set() -> bool:
     """当前请求是否已显式设定租户（头注入或渲染/WebUI 显式设）。"""
     return _current_account.get() is not None
+
+
+def current_account_or_none() -> Optional[str]:
+    """读当前请求租户；未显式设定或 TENANT_BYPASS → None。
+
+    供 ORM do_orm_execute 事件判断是否启用自动租户过滤：
+    None = 不过滤（向后兼容 / bypass），str = 注入 WHERE account_id = ?。
+    """
+    v = _current_account.get()
+    if v is None or v == TENANT_BYPASS:
+        return None
+    return v
 
 
 def account_for_host(host: Optional[str]) -> str:

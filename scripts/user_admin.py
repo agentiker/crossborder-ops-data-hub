@@ -164,7 +164,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    from core.tenancy import TENANT_BYPASS, set_current_account
+
     args = build_parser().parse_args(argv)
+    set_current_account(getattr(args, "account_id", None) or TENANT_BYPASS)
     return args.func(args)
 
 

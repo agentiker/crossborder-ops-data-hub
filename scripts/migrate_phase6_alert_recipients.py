@@ -71,6 +71,9 @@ def migrate(dry_run: bool = False) -> int:
 
 
 if __name__ == "__main__":
+    from core.tenancy import TENANT_BYPASS, set_current_account
+
+    set_current_account(TENANT_BYPASS)  # 迁移脚本需跨租户操作
     p = argparse.ArgumentParser(description="Phase 6 alert_recipients 迁移（幂等）")
     p.add_argument("--dry-run", action="store_true", help="只打印将做什么，不改库")
     raise SystemExit(migrate(dry_run=p.parse_args().dry_run))

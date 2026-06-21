@@ -21,6 +21,9 @@ from models import base_models  # noqa: F401
 
 @pytest.fixture()
 def session():
+    from core.tenancy import _current_account, set_current_account
+
+    set_current_account("ecom-app")
     engine = create_engine("sqlite:///:memory:", future=True)
     Base.metadata.create_all(bind=engine)
     Session = sessionmaker(bind=engine, expire_on_commit=False)
@@ -30,3 +33,4 @@ def session():
     finally:
         db_session.close()
         Base.metadata.drop_all(bind=engine)
+        _current_account.set(None)  # 重置，防跨测试污染

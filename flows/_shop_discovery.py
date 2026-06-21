@@ -11,6 +11,7 @@ helper raises rather than guess.
 from __future__ import annotations
 
 from core.db import SessionLocal
+from core.tenancy import TENANT_BYPASS, set_current_account
 from models.base_models import PlatformToken
 
 
@@ -19,6 +20,7 @@ def discover_single_shop(platform: str = "tiktok_shop") -> dict:
 
     Raises if zero or >1 shops are authorized — caller must then pass explicit args.
     """
+    set_current_account(TENANT_BYPASS)  # 需扫描全租户 token 来发现 shop
     session = SessionLocal()
     try:
         rows = (
