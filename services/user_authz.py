@@ -24,7 +24,13 @@ from typing import Optional
 
 from core.db import SessionLocal
 from models.base_models import UserRole
-from services.scope_resolution import ScopeError, ScopeFilters, expand_scope, resolve_filters
+from services.scope_resolution import (
+    ScopeError,
+    ScopeFilters,
+    expand_scope,
+    resolve_filters,
+    tenant_visible_shop_ids,
+)
 
 ROLE_BOSS = "boss"
 ROLE_OPERATOR = "operator"
@@ -202,10 +208,23 @@ def resolve_authorized_scope(
     requested_shop_ids = list(requested_shop_ids or [])
 
     if perm.is_boss:
-        # 无上限：直接按请求解析（不传即全范围）。
+        # boss 在本租户内无上限，但**绝不跨租户**：全量范围 = 本租户可见店铺并集
+        # （自有 token 店 ∪ 自有 scope 店），而非"无过滤=查全库"。
+        if not requested_scope_key and not requested_shop_ids:
+            shops = sorted(tenant_visible_shop_ids(perm.account_id))
+            return ScopeFilters(
+                platform=None,
+                country=None,
+                # 空集 → 永不命中的哨兵，保证 fail-closed（该租户暂无可见店时看不到任何数据）。
+                shop_ids=shops or ["__no_shop__"],
+                scope_key=None,
+                display_text="全部范围" if shops else "（暂无可见店铺）",
+            )
+        # 指定了 scope/店：按请求在本租户内解析（resolve_filters 仍按本租户可见集校验显式店）。
         return resolve_filters(
             scope_key=requested_scope_key,
             shop_ids=requested_shop_ids or None,
+            account_id=perm.account_id,
         )
 
     # operator：必须有硬上限，否则视为配置错（不允许 operator 看全量）。
@@ -218,12 +237,15 @@ def resolve_authorized_scope(
     # 与 allowed 取交集；任何越界（不在 allowed 范围内）由 resolve_filters 抛 ScopeError。
     explicit_shops = list(requested_shop_ids)
     if requested_scope_key:
-        explicit_shops.extend(expand_scope(requested_scope_key).shop_ids)
+        explicit_shops.extend(
+            expand_scope(requested_scope_key, account_id=perm.account_id).shop_ids
+        )
     explicit_shops = list(dict.fromkeys(s for s in explicit_shops if s))  # 去重保序
 
     return resolve_filters(
         scope_key=perm.allowed_scope_key,
         shop_ids=explicit_shops or None,
+        account_id=perm.account_id,
     )
 
 

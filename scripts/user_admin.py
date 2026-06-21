@@ -59,9 +59,9 @@ def cmd_set(args) -> int:
         if not scope_key:
             print("operator 必须指定 --scope-key（不可越界的硬上限）", file=sys.stderr)
             return 2
-        # 校验：未知/停用 scope 直接拒，绝不落脏权限。
+        # 校验：未知/停用 scope 直接拒，绝不落脏权限。多租户：只在该用户租户内找 scope。
         try:
-            expand_scope(scope_key)
+            expand_scope(scope_key, account_id=args.account_id)
         except ScopeError as e:
             print(f"scope 校验失败：{e}", file=sys.stderr)
             return 2

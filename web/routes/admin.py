@@ -136,9 +136,10 @@ async def upsert_role(body: RoleUpsertIn, boss: UserPermission = Depends(require
             raise HTTPException(
                 status_code=400, detail="operator 必须指定 scope_key（不可越界的硬上限）"
             )
-        # 校验：未知/停用 scope 直接拒，绝不落脏权限。
+        # 校验：未知/停用 scope 直接拒，绝不落脏权限。多租户：只在 boss 自己租户内找 scope，
+        # gtl boss 给 operator 配的 scope 必须是 gtl 名下的，配 ecom 的 scope_key → 校验失败。
         try:
-            expand_scope(scope_key)
+            expand_scope(scope_key, account_id=account_id)
         except ScopeError as e:
             raise HTTPException(status_code=400, detail=f"scope 校验失败：{e}") from e
     else:  # boss 看全部，忽略 scope（存 None）
@@ -179,11 +180,14 @@ async def upsert_role(body: RoleUpsertIn, boss: UserPermission = Depends(require
 
 
 @router.get("/scopes", response_model=ScopeListOut, include_in_schema=False)
-async def list_admin_scopes(_: UserPermission = Depends(require_boss)):
-    """boss 选择 operator 数据范围时的可选项；纯只读，复用 services.list_scopes()。"""
+async def list_admin_scopes(boss: UserPermission = Depends(require_boss)):
+    """boss 选择 operator 数据范围时的可选项；纯只读，复用 services.list_scopes()。
+
+    多租户：只列 boss 自己租户的 scope，gtl boss 选不到 ecom-app 的范围。
+    """
     return ScopeListOut(items=[
         ScopeOptionOut(scope_key=s["scope_key"], scope_name=s["scope_name"])
-        for s in list_scopes()
+        for s in list_scopes(boss.account_id)
     ])
 
 

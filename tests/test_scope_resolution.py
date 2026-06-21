@@ -53,6 +53,31 @@ def test_expand_scope_returns_shop_ids_and_display(session, monkeypatch):
     assert f.display_text == "TikTok Shop / 印尼 / 3 个店铺"
 
 
+def test_scope_tenant_isolation(session, monkeypatch):
+    """list_scopes/get_scope/expand_scope 按 account_id 隔离：gtl 看不到 ecom 的 scope。"""
+    _use(session, monkeypatch)
+    _scope(session, "ecom-only", ["s1"])  # 默认 account=ecom-app
+    session.add(
+        BusinessScope(
+            account_id="ecom-app-gtl", scope_key="gtl-only", scope_name="gtl的",
+            scope_type="shop_group", platform="tiktok_shop", country="ID",
+            shop_ids=["s1"], is_active=True,
+        )
+    )
+    session.commit()
+
+    ecom_keys = {s["scope_key"] for s in scope_resolution.list_scopes("ecom-app")}
+    gtl_keys = {s["scope_key"] for s in scope_resolution.list_scopes("ecom-app-gtl")}
+    assert ecom_keys == {"ecom-only"}
+    assert gtl_keys == {"gtl-only"}
+    # 跨租户取 scope 取不到 → 当作未知，expand 抛错
+    assert scope_resolution.get_scope("gtl-only", account_id="ecom-app") is None
+    with pytest.raises(ScopeError):
+        expand_scope("gtl-only", account_id="ecom-app")
+    # 同名 scope_key 可在两租户并存（联合唯一），各自展开互不干扰
+    assert expand_scope("ecom-only", account_id="ecom-app").shop_ids == ["s1"]
+
+
 def test_expand_unknown_or_inactive_scope_raises(session, monkeypatch):
     _use(session, monkeypatch)
     _scope(session, "dead", ["s1"], active=False)

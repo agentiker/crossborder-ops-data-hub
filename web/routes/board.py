@@ -49,12 +49,15 @@ def _scope_options(perm: UserPermission) -> list[dict]:
     """范围切换条数据。boss：全部范围 + 所有 scope；operator：仅其 allowed（锁定单项）。"""
     if perm.is_boss:
         opts = [{"key": "", "label": "全部范围"}]
-        opts += [{"key": s["scope_key"], "label": s["scope_name"]} for s in list_scopes()]
+        opts += [
+            {"key": s["scope_key"], "label": s["scope_name"]}
+            for s in list_scopes(perm.account_id)
+        ]
         return opts
     # operator：只暴露被授权的那个 scope，不可切换到其它
     allowed = perm.allowed_scope_key
     label = allowed
-    for s in list_scopes():
+    for s in list_scopes(perm.account_id):
         if s["scope_key"] == allowed:
             label = s["scope_name"]
             break

@@ -54,7 +54,7 @@ def _clear():
 @pytest.fixture()
 def _scope_ok(monkeypatch):
     """默认放行已知 scope；scope-bad 视为未知 → ScopeError（仿 expand_scope 行为）。"""
-    def fake_expand(key):
+    def fake_expand(key, account_id="ecom-app"):
         if key == "scope-bad":
             raise ScopeError(f"未知或停用的 scope：{key}")
         return object()
@@ -214,7 +214,7 @@ def test_boss_deactivate_not_found_404(_db):
 
 
 def test_boss_list_scopes(_db, monkeypatch):
-    monkeypatch.setattr(admin_mod, "list_scopes", lambda: [
+    monkeypatch.setattr(admin_mod, "list_scopes", lambda account_id="ecom-app": [
         {"scope_key": "tts-id-all", "scope_name": "印尼TikTok全部店"},
         {"scope_key": "tts-id-shop-1", "scope_name": "印尼店一"},
     ])

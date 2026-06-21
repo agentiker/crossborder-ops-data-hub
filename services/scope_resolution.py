@@ -13,7 +13,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+from sqlalchemy import or_
+
 from core.db import SessionLocal
+from core.tenancy import DEFAULT_ACCOUNT
 from models.base_models import BusinessScope, PlatformToken
 
 
@@ -59,13 +62,19 @@ def _display_text(
     return " / ".join(parts) if parts else "全部范围"
 
 
-def list_scopes() -> list[dict]:
-    """列出所有启用的 scope（运维/调试用）。"""
+def list_scopes(account_id: str = DEFAULT_ACCOUNT) -> list[dict]:
+    """列出某租户启用的 scope（运维/调试/下拉用）。
+
+    多租户：只返回 `account_id` 名下的 scope——gtl boss 看不到 ecom-app 的范围。
+    """
     session = SessionLocal()
     try:
         rows = (
             session.query(BusinessScope)
-            .filter(BusinessScope.is_active.is_(True))
+            .filter(
+                BusinessScope.is_active.is_(True),
+                BusinessScope.account_id == account_id,
+            )
             .order_by(BusinessScope.scope_key)
             .all()
         )
@@ -84,21 +93,24 @@ def list_scopes() -> list[dict]:
         session.close()
 
 
-def get_scope(scope_key: str) -> Optional[BusinessScope]:
+def get_scope(scope_key: str, account_id: str = DEFAULT_ACCOUNT) -> Optional[BusinessScope]:
     session = SessionLocal()
     try:
         return (
             session.query(BusinessScope)
-            .filter(BusinessScope.scope_key == scope_key)
+            .filter(
+                BusinessScope.scope_key == scope_key,
+                BusinessScope.account_id == account_id,
+            )
             .first()
         )
     finally:
         session.close()
 
 
-def expand_scope(scope_key: str) -> ScopeFilters:
-    """把一个命名 scope 展开为 shop_ids 集合。"""
-    scope = get_scope(scope_key)
+def expand_scope(scope_key: str, account_id: str = DEFAULT_ACCOUNT) -> ScopeFilters:
+    """把某租户名下一个命名 scope 展开为 shop_ids 集合。"""
+    scope = get_scope(scope_key, account_id=account_id)
     if scope is None or not scope.is_active:
         raise ScopeError(f"未知或已停用的 scope：{scope_key}")
     shop_ids = list(scope.shop_ids or [])
@@ -113,29 +125,61 @@ def expand_scope(scope_key: str) -> ScopeFilters:
     )
 
 
-def _known_shop_ids() -> set[str]:
-    """已授权的合法店铺集合（来自 platform_tokens，每店一行）。"""
+def tenant_visible_shop_ids(account_id: str = DEFAULT_ACCOUNT) -> set[str]:
+    """某租户可见的全部店铺 = 自有 token 店 ∪ 自有 scope 的店铺并集。
+
+    - 自有 token 店：`platform_tokens.account_id == account_id`（店铺归属/接入）；
+    - 自有 scope 店：该租户名下所有 active business_scopes 的 shop_ids 并集（显式授权，
+      可把别租户拥有的店"借"给本租户做测试/共享，如把 ecom 的店授权给 gtl）。
+
+    用作 boss 全量范围的上限与显式店铺的越权校验集。空集 = 该租户暂无任何可见店
+    （上层据此 fail-closed，绝不退化为"无过滤=查全库"）。
+    """
     session = SessionLocal()
     try:
-        rows = (
-            session.query(PlatformToken.shop_id)
-            .filter(PlatformToken.shop_id.isnot(None))
+        # 店铺归属过滤：account_id 匹配的 token。**向后兼容**：未打标的旧 token
+        # （account_id IS NULL，迁移回填前的存量）视为归属创始租户 DEFAULT_ACCOUNT，
+        # 镜像 Phase 1 cookie/token「无 account → DEFAULT」回落，使正确性不依赖回填。
+        if account_id == DEFAULT_ACCOUNT:
+            owner_cond = or_(
+                PlatformToken.account_id == account_id,
+                PlatformToken.account_id.is_(None),
+            )
+        else:
+            owner_cond = PlatformToken.account_id == account_id
+        owned = {
+            r[0]
+            for r in session.query(PlatformToken.shop_id)
+            .filter(PlatformToken.shop_id.isnot(None), owner_cond)
             .all()
-        )
-        return {r[0] for r in rows if r[0]}
+            if r[0]
+        }
+        scoped: set[str] = set()
+        for r in (
+            session.query(BusinessScope.shop_ids)
+            .filter(
+                BusinessScope.is_active.is_(True),
+                BusinessScope.account_id == account_id,
+            )
+            .all()
+        ):
+            for s in (r[0] or []):
+                if s:
+                    scoped.add(s)
+        return owned | scoped
     finally:
         session.close()
 
 
-def _validate_shops_authorized(shop_ids: list[str]) -> None:
-    """拒绝任何不在 platform_tokens 中的店（防止瞎配 / 越权）。"""
+def _validate_shops_authorized(shop_ids: list[str], account_id: str = DEFAULT_ACCOUNT) -> None:
+    """拒绝任何不在本租户可见集中的店（防止瞎配 / 跨租户越权）。"""
     if not shop_ids:
         return
-    known = _known_shop_ids()
+    known = tenant_visible_shop_ids(account_id)
     unknown = [s for s in shop_ids if s not in known]
     if unknown:
         raise ScopeError(
-            f"以下店铺未在已授权列表(platform_tokens)中：{', '.join(unknown)}"
+            f"以下店铺不在本租户可见范围内：{', '.join(unknown)}"
         )
 
 
@@ -146,6 +190,7 @@ def resolve_filters(
     country: Optional[str] = None,
     shop_id: Optional[str] = None,
     shop_ids: Optional[list[str]] = None,
+    account_id: str = DEFAULT_ACCOUNT,
 ) -> ScopeFilters:
     """把 scope + 显式条件合并为最终过滤条件（收窄取交集语义）。
 
@@ -164,7 +209,7 @@ def resolve_filters(
     explicit_shops = list(dict.fromkeys(s for s in explicit_shops if s))  # 去重保序
 
     if scope_key:
-        base = expand_scope(scope_key)
+        base = expand_scope(scope_key, account_id=account_id)
         if explicit_shops:
             # 收窄：指定店必须落在 scope 内
             out_of_scope = [s for s in explicit_shops if s not in base.shop_ids]
@@ -188,8 +233,8 @@ def resolve_filters(
             ),
         )
 
-    # 无 scope_key：兼容旧的显式过滤，但校验店铺合法性
-    _validate_shops_authorized(explicit_shops)
+    # 无 scope_key：兼容旧的显式过滤，但校验店铺合法性（按本租户可见集）
+    _validate_shops_authorized(explicit_shops, account_id=account_id)
     return ScopeFilters(
         platform=platform,
         country=country,

@@ -28,17 +28,20 @@ def _known_shop_ids(session) -> set[str]:
     return {r[0] for r in rows if r[0]}
 
 
-def cmd_list(_args) -> int:
+def cmd_list(args) -> int:
     session = SessionLocal()
     try:
-        rows = session.query(BusinessScope).order_by(BusinessScope.scope_key).all()
+        q = session.query(BusinessScope)
+        if getattr(args, "account_id", None):
+            q = q.filter(BusinessScope.account_id == args.account_id)
+        rows = q.order_by(BusinessScope.account_id, BusinessScope.scope_key).all()
         if not rows:
             print("（无 scope）")
             return 0
         for r in rows:
             flag = "" if r.is_active else " [停用]"
             print(
-                f"{r.scope_key}{flag}  | {r.scope_name} | {r.scope_type} | "
+                f"[{r.account_id}] {r.scope_key}{flag}  | {r.scope_name} | {r.scope_type} | "
                 f"platform={r.platform or '-'} country={r.country or '-'} | "
                 f"shops={list(r.shop_ids or [])}"
             )
@@ -69,7 +72,10 @@ def cmd_create(args) -> int:
 
         existing = (
             session.query(BusinessScope)
-            .filter(BusinessScope.scope_key == args.key)
+            .filter(
+                BusinessScope.account_id == args.account_id,
+                BusinessScope.scope_key == args.key,
+            )
             .first()
         )
         if existing:
@@ -83,6 +89,7 @@ def cmd_create(args) -> int:
         else:
             session.add(
                 BusinessScope(
+                    account_id=args.account_id,
                     scope_key=args.key,
                     scope_name=args.name,
                     scope_type=args.type,
@@ -94,7 +101,7 @@ def cmd_create(args) -> int:
             )
             action = "创建"
         session.commit()
-        print(f"已{action} scope：{args.key}（{len(shop_ids)} 个店铺）")
+        print(f"已{action} scope：[{args.account_id}] {args.key}（{len(shop_ids)} 个店铺）")
         return 0
     finally:
         session.close()
@@ -105,11 +112,14 @@ def cmd_deactivate(args) -> int:
     try:
         scope = (
             session.query(BusinessScope)
-            .filter(BusinessScope.scope_key == args.key)
+            .filter(
+                BusinessScope.account_id == args.account_id,
+                BusinessScope.scope_key == args.key,
+            )
             .first()
         )
         if scope is None:
-            print(f"未找到 scope：{args.key}", file=sys.stderr)
+            print(f"未找到 scope：[{args.account_id}] {args.key}", file=sys.stderr)
             return 2
         scope.is_active = False
         session.commit()
@@ -123,9 +133,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="业务范围 scope 本地管理 CLI")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("list", help="列出所有 scope").set_defaults(func=cmd_list)
+    p_list = sub.add_parser("list", help="列出 scope（默认全部租户；--account-id 过滤）")
+    p_list.add_argument(
+        "--account-id", dest="account_id", default=None,
+        help="只列某租户的 scope（飞书 app 维度，如 ecom-app / ecom-app-gtl）；留空列全部",
+    )
+    p_list.set_defaults(func=cmd_list)
 
     p_create = sub.add_parser("create", help="创建/更新一个 scope")
+    p_create.add_argument(
+        "--account-id", dest="account_id", default="ecom-app",
+        help="scope 所属租户（飞书 app 维度），默认 ecom-app",
+    )
     p_create.add_argument("--key", required=True, help="稳定 slug，如 tts-id-all")
     p_create.add_argument("--name", required=True, help="展示名，如 印尼TikTok全部店")
     p_create.add_argument(
@@ -137,6 +156,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_create.set_defaults(func=cmd_create)
 
     p_deact = sub.add_parser("deactivate", help="停用一个 scope")
+    p_deact.add_argument(
+        "--account-id", dest="account_id", default="ecom-app",
+        help="scope 所属租户（飞书 app 维度），默认 ecom-app",
+    )
     p_deact.add_argument("--key", required=True)
     p_deact.set_defaults(func=cmd_deactivate)
 

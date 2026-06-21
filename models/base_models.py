@@ -101,7 +101,12 @@ class BusinessScope(Base):
     __tablename__ = "business_scopes"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    scope_key = Column(String(64), nullable=False, unique=True, index=True)  # 稳定 slug，如 tts-id-all
+    # 多租户（飞书 app 维度）：scope 属于哪个 account。scope_key 不再全局唯一，
+    # 改为 (account_id, scope_key) 联合唯一——各租户独立命名空间（见 plan/09 Phase 3）。
+    account_id = Column(
+        String(64), nullable=False, default="ecom-app", server_default="ecom-app", index=True
+    )
+    scope_key = Column(String(64), nullable=False, index=True)  # 稳定 slug，如 tts-id-all
     scope_name = Column(String(200), nullable=False)  # 展示名，如 印尼TikTok全部店
     scope_type = Column(String(32), nullable=False, default="shop_group")  # single_shop / shop_group
     platform = Column(String(32))  # 集合跨平台时为空
@@ -111,8 +116,12 @@ class BusinessScope(Base):
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
+    __table_args__ = (
+        UniqueConstraint("account_id", "scope_key", name="uq_business_scope_account_key"),
+    )
+
     def __repr__(self):
-        return f"<BusinessScope(scope_key={self.scope_key}, type={self.scope_type})>"
+        return f"<BusinessScope(account={self.account_id}, scope_key={self.scope_key}, type={self.scope_type})>"
 
 
 class ConversationScopeBinding(Base):

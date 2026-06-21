@@ -132,8 +132,44 @@ def test_boss_no_request_is_full_range(session, monkeypatch):
     perm = get_user_permission("ou_boss")
     out = resolve_authorized_scope(perm)
     assert out.scope_key is None
-    assert out.shop_ids == []
+    # boss 全量 = 本租户可见店铺并集（自有 token 店 ∪ 自有 scope 店），不再退化为"不过滤"。
+    assert out.shop_ids == ["s1", "s2", "s3", "s4"]
     assert out.display_text == "全部范围"
+
+
+def test_boss_full_range_is_tenant_isolated(session, monkeypatch):
+    """gtl boss 全量只看自己租户的店，看不到 ecom-app 的店（核心隔离断言）。"""
+    _use(session, monkeypatch)
+    # ecom-app 拥有 s1-s4（NULL account 旧 token 回落 ecom-app）+ 一条 scope
+    for s in ["s1", "s2", "s3", "s4"]:
+        _token(session, s)
+    _scope(session, "ecom-all", ["s1", "s2", "s3", "s4"])
+    # gtl 只被显式授权 s1（一条 gtl 名下的 scope），无自有 token
+    session.add(
+        BusinessScope(
+            account_id="ecom-app-gtl", scope_key="gtl-share", scope_name="gtl共享",
+            scope_type="shop_group", platform="tiktok_shop", country="ID",
+            shop_ids=["s1"], is_active=True,
+        )
+    )
+    _role(session, "ou_gtl_boss", "boss", account_id="ecom-app-gtl")
+    session.commit()
+    perm = get_user_permission("ou_gtl_boss", account_id="ecom-app-gtl")
+    out = resolve_authorized_scope(perm)
+    assert out.shop_ids == ["s1"]  # 只看到被授权的 s1，绝不含 s2/s3/s4
+
+
+def test_boss_full_range_no_visible_shops_fails_closed(session, monkeypatch):
+    """租户无任何可见店时，boss 全量 fail-closed（哨兵 → 永不命中），绝不退化为查全库。"""
+    _use(session, monkeypatch)
+    for s in ["s1", "s2"]:
+        _token(session, s)  # 这些是 ecom-app 的店
+    _role(session, "ou_gtl_boss", "boss", account_id="ecom-app-gtl")
+    session.commit()
+    perm = get_user_permission("ou_gtl_boss", account_id="ecom-app-gtl")
+    out = resolve_authorized_scope(perm)
+    assert out.shop_ids == ["__no_shop__"]
+    assert "s1" not in out.shop_ids and "s2" not in out.shop_ids
 
 
 def test_boss_request_any_scope_resolves_it(session, monkeypatch):
