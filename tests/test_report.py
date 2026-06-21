@@ -615,6 +615,22 @@ def test_collect_weekly_scheduled_last_week(monkeypatch):
     assert data["kpi"]["aov"]["value"] == 20            # 客单价
     assert data["kpi"]["ad_spend"]["value"] == 200
     assert data["kpi"]["roas"]["value"] == 5.0          # 1000/200
+    assert data["empty_window"] is False                # 有单 → 不触发零数据护栏
+
+
+def test_collect_weekly_empty_window_flag(monkeypatch):
+    """整周完全无已付款订单（0 单）→ empty_window=True（护栏：全 0 不被误判成系统故障）。"""
+    _patch_weekly_data_sources(monkeypatch)
+    monkeypatch.setattr(
+        "web.routes.report.get_gmv_summary",
+        lambda **k: {"gmv": 0, "order_count": 0, "units_sold": 0, "avg_order_value": 0},
+    )
+    from web.routes.report import _collect_weekly
+
+    data = _run(_collect_weekly("ou_x", "last_week"))
+    assert data["empty_window"] is True
+    assert data["kpi"]["gmv"]["value"] == 0
+    assert data["kpi"]["aov"]["value"] == 0
 
 
 def test_collect_weekly_intraday_this_week(monkeypatch):
@@ -663,6 +679,7 @@ _FAKE_WEEKLY_DATA = {
     "title": "经营周报",
     "change_label": "较上周",
     "low_volume": False,
+    "empty_window": False,
     "baseline_label": "上周",
     "trend_title": "GMV / 广告 / 订单趋势（本周日维度）",
     "trend_mini": False,

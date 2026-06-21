@@ -484,6 +484,8 @@ async def _collect_weekly(open_id: str, period) -> dict:
         "title": "经营周报",
         "change_label": change_label,
         "low_volume": low_volume,
+        # 该周完全无已付款订单 → 模板顶部护栏提示，避免全 0 被误判成系统故障
+        "empty_window": cur_orders == 0,
         "baseline_label": baseline_label,
         "trend_title": "GMV / 广告 / 订单趋势（本周日维度）",
         "trend_mini": False,
@@ -1593,10 +1595,19 @@ kpisEl.querySelectorAll('.qmark').forEach(q => {
 });
 document.addEventListener('click', () =>
   kpisEl.querySelectorAll('.tip.show').forEach(t => t.classList.remove('show')));
-document.getElementById('kpi-note').textContent =
-  (DATA.cutoff_label ? DATA.cutoff_label
-                     : '↑↓ 为环比变化（' + (DATA.change_label || '较上周') + '）')
-  + (DATA.low_volume ? ' · 单量小，环比百分比噪声大已隐藏，改示绝对基准对比' : '');
+(function renderKpiNote(){
+  const el = document.getElementById('kpi-note');
+  if (DATA.empty_window) {  // 整周零订单：醒目提示，避免全 0 被当成系统故障
+    el.textContent = '⚠️ 本周窗口内无已付款订单数据 —— GMV / 客单价为 0 属正常，非系统故障（多因该周无成交或数据尚未覆盖该周）';
+    el.style.color = 'var(--warn)';
+    el.style.fontWeight = '600';
+    return;
+  }
+  el.textContent =
+    (DATA.cutoff_label ? DATA.cutoff_label
+                       : '↑↓ 为环比变化（' + (DATA.change_label || '较上周') + '）')
+    + (DATA.low_volume ? ' · 单量小，环比百分比噪声大已隐藏，改示绝对基准对比' : '');
+})();
 
 // -- 商品结构健康度 --
 (function renderHealth(){
