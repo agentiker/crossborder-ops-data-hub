@@ -2,7 +2,7 @@
 
 - GET /login：签一个短时效 state（防 CSRF，可携带回跳 next）→ 302 跳飞书授权页。
 - GET /callback：校 state → 用 code 换 token → 取 open_id → 签登录 cookie → 302 回 next 或 /board。
-- GET /logout：清 cookie → 回 /app（WebUI 主页，随即触发重新登录回到 /app）。
+- GET /logout：清 cookie → 停在「已退出」确认页（不自动跳 /app，否则会被立刻拉回授权页）。
 
 登录成功后默认回 /board；若发起登录时带了 next（仅 /report、/board、/app 白名单内的站内
 路径），登录后回跳到该 URL。next 编进签名 state 一起防篡改，回跳前再做一次白名单校验，
@@ -130,15 +130,49 @@ async def callback(
 
 @router.get("/logout", include_in_schema=False)
 async def logout():
-    """登出：清登录 cookie，回 /app（WebUI 主页；随即触发重新登录回到 /app 而非 /board）。"""
+    """登出：清登录 cookie，停在「已退出」确认页（不自动跳 /app）。
+
+    若像旧逻辑那样登出后 302 回 /app，/app 一加载发现无登录态又自动拉去飞书授权 →
+    用户永远退不出去。所以这里返回一个静态确认页：默认就停住，由用户自己点「重新登录」
+    才再走授权，真正实现"退出登录"。
+    """
     cfg = settings.feishu_oauth
-    resp = RedirectResponse("/app", status_code=302)
+    resp = HTMLResponse(_LOGGED_OUT_PAGE)
     resp.delete_cookie(key=cfg.cookie_name, path="/")
     return resp
 
 
 def _auth_error(msg: str) -> str:
     return _AUTH_ERROR_PAGE.replace("__MSG__", msg)
+
+
+_LOGGED_OUT_PAGE = r"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>已退出登录</title>
+<style>
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:#0f1117; color:#e6e8ee;
+         font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+  .box { text-align:center; padding:32px 24px; max-width:420px; }
+  .icon { font-size:40px; margin-bottom:12px; }
+  h1 { font-size:18px; margin:0 0 8px; font-weight:600; }
+  p { color:#8a90a2; margin:0 0 16px; font-size:13px; }
+  a { color:#5b8cff; text-decoration:none; border:1px solid #272b38; border-radius:16px;
+      padding:6px 16px; font-size:13px; }
+</style>
+</head>
+<body>
+  <div class="box">
+    <div class="icon">👋</div>
+    <h1>已退出登录</h1>
+    <p>你已安全退出。需要时可重新登录。</p>
+    <a href="/board/auth/feishu/login?next=/app">重新登录</a>
+  </div>
+</body>
+</html>"""
 
 
 _AUTH_ERROR_PAGE = r"""<!DOCTYPE html>
