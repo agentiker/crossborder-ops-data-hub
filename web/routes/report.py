@@ -424,22 +424,23 @@ async def _collect_weekly(open_id: str, period) -> dict:
         critical_days=None, warning_days=None, include_all=True, open_id=open_id,
     ))
     low_items = []
-    level_map = {"stockout": "断货", "critical": "告急", "warning": "预警"}
-    _severity = {"stockout": 0, "critical": 1, "warning": 2}
-    low_sorted = sorted(
-        low.get("items", []),
-        key=lambda it: (_severity.get(it.get("bucket", ""), 9), it.get("days_of_cover", 0)),
-    )
+    level_map = {"stockout": "断货", "critical": "告急", "warning": "预警",
+                 "ok": "充足", "idle": "无销量"}
+    # 服务端 get_stock_risk 已按可售天数升序排好（无销量 idle 的 days_of_cover=None 排末尾），
+    # 直接取序，勿在此手动 sort——idle 的 None 会触发 None<float 崩溃（与日报口径一致）。
+    low_sorted = low.get("items", [])
+    # 断货风险计数恒为真实风险桶（告警口径，buckets.total），与监控告警一致；不含充足/无销量。
     risk_count = low.get("buckets", {}).get("total")
     if risk_count is None:
-        risk_count = len(low.get("items", []))
+        risk_count = 0
     for item in low_sorted[:20]:
         bucket = item.get("bucket", "")
+        days = item.get("days_of_cover")
         low_items.append({
             "name": item.get("product_name") or item.get("sku_id") or "?",
             "stock": item.get("available_stock", 0),
             "velocity": round(item.get("daily_velocity", 0), 1),
-            "days": round(item.get("days_of_cover", 0), 1),
+            "days": round(days, 1) if days is not None else None,
             "level": bucket,
             "level_label": level_map.get(bucket, bucket),
         })
