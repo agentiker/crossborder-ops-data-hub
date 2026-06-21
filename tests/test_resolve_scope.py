@@ -229,3 +229,67 @@ def test_dialog_gate_on_deactivated_403(session, monkeypatch):
     with pytest.raises(HTTPException) as exc:
         data_routes._resolve_scope(open_id="ou_off")
     assert exc.value.status_code == 403
+
+
+# ---------- operator allowed_scope 夹紧（登记即生效，不受 enforce 开关）----------
+
+
+def test_operator_clamped_to_allowed_scope_even_enforce_off(session, monkeypatch):
+    """enforce=False（灰度期）下，已登记 operator 不传范围 → 仍夹到 allowed_scope。
+
+    证明 operator 夹紧不受 enforce 开关控制：tts-vip 只含 s1，故即便租户可见 s1/s2，
+    operator 也只看到 s1（不会退化为全量）。"""
+    _use(session, monkeypatch)
+    monkeypatch.setattr(settings.feishu_oauth, "enforce_dialog_authz", False)
+    set_current_account(None)
+    _token(session, "s1")
+    _token(session, "s2")
+    _scope(session, "tts-vip", ["s1"])
+    _role(session, "ou_op", "operator", scope_key="tts-vip")
+    session.commit()
+
+    out = data_routes._resolve_scope(open_id="ou_op")
+    assert out.scope_key == "tts-vip"
+    assert out.shop_ids == ["s1"]  # 夹到 allowed，看不到 s2
+
+
+def test_operator_in_scope_shop_narrows(session, monkeypatch):
+    """operator 传 allowed 内的显式 shop_id → 收窄到该店。"""
+    _use(session, monkeypatch)
+    set_current_account(None)
+    _token(session, "s1")
+    _token(session, "s2")
+    _scope(session, "tts-vip", ["s1", "s2"])
+    _role(session, "ou_op", "operator", scope_key="tts-vip")
+    session.commit()
+
+    out = data_routes._resolve_scope(open_id="ou_op", shop_id="s1")
+    assert out.shop_ids == ["s1"]
+
+
+def test_operator_out_of_scope_shop_rejected_400(session, monkeypatch):
+    """operator 传 allowed 外的 shop_id → 400（ScopeError 越界拒绝）。"""
+    _use(session, monkeypatch)
+    set_current_account(None)
+    _token(session, "s1")
+    _token(session, "s2")
+    _scope(session, "tts-vip", ["s1"])
+    _role(session, "ou_op", "operator", scope_key="tts-vip")
+    session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        data_routes._resolve_scope(open_id="ou_op", shop_id="s2")
+    assert exc.value.status_code == 400
+
+
+def test_operator_without_allowed_scope_400(session, monkeypatch):
+    """operator 未配 allowed_scope_key（配置错）→ 400，绝不放行全量。"""
+    _use(session, monkeypatch)
+    set_current_account(None)
+    _token(session, "s1")
+    _role(session, "ou_bad", "operator", scope_key=None)
+    session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        data_routes._resolve_scope(open_id="ou_bad")
+    assert exc.value.status_code == 400

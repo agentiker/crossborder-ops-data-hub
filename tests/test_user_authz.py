@@ -273,6 +273,54 @@ def test_operator_without_allowed_scope_raises_authz(session, monkeypatch):
         resolve_authorized_scope(perm)
 
 
+def test_operator_shop_id_single_value_narrowed(session, monkeypatch):
+    """operator 传单值 shop_id（_resolve_scope 的 shop_id 参数）在 allowed 内 → 收窄到该店。"""
+    _use(session, monkeypatch)
+    _seed(session)
+    _role(session, "ou_op", "operator", allowed_scope_key="scope-a")
+    session.commit()
+    perm = get_user_permission("ou_op")
+    out = resolve_authorized_scope(perm, shop_id="s2")
+    assert out.shop_ids == ["s2"]
+
+
+def test_operator_shop_id_out_of_scope_raises(session, monkeypatch):
+    """operator 单值 shop_id 越界（不在 allowed scope 内）→ ScopeError。"""
+    _use(session, monkeypatch)
+    _seed(session)
+    _role(session, "ou_op", "operator", allowed_scope_key="scope-a")
+    session.commit()
+    perm = get_user_permission("ou_op")
+    with pytest.raises(ScopeError):
+        resolve_authorized_scope(perm, shop_id="s4")
+
+
+def test_operator_platform_country_passthrough(session, monkeypatch):
+    """operator 的 platform/country 透传到结果（附加过滤维度，不影响 allowed 店集）。"""
+    _use(session, monkeypatch)
+    _seed(session)
+    _role(session, "ou_op", "operator", allowed_scope_key="scope-a")
+    session.commit()
+    perm = get_user_permission("ou_op")
+    out = resolve_authorized_scope(perm, platform="tiktok_shop", country="ID")
+    assert out.platform == "tiktok_shop"
+    assert out.country == "ID"
+    assert sorted(out.shop_ids) == ["s1", "s2", "s3"]
+
+
+def test_boss_passes_through_platform_country_shop_id(session, monkeypatch):
+    """boss 的 platform/country/shop_id 经 resolve_authorized_scope 透传，不被吞（防回归）。"""
+    _use(session, monkeypatch)
+    _seed(session)
+    _role(session, "ou_boss", "boss")
+    session.commit()
+    perm = get_user_permission("ou_boss")
+    out = resolve_authorized_scope(perm, shop_id="s1", platform="tiktok_shop", country="ID")
+    assert out.shop_ids == ["s1"]
+    assert out.platform == "tiktok_shop"
+    assert out.country == "ID"
+
+
 # ---------- assert_authorized（便捷封装） ----------
 
 def test_assert_unregistered_raises_authz(session, monkeypatch):

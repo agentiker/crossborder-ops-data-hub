@@ -233,15 +233,20 @@ def resolve_authorized_scope(
     *,
     requested_scope_key: Optional[str] = None,
     requested_shop_ids: Optional[list[str]] = None,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_id: Optional[str] = None,
 ) -> ScopeFilters:
     """把"用户请求的范围"夹进"该用户被授权的范围"，返回最终过滤条件。
 
     - boss：无上限。请求什么解析什么（resolve_filters 仍校验显式店铺已授权）；
       都不传 → 全范围。
-    - operator：硬上限 = allowed_scope_key。把请求的 scope_key 展开成 shop_ids、与
-      请求的 shop_ids 合并，作为"显式店铺"交给 resolve_filters(scope_key=allowed)——
-      落在 allowed 内则收窄、越界则抛 ScopeError。operator 未配 allowed_scope_key
-      （None）→ AuthzError（配置错，绝不放行全量）。
+    - operator：硬上限 = allowed_scope_key。把请求的 scope_key/shop_id(s) 展开并入"显式
+      店铺"，交给 resolve_filters(scope_key=allowed)——落在 allowed 内则收窄、越界则抛
+      ScopeError。operator 未配 allowed_scope_key（None）→ AuthzError（配置错，绝不放行全量）。
+
+    `platform`/`country` 是正交的附加过滤维度（不参与越界判断、只透传给下游收窄），
+    `shop_id` 是单值显式店，与 `requested_shop_ids` 同等并入。三者对 boss/operator 都生效。
     """
     requested_scope_key = requested_scope_key or None
     requested_shop_ids = list(requested_shop_ids or [])
@@ -251,6 +256,9 @@ def resolve_authorized_scope(
         # 可见店并集（无 scope 无显式店时），空集 fail-closed。指定 scope/店则在本租户内解析。
         return resolve_filters(
             scope_key=requested_scope_key,
+            platform=platform,
+            country=country,
+            shop_id=shop_id,
             shop_ids=requested_shop_ids or None,
             account_id=perm.account_id,
         )
@@ -261,9 +269,11 @@ def resolve_authorized_scope(
             f"operator（open_id={perm.open_id}）未配置 allowed_scope_key，拒绝授权"
         )
 
-    # 把请求的 scope_key 展开为具体店铺，并入显式 shop 集合，统一交给 resolve_filters
-    # 与 allowed 取交集；任何越界（不在 allowed 范围内）由 resolve_filters 抛 ScopeError。
+    # 把请求的 scope_key/shop_id(s) 展开为具体店铺，并入显式 shop 集合，统一交给
+    # resolve_filters 与 allowed 取交集；任何越界（不在 allowed 范围内）由它抛 ScopeError。
     explicit_shops = list(requested_shop_ids)
+    if shop_id:
+        explicit_shops.append(shop_id)
     if requested_scope_key:
         explicit_shops.extend(
             expand_scope(requested_scope_key, account_id=perm.account_id).shop_ids
@@ -272,6 +282,8 @@ def resolve_authorized_scope(
 
     return resolve_filters(
         scope_key=perm.allowed_scope_key,
+        platform=platform,
+        country=country,
         shop_ids=explicit_shops or None,
         account_id=perm.account_id,
     )

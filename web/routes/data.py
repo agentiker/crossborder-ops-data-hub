@@ -22,7 +22,13 @@ from services.fulfillment_metrics import get_pending_fulfillments
 from services.order_metrics import get_gmv_summary, get_gmv_trend, get_top_skus
 from services.scope_binding import get_binding, set_binding
 from services.scope_resolution import ScopeError, ScopeFilters, list_scopes, resolve_filters
-from services.user_authz import get_user_permission, resolve_dialog_account
+from services.user_authz import (
+    AuthzError,
+    UserPermission,
+    get_user_permission,
+    resolve_authorized_scope,
+    resolve_dialog_account,
+)
 from services.stock_metrics import get_stock_risk
 from web.signed_link import make_token
 
@@ -30,20 +36,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _assert_dialog_registered(open_id: Optional[str], account_id: str) -> None:
-    """对话/MCP 路径登记闸（Phase 7，由 `enforce_dialog_authz` 灰度控制）。
+def _dialog_permission(open_id: Optional[str], account_id: str) -> Optional[UserPermission]:
+    """对话/MCP 路径登记闸（Phase 7，由 `enforce_dialog_authz` 灰度控制），返回权限快照。
 
-    已登记（boss/operator 且 is_active）→ 放行。未登记 / 已停用 / 无 open_id：
+    已登记（boss/operator 且 is_active）→ 返回 UserPermission，供调用方据角色夹紧范围
+    （boss 无上限、operator 钉死 allowed_scope）。未登记 / 已停用 / 无 open_id：
     - `enforce_dialog_authz=True`：fail-closed，抛 403（友好文案，引导找管理员开通）；
-    - `=False`（默认灰度期）：仅记 warning 后放行，**零行为变更**——先在生产观察
+    - `=False`（默认灰度期）：仅记 warning 后返回 None，**零行为变更**——先在生产观察
       "开启后谁会被拒"，确认两租户用户登记齐再翻开关，避免直接锁人。
 
-    注：本闸只管"是否登记"，不管"看多大范围"——operator 的 allowed_scope 收窄尚未在
-    对话路径夹紧（正交项，当前几乎无 operator 用户），仍由 resolve_filters 的租户隔离兜底。
+    注意 enforce 开关只 gate "未登记是否拒答"（有锁人风险，需灰度）；operator 的
+    allowed_scope 夹紧无锁人风险（只会让其看更少），故登记即生效、不受本开关控制。
     """
     perm = get_user_permission(open_id, account_id=account_id) if open_id else None
     if perm is not None:
-        return
+        return perm
     if settings.feishu_oauth.enforce_dialog_authz:
         raise HTTPException(
             status_code=403,
@@ -53,6 +60,7 @@ def _assert_dialog_registered(open_id: Optional[str], account_id: str) -> None:
         "灰度观察(dialog authz)：未登记 open_id=%s account=%s，enforce 关闭→放行；"
         "开启后将拒答此请求", open_id, account_id,
     )
+    return None
 
 
 def _resolve_scope(
@@ -64,7 +72,7 @@ def _resolve_scope(
     shop_ids: Optional[str] = None,
     open_id: Optional[str] = None,
 ) -> ScopeFilters:
-    """统一解析 scope/显式过滤，ScopeError → 400。
+    """统一解析 scope/显式过滤，越界或配置错（ScopeError/AuthzError）→ 400。
 
     `scope_id` 对外命名，内部即 scope_key；`shop_ids` 为逗号分隔字符串。
 
@@ -75,11 +83,12 @@ def _resolve_scope(
     DEFAULT（见 resolve_dialog_account）。binding 读取、scope 解析、店铺校验全程按本租户
     隔离；与写端点 (ops_set_scope_binding) 同租户命中同一 binding 行。
 
-    登记闸（Phase 7）：解析租户后先过 _assert_dialog_registered，enforce 开启时未登记
-    open_id 直接 403；灰度期仅记日志放行。
+    登记闸（Phase 7）：解析租户后先过 _dialog_permission，enforce 开启时未登记 open_id
+    直接 403；灰度期仅记日志放行。已登记则据角色夹紧范围——boss 无上限、operator 钉死
+    在 allowed_scope（登记即生效、不受 enforce 开关控制，越界 → 400 ScopeError）。
     """
     account_id = resolve_dialog_account(open_id)
-    _assert_dialog_registered(open_id, account_id)
+    perm = _dialog_permission(open_id, account_id)
     if not scope_id and open_id:
         binding = get_binding(open_id, account_id=account_id)
         if binding.get("is_set") and binding.get("scope_key"):
@@ -91,6 +100,17 @@ def _resolve_scope(
 
     id_list = [s.strip() for s in shop_ids.split(",") if s.strip()] if shop_ids else None
     try:
+        if perm is not None:
+            # 已登记：按角色夹紧（operator 限在 allowed_scope，boss 无上限）。
+            return resolve_authorized_scope(
+                perm,
+                requested_scope_key=scope_id,
+                requested_shop_ids=id_list,
+                platform=platform,
+                country=country,
+                shop_id=shop_id,
+            )
+        # 灰度期放行的未登记请求：维持旧行为，仅靠租户隔离兜底。
         return resolve_filters(
             scope_key=scope_id,
             platform=platform,
@@ -99,7 +119,7 @@ def _resolve_scope(
             shop_ids=id_list,
             account_id=account_id,
         )
-    except ScopeError as exc:
+    except (ScopeError, AuthzError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
@@ -932,7 +952,7 @@ async def set_scope_binding(body: SetScopeBindingRequest):
         # account_id 与 _resolve_scope 同源（头 > open_id 反查 > DEFAULT），保证读写命中
         # 同一 binding 行。channel 走服务端默认 feishu。
         account_id = resolve_dialog_account(body.open_id)
-        _assert_dialog_registered(body.open_id, account_id)  # Phase 7 登记闸，与查询端点一致
+        _dialog_permission(body.open_id, account_id)  # Phase 7 登记闸（写偏好不夹范围，仅校验登记）
         data = set_binding(body.open_id, body.scope_key, account_id=account_id)
     except ScopeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
