@@ -98,13 +98,20 @@ class ScopeListOut(BaseModel):
 
 
 @router.get("/roles", response_model=RoleListOut, include_in_schema=False)
-async def list_roles(_: UserPermission = Depends(require_boss)):
-    """列出所有 user_roles（结构化 JSON）。对应 CLI cmd_list。"""
+async def list_roles(boss: UserPermission = Depends(require_boss)):
+    """列出**本租户**的 user_roles（结构化 JSON）。对应 CLI cmd_list。
+
+    多租户隔离：只返回 boss 自己 (channel, account_id) 下的角色，gtl boss 看不到 ecom-app 的人。
+    """
     session = SessionLocal()
     try:
         rows = (
             session.query(UserRole)
-            .order_by(UserRole.account_id, UserRole.role, UserRole.open_id)
+            .filter(
+                UserRole.channel == boss.channel,
+                UserRole.account_id == boss.account_id,
+            )
+            .order_by(UserRole.role, UserRole.open_id)
             .all()
         )
         return RoleListOut(items=[_role_out(r) for r in rows])
@@ -113,10 +120,15 @@ async def list_roles(_: UserPermission = Depends(require_boss)):
 
 
 @router.post("/roles", response_model=RoleOut, include_in_schema=False)
-async def upsert_role(body: RoleUpsertIn, _: UserPermission = Depends(require_boss)):
-    """创建/更新一个用户角色（upsert）。校验照搬 CLI cmd_set。"""
+async def upsert_role(body: RoleUpsertIn, boss: UserPermission = Depends(require_boss)):
+    """创建/更新一个用户角色（upsert）。校验照搬 CLI cmd_set。
+
+    多租户防越权：账号维度**强制用 boss 自己的** (channel, account_id)，忽略 body 里的
+    account_id/channel——gtl boss 不能往 ecom-app 租户里增删改人。
+    """
     if body.role not in ("boss", "operator"):
         raise HTTPException(status_code=400, detail="role 仅支持 boss / operator")
+    account_id, channel = boss.account_id, boss.channel
 
     scope_key = (body.scope_key or "").strip() or None
     if body.role == "operator":
@@ -137,16 +149,16 @@ async def upsert_role(body: RoleUpsertIn, _: UserPermission = Depends(require_bo
         row = (
             session.query(UserRole)
             .filter(
-                UserRole.channel == body.channel,
-                UserRole.account_id == body.account_id,
+                UserRole.channel == channel,
+                UserRole.account_id == account_id,
                 UserRole.open_id == body.open_id,
             )
             .first()
         )
         if row is None:
             row = UserRole(
-                channel=body.channel,
-                account_id=body.account_id,
+                channel=channel,
+                account_id=account_id,
                 open_id=body.open_id,
                 role=body.role,
                 allowed_scope_key=scope_key,
@@ -176,15 +188,18 @@ async def list_admin_scopes(_: UserPermission = Depends(require_boss)):
 
 
 @router.post("/roles/deactivate", response_model=RoleOut, include_in_schema=False)
-async def deactivate_role(body: RoleDeactivateIn, _: UserPermission = Depends(require_boss)):
-    """停用一个用户角色（is_active=False）。未找到返 404。对应 CLI cmd_deactivate。"""
+async def deactivate_role(body: RoleDeactivateIn, boss: UserPermission = Depends(require_boss)):
+    """停用一个用户角色（is_active=False）。未找到返 404。对应 CLI cmd_deactivate。
+
+    多租户防越权：只能停用 boss 自己 (channel, account_id) 下的人，忽略 body 的 account_id/channel。
+    """
     session = SessionLocal()
     try:
         row = (
             session.query(UserRole)
             .filter(
-                UserRole.channel == body.channel,
-                UserRole.account_id == body.account_id,
+                UserRole.channel == boss.channel,
+                UserRole.account_id == boss.account_id,
                 UserRole.open_id == body.open_id,
             )
             .first()
