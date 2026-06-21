@@ -1033,7 +1033,7 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
   .ai-block li { font-size:13px; line-height:1.7; }
   .ai-block.actions li { color:var(--success); }
   /* 表格：商品名截断 */
-  td.name { max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  td.name, th.name { max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .foot { color:var(--sub); font-size:11px; margin-top:20px; text-align:center; }
   /* 区块小标题（带问号）+ 通用问号浮层 tip（用于 KPI 区标题、库存情况标题等卡外问号） */
   .sec-head { display:flex; align-items:center; gap:4px; font-size:13px; font-weight:600;
@@ -1059,7 +1059,6 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
     <span class="tag">🤖 AI 总结</span><span id="ai-headline-text">正在生成洞察…</span>
   </div>
 
-  <div class="sec-head">核心数据指标 <span class="qmark hint" data-tip="核心结果指标（已付款口径）：GMV=买家实付额（含运费/税/优惠，非平台结算）；客单价=GMV÷订单数；广告消耗=结算口径（GMV Max/TAP/联盟）；ROAS=GMV÷广告消耗。↑↓ 为环比变化，基准见各卡说明。">?</span></div>
   <div class="kpis" id="kpis"></div>
   <div class="kpi-note" id="kpi-note"></div>
 
@@ -1070,12 +1069,12 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
 
   <div class="card">
     <h2>Top 5 爆款 <small>占比 = 该商品 GMV ÷ 当期总 GMV</small></h2>
-    <table><thead><tr><th>商品</th><th class="num">销量</th><th class="num">GMV</th><th class="num">占比</th></tr></thead>
+    <table><thead><tr><th class="name">商品</th><th class="num">销量</th><th class="num">GMV</th><th class="num">占比</th></tr></thead>
     <tbody id="top-body"></tbody></table>
   </div>
 
   <div class="card">
-    <h2>库存情况 <span class="qmark hint" data-tip="按可售天数（可用库存 ÷ 近 7 天日均销速）升序排列：断货、告急（&lt;3天）、预警（&lt;7天）的风险 SKU 常显在前；库存充足、近期无销量的 SKU 折叠在『展开其余』里。顶部『断货风险数』只统计有销量且快断货的 SKU，不含滞销/无销量。">?</span> <small>按可售天数升序 · 风险常显，其余可展开</small></h2>
+    <h2>库存情况 <span class="qmark hint" data-tip="按可售天数（可用库存÷近7天日均销速）升序：风险 SKU 在前，充足/无销量折叠在『展开其余』。">?</span></h2>
     <div id="low-wrap"></div>
   </div>
 
@@ -1129,7 +1128,8 @@ const _ord = {label:'订单数', val: fmtInt(DATA.kpi.orders.value),
   chg: _LV ? baseHtml(fmtInt(DATA.kpi.orders.baseline) + ' 单')
            : chgHtml(DATA.kpi.orders.change)};
 const _ad  = {label:'广告消耗', val: fmtMoney(DATA.kpi.ad_spend.value), chg: chgHtml(DATA.kpi.ad_spend.change), tip: DATA.kpi.ad_spend.tip};
-const _lowc = {label:'断货风险', val: fmtInt(DATA.kpi.low_stock_count), chg: ''};
+const _lowc = {label:'断货风险', val: fmtInt(DATA.kpi.low_stock_count), chg: '',
+  tip: '只统计有销量、可售天数偏低（快断货）的 SKU；近期无销量/滞销不计入。'};
 // 日报：纯核心 4 张（去 ROAS / 库存 SKU）；区间报：保留完整 6 张
 const kpiDefs = (DATA.kind === 'daily')
   ? [_gmv, _ord, _ad, _lowc]
@@ -1275,7 +1275,7 @@ if (!lowItems.length) {
   };
   const risky = lowItems.filter(it => _RISK.has(it.level));
   const rest = lowItems.filter(it => !_RISK.has(it.level));
-  let html = '<table><thead><tr><th>商品</th><th>风险</th><th class="num">库存</th>'
+  let html = '<table><thead><tr><th class="name">商品</th><th>风险</th><th class="num">库存</th>'
     + '<th class="num">日均销速</th><th class="num">可售天数</th></tr></thead><tbody>';
   html += risky.length
     ? risky.map(_rowHtml).join('')
@@ -1443,7 +1443,7 @@ WEEKLY_REVIEW_HTML = r"""<!DOCTYPE html>
   .ai-block ul { margin:0; padding-left:18px; }
   .ai-block li { font-size:13px; line-height:1.7; }
   .ai-block.next li { color:var(--success); }
-  td.name { max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  td.name, th.name { max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .foot { color:var(--sub); font-size:11px; margin-top:20px; text-align:center; }
   /* 区块小标题（带问号）+ 通用问号浮层 tip（用于 KPI 区标题、库存情况标题等卡外问号） */
   .sec-head { display:flex; align-items:center; gap:4px; font-size:13px; font-weight:600;
@@ -1479,7 +1479,6 @@ WEEKLY_REVIEW_HTML = r"""<!DOCTYPE html>
     <span class="tag">🤖 AI 周度总结</span><span id="ai-headline-text">正在生成洞察…</span>
   </div>
 
-  <div class="sec-head">核心数据指标 <span class="qmark hint" data-tip="核心结果指标（已付款口径）：GMV=买家实付额（含运费/税/优惠，非平台结算）；客单价=GMV÷订单数；广告消耗=结算口径（GMV Max/TAP/联盟）；ROAS=GMV÷广告消耗。↑↓ 为环比变化，基准见各卡说明。">?</span></div>
   <div class="kpis" id="kpis"></div>
   <div class="kpi-note" id="kpi-note"></div>
 
@@ -1500,12 +1499,12 @@ WEEKLY_REVIEW_HTML = r"""<!DOCTYPE html>
 
   <div class="card">
     <h2>Top 5 爆款 <small>占比 = 该商品 GMV ÷ 本周总 GMV</small></h2>
-    <table><thead><tr><th>商品</th><th class="num">销量</th><th class="num">GMV</th><th class="num">占比</th></tr></thead>
+    <table><thead><tr><th class="name">商品</th><th class="num">销量</th><th class="num">GMV</th><th class="num">占比</th></tr></thead>
     <tbody id="top-body"></tbody></table>
   </div>
 
   <div class="card">
-    <h2>库存情况 <span class="qmark hint" data-tip="按可售天数（可用库存 ÷ 近 7 天日均销速）升序排列：断货、告急（&lt;3天）、预警（&lt;7天）的风险 SKU 常显在前；库存充足、近期无销量的 SKU 折叠在『展开其余』里。顶部『断货风险数』只统计有销量且快断货的 SKU，不含滞销/无销量。">?</span> <small>按可售天数升序 · 风险常显，其余可展开</small></h2>
+    <h2>库存情况 <span class="qmark hint" data-tip="按可售天数（可用库存÷近7天日均销速）升序：风险 SKU 在前，充足/无销量折叠在『展开其余』。">?</span></h2>
     <div id="low-wrap"></div>
   </div>
 
@@ -1733,7 +1732,7 @@ if (!lowItems.length) {
   };
   const risky = lowItems.filter(it => _RISK.has(it.level));
   const rest = lowItems.filter(it => !_RISK.has(it.level));
-  let html = '<table><thead><tr><th>商品</th><th>风险</th><th class="num">库存</th>'
+  let html = '<table><thead><tr><th class="name">商品</th><th>风险</th><th class="num">库存</th>'
     + '<th class="num">日均销速</th><th class="num">可售天数</th></tr></thead><tbody>';
   html += risky.length
     ? risky.map(_rowHtml).join('')
