@@ -997,7 +997,13 @@ async def get_report_link(
     # 直接调用（非 HTTP）不传时 wrap_applink 是 FieldInfo，归一化为飞书默认 True。
     wrap = wrap_applink if isinstance(wrap_applink, bool) else True
     link = _wrap_feishu_applink(url) if wrap else url
-    mins = max(1, ttl // 60)
+    # 有效期文案友好显示（TTL 可长达数天，写死"分钟"会出现"10080 分钟内有效"这种丑文案）
+    if ttl >= 86400:
+        ttl_text = f"{ttl // 86400} 天"
+    elif ttl >= 3600:
+        ttl_text = f"{ttl // 3600} 小时"
+    else:
+        ttl_text = f"{max(1, ttl // 60)} 分钟"
     # 链接文案随版型：单日→日报，多日→报告（与页面 title 一致）
     # 直接调用（非 HTTP）未传时 start_date/end_date 是 FieldInfo，按 str 归一化
     _sd = start_date if isinstance(start_date, str) else None
@@ -1013,8 +1019,8 @@ async def get_report_link(
     else:
         label = "查看经营报告"
     markdown = (
-        "📊 [{label}]({link})\n> 链接 {mins} 分钟内有效，点击查看可视化报告"
-    ).format(label=label, link=link, mins=mins)
+        "📊 [{label}]({link})\n> 链接 {ttl_text}内有效，点击查看可视化报告"
+    ).format(label=label, link=link, ttl_text=ttl_text)
     logger.info("report link issued: open_id=%s template=%s ttl=%ds applink=%s",
                 open_id, template_name, ttl, wrap)
     return ReportLinkResponse(url=link, expires_in=ttl, markdown=markdown)
