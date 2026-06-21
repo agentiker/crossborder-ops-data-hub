@@ -6,6 +6,7 @@ from fastapi import APIRouter, Query, HTTPException
 from fastapi.responses import HTMLResponse
 
 from core.db import init_db
+from core.tenancy import DEFAULT_ACCOUNT
 from platforms.tiktok_shop.client import TikTokShopClient
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,10 @@ async def tiktok_callback(
     init_db()
 
     try:
-        client = TikTokShopClient(auto_load_token=False)
+        # account_id=DEFAULT_ACCOUNT：授权落库的 scope_key 含 account=ecom-app，与
+        # discover_single_shop（读 account_id 列重建 scope_key）一致，否则 sync 的
+        # load_existing_token 查不到 token（见 scripts/migrate_phase3b_token_scope_key）。
+        client = TikTokShopClient(auto_load_token=False, account_id=DEFAULT_ACCOUNT)
 
         result = client.authenticate(code)
         data = result.get("data", {})
@@ -71,7 +75,10 @@ async def tiktok_callback_html(
     init_db()
 
     try:
-        client = TikTokShopClient(auto_load_token=False)
+        # account_id=DEFAULT_ACCOUNT：授权落库的 scope_key 含 account=ecom-app，与
+        # discover_single_shop（读 account_id 列重建 scope_key）一致，否则 sync 的
+        # load_existing_token 查不到 token（见 scripts/migrate_phase3b_token_scope_key）。
+        client = TikTokShopClient(auto_load_token=False, account_id=DEFAULT_ACCOUNT)
 
         logger.info("[OAuth回调] 开始用授权码换取Token...")
         result = client.authenticate(code)
