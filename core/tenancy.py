@@ -86,3 +86,14 @@ def public_base_url_for(account_id: str) -> str:
     return settings.tenancy.public_base_url.get(
         account_id, settings.dashboard.public_base_url
     )
+
+
+def is_valid_account(account_id: str) -> bool:
+    """校验 account_id 是否为系统已知合法租户（防店铺归属/路由落入未知租户）。
+
+    合法集 = host_to_account 映射出现过的租户（= 部署拓扑放行的子域名，部署级事实源）
+    + DEFAULT_ACCOUNT（主租户兜底）。
+    """
+    known = set(settings.tenancy.host_to_account.values())
+    known.add(DEFAULT_ACCOUNT)
+    return account_id in known
