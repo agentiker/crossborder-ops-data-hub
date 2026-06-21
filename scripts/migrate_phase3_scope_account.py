@@ -56,6 +56,13 @@ def _has_index_on(conn, table: str, columns: list[str], *, unique: bool | None =
     return False
 
 
+def _print_actions(actions: list[str], dry_run: bool) -> None:
+    print(("[DRY-RUN] " if dry_run else "") + "迁移动作：")
+    for a in actions:
+        print("  -", a)
+    print("（dry-run，未实际改库）" if dry_run else "完成。")
+
+
 def migrate(dry_run: bool = False) -> int:
     actions: list[str] = []
 
@@ -121,6 +128,15 @@ def migrate(dry_run: bool = False) -> int:
             ))
 
         # --- 4. 为 gtl 建测试 scope（复用 ecom-app 的 tts-id-all 店铺集合）---
+        # dry-run 下列尚未加（第 1 步被跳过），无法按 account 查 → 仅打印意图后返回。
+        if not _has_column(conn, TABLE, "account_id"):
+            actions.append(
+                f"[dry-run] 列未加，跳过 gtl scope 预演（真实运行将复制 "
+                f"[{SOURCE_ACCOUNT}]/{GTL_SCOPE_KEY} → [{GTL_ACCOUNT}]）"
+            )
+            _print_actions(actions, dry_run)
+            return 0
+
         src_shop_json = conn.execute(text(
             f"SELECT shop_ids FROM {TABLE} "
             f"WHERE account_id='{SOURCE_ACCOUNT}' AND scope_key='{GTL_SCOPE_KEY}' LIMIT 1"
@@ -148,10 +164,7 @@ def migrate(dry_run: bool = False) -> int:
                     {"acc": GTL_ACCOUNT, "src": SOURCE_ACCOUNT, "key": GTL_SCOPE_KEY},
                 )
 
-    print(("[DRY-RUN] " if dry_run else "") + "迁移动作：")
-    for a in actions:
-        print("  -", a)
-    print("完成。" if not dry_run else "（dry-run，未实际改库）")
+    _print_actions(actions, dry_run)
     return 0
 
 
