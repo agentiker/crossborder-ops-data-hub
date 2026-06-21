@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import argparse
 
-from core.db import SessionLocal, init_db
+from sqlalchemy import inspect
+
+from core.db import SessionLocal, engine, init_db
 from flows.scan_fulfillment_alerts import _FALLBACK_RECIPIENTS
 from models.base_models import AlertRecipient
 
@@ -23,6 +25,16 @@ def migrate(dry_run: bool = False) -> int:
     if not dry_run:
         init_db()  # 建 alert_recipients 表（幂等，已存在不动）
     actions.append("init_db()：确保 alert_recipients 表存在")
+
+    # dry-run 下未建表，无法按收件人查重，仅打印将 seed 的全部收件人后返回。
+    if dry_run and not inspect(engine).has_table("alert_recipients"):
+        for r in _FALLBACK_RECIPIENTS:
+            actions.append(f"[dry-run] 将 seed 收件人 [{r['account']}] {r['open_id']}")
+        print("[DRY-RUN] 迁移动作：")
+        for a in actions:
+            print("  -", a)
+        print("（dry-run，未实际改库）")
+        return 0
 
     session = SessionLocal()
     try:
