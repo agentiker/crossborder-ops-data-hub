@@ -22,6 +22,7 @@ from services.fulfillment_metrics import get_pending_fulfillments
 from services.order_metrics import get_gmv_summary, get_gmv_trend, get_top_skus
 from services.scope_binding import get_binding, set_binding
 from services.scope_resolution import ScopeError, ScopeFilters, list_scopes, resolve_filters
+from services.user_authz import resolve_dialog_account
 from services.stock_metrics import get_stock_risk
 from web.signed_link import make_token
 
@@ -45,10 +46,11 @@ def _resolve_scope(
     服务器端自动兜底：agent 没传 scope_id 但有 open_id 时，自动查 binding 表取默认范围，
     消除对弱模型「主动读取默认范围」的依赖。带 scope_id 则显式优先、不读 binding。
 
-    多租户：account_id 取当前请求租户（X-Account-Id 头 → contextvar），binding 读取、scope
-    解析、店铺校验全程按本租户隔离；与写端点 (ops_set_scope_binding) 同租户命中同一 binding 行。
+    多租户：account_id 取当前请求租户——X-Account-Id 头 > open_id 反查 user_roles 登记 >
+    DEFAULT（见 resolve_dialog_account）。binding 读取、scope 解析、店铺校验全程按本租户
+    隔离；与写端点 (ops_set_scope_binding) 同租户命中同一 binding 行。
     """
-    account_id = current_account()
+    account_id = resolve_dialog_account(open_id)
     if not scope_id and open_id:
         binding = get_binding(open_id, account_id=account_id)
         if binding.get("is_set") and binding.get("scope_key"):
@@ -898,9 +900,10 @@ async def set_scope_binding(body: SetScopeBindingRequest):
     未知或已停用的 scope_key → 400。写入后返回该范围展示文案，用于"已切换到 X"确认话术。
     """
     try:
-        # account_id 取当前请求租户（X-Account-Id 头），与 _resolve_scope 的自动注入读取
-        # 同租户，保证读写命中同一 binding 行。channel 走服务端默认 feishu。
-        data = set_binding(body.open_id, body.scope_key)
+        # account_id 与 _resolve_scope 同源（头 > open_id 反查 > DEFAULT），保证读写命中
+        # 同一 binding 行。channel 走服务端默认 feishu。
+        account_id = resolve_dialog_account(body.open_id)
+        data = set_binding(body.open_id, body.scope_key, account_id=account_id)
     except ScopeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return ScopeBindingResponse(open_id=body.open_id, **data)

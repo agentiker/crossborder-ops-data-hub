@@ -26,12 +26,14 @@ DEFAULT_ACCOUNT = "ecom-app"
 
 
 # ── 请求级当前租户（对话/MCP 路径用）─────────────────────────────────────────
-# data API/MCP 工具被 openclaw 调用时不走 Host（同进程 ASGI），租户由请求头 X-Account-Id
-# 注入。web/security.bind_account_context 依赖在每个 /api/data 请求开头把它写进此 contextvar，
-# _resolve_scope / scope_binding / 链接签发等下游读取，免去逐端点透传（漏一个即 fail-open）。
-# 默认 DEFAULT_ACCOUNT：未注入头（旧 openclaw、内部调用）= 主租户，零行为变更。
-_current_account: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "current_account", default=DEFAULT_ACCOUNT
+# data API/MCP 工具被 openclaw 调用时不走 Host（同进程 ASGI）。租户来源优先级：
+#   ① X-Account-Id 头（bind_account_context 注入，openclaw 若支持就走这条）；
+#   ② 渲染/WebUI 路径显式 set_current_account（按 token/登录身份的 account）；
+#   ③ 都没有 → 由 services.user_authz.resolve_dialog_account 按 open_id 反查 user_roles。
+# contextvar 默认 None = **未显式设定**；current_account() 读时回落 DEFAULT_ACCOUNT。
+# account_is_set() 让对话路径区分"已显式设(①②，信任)"与"未设(③，按 open_id 反查)"。
+_current_account: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "current_account", default=None
 )
 
 
@@ -41,8 +43,13 @@ def set_current_account(account_id: Optional[str]) -> None:
 
 
 def current_account() -> str:
-    """读当前请求的租户；未设置 → DEFAULT_ACCOUNT。"""
-    return _current_account.get()
+    """读当前请求的租户；未显式设定 → DEFAULT_ACCOUNT。"""
+    return _current_account.get() or DEFAULT_ACCOUNT
+
+
+def account_is_set() -> bool:
+    """当前请求是否已显式设定租户（头注入或渲染/WebUI 显式设）。"""
+    return _current_account.get() is not None
 
 
 def account_for_host(host: Optional[str]) -> str:

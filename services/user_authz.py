@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from core.db import SessionLocal
+from core.tenancy import account_is_set, current_account, set_current_account
 from models.base_models import UserRole
 from services.scope_resolution import (
     ScopeError,
@@ -35,6 +36,44 @@ ROLE_BOSS = "boss"
 ROLE_OPERATOR = "operator"
 ROLE_PENDING = "pending"  # 自助申请待审批的哨兵角色：恒 is_active=False，永不被当有效角色读
 _VALID_ROLES = (ROLE_BOSS, ROLE_OPERATOR)
+
+
+def account_for_open_id(open_id: str, *, channel: str = "feishu") -> Optional[str]:
+    """按 open_id 反查它登记在哪个租户（user_roles.account_id）。
+
+    飞书 open_id 跨租户天然不重复，故一个 open_id 至多命中一行。未登记/查库异常 → None
+    （上层回落 DEFAULT，绝不因此报错阻断数据查询）。
+    """
+    if not open_id:
+        return None
+    try:
+        session = SessionLocal()
+        try:
+            row = (
+                session.query(UserRole)
+                .filter(UserRole.channel == channel, UserRole.open_id == open_id)
+                .first()
+            )
+            return row.account_id if row else None
+        finally:
+            session.close()
+    except Exception:  # 查库异常绝不阻断主数据路径
+        return None
+
+
+def resolve_dialog_account(open_id: Optional[str]) -> str:
+    """对话/MCP 路径定租户：① 已显式设(X-Account-Id 头/渲染身份) → 信任；
+    ② 否则按 open_id 反查登记；③ 都没有 → DEFAULT_ACCOUNT。
+
+    解析出非默认租户时写回 contextvar，使同请求内 binding 写端点等下游对齐（读写同租户）。
+    """
+    if account_is_set():
+        return current_account()
+    derived = account_for_open_id(open_id) if open_id else None
+    if derived:
+        set_current_account(derived)
+        return derived
+    return current_account()  # DEFAULT_ACCOUNT
 
 
 class AuthzError(ValueError):

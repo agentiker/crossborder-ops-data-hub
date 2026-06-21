@@ -16,10 +16,13 @@ from web.routes import data as data_routes
 
 
 def _use(session, monkeypatch):
-    # _resolve_scope 内部走 get_binding（scope_binding.SessionLocal）
-    # 与 resolve_filters（scope_resolution.SessionLocal），两个都要指向同一内存 session。
+    # _resolve_scope 内部走 get_binding（scope_binding.SessionLocal）、resolve_filters
+    # （scope_resolution.SessionLocal）、resolve_dialog_account（user_authz.SessionLocal），
+    # 三处都要指向同一内存 session。
     monkeypatch.setattr(scope_binding, "SessionLocal", lambda: session)
     monkeypatch.setattr(scope_resolution, "SessionLocal", lambda: session)
+    from services import user_authz
+    monkeypatch.setattr(user_authz, "SessionLocal", lambda: session)
 
 
 def _scope(session, key, shop_ids, *, platform="tiktok_shop", country="ID", active=True):

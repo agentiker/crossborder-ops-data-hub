@@ -74,6 +74,38 @@ def _seed(session):
     session.commit()
 
 
+# ---------- account_for_open_id / resolve_dialog_account（item 1：open_id 反推租户） ----------
+
+def test_account_for_open_id(session, monkeypatch):
+    _use(session, monkeypatch)
+    _role(session, "ou_ecom", "boss", account_id="ecom-app")
+    _role(session, "ou_gtl", "boss", account_id="ecom-app-gtl")
+    session.commit()
+    assert user_authz.account_for_open_id("ou_ecom") == "ecom-app"
+    assert user_authz.account_for_open_id("ou_gtl") == "ecom-app-gtl"
+    assert user_authz.account_for_open_id("ou_unknown") is None
+    assert user_authz.account_for_open_id("") is None
+
+
+def test_resolve_dialog_account_priority(session, monkeypatch):
+    """① 已显式设(头/渲染)信任 ② 否则 open_id 反查 ③ 都没有 → DEFAULT。"""
+    from core.tenancy import set_current_account, _current_account, DEFAULT_ACCOUNT
+    _use(session, monkeypatch)
+    _role(session, "ou_gtl", "boss", account_id="ecom-app-gtl")
+    session.commit()
+
+    # ③ 未设 + open_id 未登记 → DEFAULT
+    _current_account.set(None)
+    assert user_authz.resolve_dialog_account("ou_unknown") == DEFAULT_ACCOUNT
+    # ② 未设 + open_id 已登记 gtl → 反查到 gtl
+    _current_account.set(None)
+    assert user_authz.resolve_dialog_account("ou_gtl") == "ecom-app-gtl"
+    # ① 已显式设(模拟头/渲染) → 信任，不被 open_id 覆盖
+    set_current_account("ecom-app")
+    assert user_authz.resolve_dialog_account("ou_gtl") == "ecom-app"
+    _current_account.set(None)  # 复位
+
+
 # ---------- get_user_permission ----------
 
 def test_get_permission_unregistered_returns_none(session, monkeypatch):

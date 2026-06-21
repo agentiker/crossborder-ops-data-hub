@@ -18,11 +18,14 @@ async def bind_account_context(
     挂在 /api/data 路由级依赖，每个数据/MCP 请求开头跑一次，下游 `_resolve_scope`、
     `scope_binding`、链接签发据此隔离租户。**必须是 async**：FastAPI 把 sync 依赖丢
     threadpool，其 contextvar.set 不回传父 context，async 依赖才与端点同 context。
-    未注入头 → 回落 DEFAULT_ACCOUNT（主租户），旧 openclaw / 内部调用零行为变更。
+
+    **只在头存在时才设 contextvar**：openclaw 这版不注入该头，则保持"未设定"，由下游
+    `resolve_dialog_account` 按 open_id 反查 user_roles 定租户（见 plan/09 Phase 4 收尾）。
     """
-    account_id = x_account_id or DEFAULT_ACCOUNT
-    set_current_account(account_id)
-    return account_id
+    if x_account_id:
+        set_current_account(x_account_id)
+        return x_account_id
+    return DEFAULT_ACCOUNT
 
 
 async def require_internal_token(
