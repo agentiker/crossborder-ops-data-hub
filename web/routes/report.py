@@ -1035,6 +1035,13 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
   /* 表格：商品名截断 */
   td.name { max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .foot { color:var(--sub); font-size:11px; margin-top:20px; text-align:center; }
+  /* 区块小标题（带问号）+ 通用问号浮层 tip（用于 KPI 区标题、库存情况标题等卡外问号） */
+  .sec-head { display:flex; align-items:center; gap:4px; font-size:13px; font-weight:600;
+              color:var(--txt2); margin:4px 2px 8px; }
+  .hint { cursor:pointer; }
+  .float-tip { position:absolute; z-index:60; max-width:260px; padding:8px 10px; border-radius:8px;
+               font-size:11px; line-height:1.5; font-weight:400; color:var(--card);
+               background:rgba(25,36,32,.92); box-shadow:0 4px 12px rgba(0,0,0,.18); }
   @media (max-width:480px){
     .kpis { grid-template-columns:repeat(2,1fr); }
     .kpi .val { font-size:18px; }
@@ -1052,6 +1059,7 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
     <span class="tag">🤖 AI 总结</span><span id="ai-headline-text">正在生成洞察…</span>
   </div>
 
+  <div class="sec-head">核心数据指标 <span class="qmark hint" data-tip="核心结果指标（已付款口径）：GMV=买家实付额（含运费/税/优惠，非平台结算）；客单价=GMV÷订单数；广告消耗=结算口径（GMV Max/TAP/联盟）；ROAS=GMV÷广告消耗。↑↓ 为环比变化，基准见各卡说明。">?</span></div>
   <div class="kpis" id="kpis"></div>
   <div class="kpi-note" id="kpi-note"></div>
 
@@ -1067,7 +1075,7 @@ DAILY_BRIEF_HTML = r"""<!DOCTYPE html>
   </div>
 
   <div class="card">
-    <h2>断货预警 <small>全部 SKU 按可售天数升序 · 无销量排末尾</small></h2>
+    <h2>库存情况 <span class="qmark hint" data-tip="按可售天数（可用库存 ÷ 近 7 天日均销速）升序排列：断货、告急（&lt;3天）、预警（&lt;7天）的风险 SKU 常显在前；库存充足、近期无销量的 SKU 折叠在『展开其余』里。顶部『断货风险数』只统计有销量且快断货的 SKU，不含滞销/无销量。">?</span> <small>按可售天数升序 · 风险常显，其余可展开</small></h2>
     <div id="low-wrap"></div>
   </div>
 
@@ -1295,6 +1303,26 @@ if (!lowItems.length) {
 document.getElementById('foot').textContent =
   '数据由 Data Hub 提供 · 结算口径 · ' + DATA.generated_at;
 
+// -- 通用问号 tip（卡外标题用，如核心数据指标 / 库存情况）：点问号弹浮层，点别处关闭 --
+(function(){
+  let tipEl = null;
+  const close = () => { if (tipEl) { tipEl.remove(); tipEl = null; } };
+  document.addEventListener('click', e => {
+    const h = e.target.closest('.hint');
+    if (!h) { close(); return; }
+    e.stopPropagation();
+    if (tipEl) { close(); return; }
+    tipEl = document.createElement('div');
+    tipEl.className = 'float-tip';
+    tipEl.textContent = h.getAttribute('data-tip') || '';
+    document.body.appendChild(tipEl);
+    const r = h.getBoundingClientRect();
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - 268));
+    tipEl.style.left = left + 'px';
+    tipEl.style.top = (r.bottom + window.scrollY + 6) + 'px';
+  });
+})();
+
 // -- AI 洞察：渐进加载（数字/图表已就绪，AI 失败不影响整页）--
 (function loadInsight(){
   const hl = document.getElementById('ai-headline');
@@ -1417,6 +1445,13 @@ WEEKLY_REVIEW_HTML = r"""<!DOCTYPE html>
   .ai-block.next li { color:var(--success); }
   td.name { max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .foot { color:var(--sub); font-size:11px; margin-top:20px; text-align:center; }
+  /* 区块小标题（带问号）+ 通用问号浮层 tip（用于 KPI 区标题、库存情况标题等卡外问号） */
+  .sec-head { display:flex; align-items:center; gap:4px; font-size:13px; font-weight:600;
+              color:var(--txt2); margin:4px 2px 8px; }
+  .hint { cursor:pointer; }
+  .float-tip { position:absolute; z-index:60; max-width:260px; padding:8px 10px; border-radius:8px;
+               font-size:11px; line-height:1.5; font-weight:400; color:var(--card);
+               background:rgba(25,36,32,.92); box-shadow:0 4px 12px rgba(0,0,0,.18); }
   /* 商品结构健康度卡：统计块网格 */
   .health-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
   .stat { padding:10px 12px; border-radius:10px; background:var(--fill-shallow);
@@ -1444,6 +1479,7 @@ WEEKLY_REVIEW_HTML = r"""<!DOCTYPE html>
     <span class="tag">🤖 AI 周度总结</span><span id="ai-headline-text">正在生成洞察…</span>
   </div>
 
+  <div class="sec-head">核心数据指标 <span class="qmark hint" data-tip="核心结果指标（已付款口径）：GMV=买家实付额（含运费/税/优惠，非平台结算）；客单价=GMV÷订单数；广告消耗=结算口径（GMV Max/TAP/联盟）；ROAS=GMV÷广告消耗。↑↓ 为环比变化，基准见各卡说明。">?</span></div>
   <div class="kpis" id="kpis"></div>
   <div class="kpi-note" id="kpi-note"></div>
 
@@ -1469,7 +1505,7 @@ WEEKLY_REVIEW_HTML = r"""<!DOCTYPE html>
   </div>
 
   <div class="card">
-    <h2>断货预警 <small>全部 SKU 按可售天数升序 · 无销量排末尾</small></h2>
+    <h2>库存情况 <span class="qmark hint" data-tip="按可售天数（可用库存 ÷ 近 7 天日均销速）升序排列：断货、告急（&lt;3天）、预警（&lt;7天）的风险 SKU 常显在前；库存充足、近期无销量的 SKU 折叠在『展开其余』里。顶部『断货风险数』只统计有销量且快断货的 SKU，不含滞销/无销量。">?</span> <small>按可售天数升序 · 风险常显，其余可展开</small></h2>
     <div id="low-wrap"></div>
   </div>
 
@@ -1723,6 +1759,26 @@ if (!lowItems.length) {
 
 document.getElementById('foot').textContent =
   '数据由 Data Hub 提供 · 结算口径 · ' + DATA.generated_at;
+
+// -- 通用问号 tip（卡外标题用，如核心数据指标 / 库存情况）：点问号弹浮层，点别处关闭 --
+(function(){
+  let tipEl = null;
+  const close = () => { if (tipEl) { tipEl.remove(); tipEl = null; } };
+  document.addEventListener('click', e => {
+    const h = e.target.closest('.hint');
+    if (!h) { close(); return; }
+    e.stopPropagation();
+    if (tipEl) { close(); return; }
+    tipEl = document.createElement('div');
+    tipEl.className = 'float-tip';
+    tipEl.textContent = h.getAttribute('data-tip') || '';
+    document.body.appendChild(tipEl);
+    const r = h.getBoundingClientRect();
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - 268));
+    tipEl.style.left = left + 'px';
+    tipEl.style.top = (r.bottom + window.scrollY + 6) + 'px';
+  });
+})();
 
 // -- AI 周度复盘：渐进加载，三段（复盘 / 经验 / 下周建议）--
 (function loadInsight(){
