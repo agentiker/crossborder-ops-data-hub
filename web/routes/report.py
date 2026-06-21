@@ -260,7 +260,7 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
             "level_label": level_map.get(bucket, bucket),
         })
 
-    generated_at = datetime.now(_JAKARTA_TZ).strftime("%Y-%m-%d %H:%M")
+    generated_at = datetime.now(_JAKARTA_TZ).strftime("%Y-%m-%d %H:%M") + "（印尼时间）"
 
     # KPI 问号 tip：精简取数口径 + 环比基准
     gmv_tip = (
@@ -467,7 +467,7 @@ async def _collect_weekly(open_id: str, period) -> dict:
     low_volume = (cur_orders < 10) or (prev_orders < 10)
     baseline_label = change_label.lstrip("较").strip()
 
-    generated_at = datetime.now(_JAKARTA_TZ).strftime("%Y-%m-%d %H:%M")
+    generated_at = datetime.now(_JAKARTA_TZ).strftime("%Y-%m-%d %H:%M") + "（印尼时间）"
     gmv_tip = (
         "GMV=已付款订单买家实付额（含运费/税/优惠，非平台结算）。"
         f"环比={change_label}（紧邻等长上周窗口）。"
