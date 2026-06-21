@@ -1255,18 +1255,40 @@ const lowItems = DATA.low_stock || [];
 if (!lowItems.length) {
   lowWrap.innerHTML = '<div style="text-align:center;color:var(--sub);padding:16px 0">暂无在库 SKU</div>';
 } else {
-  let html = '<table><thead><tr><th>商品</th><th>风险</th><th class="num">库存</th>'
-    + '<th class="num">日均销速</th><th class="num">可售天数</th></tr></thead><tbody>';
-  lowItems.forEach(it => {
+  // 风险行（断货/告急/预警）常显；充足/无销量默认折叠，避免全量表过长。
+  const _RISK = new Set(['stockout', 'critical', 'warning']);
+  const _rowHtml = it => {
     const nm = _esc(it.name);
-    html += '<tr><td class="name" title="' + nm + '">' + nm + '</td>'
+    return '<tr><td class="name" title="' + nm + '">' + nm + '</td>'
       + '<td><span class="pill ' + it.level + '">' + it.level_label + '</span></td>'
       + '<td class="num">' + fmtInt(it.stock) + '</td>'
       + '<td class="num">' + it.velocity + '</td>'
       + '<td class="num">' + (it.days == null ? '—' : it.days) + '</td></tr>';
-  });
-  html += '</tbody></table>';
+  };
+  const risky = lowItems.filter(it => _RISK.has(it.level));
+  const rest = lowItems.filter(it => !_RISK.has(it.level));
+  let html = '<table><thead><tr><th>商品</th><th>风险</th><th class="num">库存</th>'
+    + '<th class="num">日均销速</th><th class="num">可售天数</th></tr></thead><tbody>';
+  html += risky.length
+    ? risky.map(_rowHtml).join('')
+    : '<tr><td colspan="5" style="text-align:center;color:var(--success);padding:10px 0">✅ 当前无断货风险 SKU</td></tr>';
+  html += '</tbody>';
+  if (rest.length) {
+    html += '<tbody id="low-rest" style="display:none">' + rest.map(_rowHtml).join('') + '</tbody>';
+  }
+  html += '</table>';
+  if (rest.length) {
+    html += '<div id="low-toggle" style="text-align:center;cursor:pointer;color:var(--sub);'
+      + 'font-size:12px;padding:8px 0 2px;user-select:none">展开其余 ' + rest.length + ' 个 SKU ▼</div>';
+  }
   lowWrap.innerHTML = html;
+  const _tg = document.getElementById('low-toggle');
+  if (_tg) _tg.addEventListener('click', () => {
+    const body = document.getElementById('low-rest');
+    const open = body.style.display !== 'none';
+    body.style.display = open ? 'none' : '';
+    _tg.textContent = open ? ('展开其余 ' + rest.length + ' 个 SKU ▼') : '收起 ▲';
+  });
 }
 
 // -- Footer --
@@ -1663,18 +1685,40 @@ const lowItems = DATA.low_stock || [];
 if (!lowItems.length) {
   lowWrap.innerHTML = '<div style="text-align:center;color:var(--sub);padding:16px 0">暂无在库 SKU</div>';
 } else {
-  let html = '<table><thead><tr><th>商品</th><th>风险</th><th class="num">库存</th>'
-    + '<th class="num">日均销速</th><th class="num">可售天数</th></tr></thead><tbody>';
-  lowItems.forEach(it => {
+  // 风险行（断货/告急/预警）常显；充足/无销量默认折叠，避免全量表过长。
+  const _RISK = new Set(['stockout', 'critical', 'warning']);
+  const _rowHtml = it => {
     const nm = _esc(it.name);
-    html += '<tr><td class="name" title="' + nm + '">' + nm + '</td>'
+    return '<tr><td class="name" title="' + nm + '">' + nm + '</td>'
       + '<td><span class="pill ' + it.level + '">' + it.level_label + '</span></td>'
       + '<td class="num">' + fmtInt(it.stock) + '</td>'
       + '<td class="num">' + it.velocity + '</td>'
       + '<td class="num">' + (it.days == null ? '—' : it.days) + '</td></tr>';
-  });
-  html += '</tbody></table>';
+  };
+  const risky = lowItems.filter(it => _RISK.has(it.level));
+  const rest = lowItems.filter(it => !_RISK.has(it.level));
+  let html = '<table><thead><tr><th>商品</th><th>风险</th><th class="num">库存</th>'
+    + '<th class="num">日均销速</th><th class="num">可售天数</th></tr></thead><tbody>';
+  html += risky.length
+    ? risky.map(_rowHtml).join('')
+    : '<tr><td colspan="5" style="text-align:center;color:var(--success);padding:10px 0">✅ 当前无断货风险 SKU</td></tr>';
+  html += '</tbody>';
+  if (rest.length) {
+    html += '<tbody id="low-rest" style="display:none">' + rest.map(_rowHtml).join('') + '</tbody>';
+  }
+  html += '</table>';
+  if (rest.length) {
+    html += '<div id="low-toggle" style="text-align:center;cursor:pointer;color:var(--sub);'
+      + 'font-size:12px;padding:8px 0 2px;user-select:none">展开其余 ' + rest.length + ' 个 SKU ▼</div>';
+  }
   lowWrap.innerHTML = html;
+  const _tg = document.getElementById('low-toggle');
+  if (_tg) _tg.addEventListener('click', () => {
+    const body = document.getElementById('low-rest');
+    const open = body.style.display !== 'none';
+    body.style.display = open ? 'none' : '';
+    _tg.textContent = open ? ('展开其余 ' + rest.length + ' 个 SKU ▼') : '收起 ▲';
+  });
 }
 
 document.getElementById('foot').textContent =
