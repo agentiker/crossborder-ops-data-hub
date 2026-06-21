@@ -13,7 +13,8 @@
 
 未登记/停用 open_id = fail closed：`get_user_permission` 返回 None、
 `assert_authorized` 抛 `AuthzError`（上层转 403 / 拒答文案）。对话侧是否真的拒，
-由灰度开关 `settings.feishu_oauth.enforce_dialog_authz` 在 Phase 5 控制（防自锁）。
+由灰度开关 `settings.feishu_oauth.enforce_dialog_authz` 控制（防自锁）——对话路径的登记闸
+在 `web/routes/data.py::_assert_dialog_registered` 读该开关（Phase 7 接通）。
 
 本服务**不接收任何自然语言**。单租户阶段不引入 tenant_id（见 plan/09）。
 """

@@ -9,7 +9,9 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 
-from models.base_models import BusinessScope, PlatformToken
+from core.config import settings
+from core.tenancy import set_current_account
+from models.base_models import BusinessScope, PlatformToken, UserRole
 from services import scope_binding, scope_resolution
 from services.scope_binding import set_binding
 from web.routes import data as data_routes
@@ -46,6 +48,19 @@ def _token(session, shop_id, *, platform="tiktok_shop", country="ID"):
             country=country,
             shop_id=shop_id,
             scope_key=f"platform={platform}|shop={shop_id}",
+        )
+    )
+
+
+def _role(session, open_id, role, *, account_id="ecom-app", scope_key=None, active=True):
+    session.add(
+        UserRole(
+            channel="feishu",
+            account_id=account_id,
+            open_id=open_id,
+            role=role,
+            allowed_scope_key=scope_key,
+            is_active=active,
         )
     )
 
@@ -146,3 +161,71 @@ def test_auto_injected_scope_rejects_out_of_scope_shop(session, monkeypatch):
     with pytest.raises(HTTPException) as exc:
         data_routes._resolve_scope(open_id="ou_a", shop_id="s_outside")
     assert exc.value.status_code == 400
+
+
+# ---------- Phase 7：对话路径登记闸（enforce_dialog_authz 灰度）----------
+
+
+def test_dialog_gate_off_unregistered_passes(session, monkeypatch):
+    """灰度期(enforce=False)：未登记 open_id 仍放行——零行为变更，仅记日志观察。"""
+    _use(session, monkeypatch)
+    monkeypatch.setattr(settings.feishu_oauth, "enforce_dialog_authz", False)
+    set_current_account(None)
+    _token(session, "s1")
+    session.commit()
+
+    out = data_routes._resolve_scope(open_id="ou_unregistered")
+    assert out.shop_ids == ["s1"]  # 照常解析，不拒
+
+
+def test_dialog_gate_on_unregistered_403(session, monkeypatch):
+    """enforce=True：未登记 open_id → 403 fail-closed。"""
+    _use(session, monkeypatch)
+    monkeypatch.setattr(settings.feishu_oauth, "enforce_dialog_authz", True)
+    set_current_account(None)
+    _token(session, "s1")
+    session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        data_routes._resolve_scope(open_id="ou_unregistered")
+    assert exc.value.status_code == 403
+
+
+def test_dialog_gate_on_no_open_id_403(session, monkeypatch):
+    """enforce=True：无 open_id（无身份）→ 403 fail-closed，绝不放行匿名查询。"""
+    _use(session, monkeypatch)
+    monkeypatch.setattr(settings.feishu_oauth, "enforce_dialog_authz", True)
+    set_current_account(None)
+    _token(session, "s1")
+    session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        data_routes._resolve_scope()
+    assert exc.value.status_code == 403
+
+
+def test_dialog_gate_on_registered_boss_passes(session, monkeypatch):
+    """enforce=True：已登记 boss → 放行，正常解析本租户可见店。"""
+    _use(session, monkeypatch)
+    monkeypatch.setattr(settings.feishu_oauth, "enforce_dialog_authz", True)
+    set_current_account(None)
+    _token(session, "s1")
+    _role(session, "ou_boss", "boss")
+    session.commit()
+
+    out = data_routes._resolve_scope(open_id="ou_boss")
+    assert out.shop_ids == ["s1"]
+
+
+def test_dialog_gate_on_deactivated_403(session, monkeypatch):
+    """enforce=True：已停用 open_id（is_active=False）→ 403，与未登记一致 fail-closed。"""
+    _use(session, monkeypatch)
+    monkeypatch.setattr(settings.feishu_oauth, "enforce_dialog_authz", True)
+    set_current_account(None)
+    _token(session, "s1")
+    _role(session, "ou_off", "boss", active=False)
+    session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        data_routes._resolve_scope(open_id="ou_off")
+    assert exc.value.status_code == 403

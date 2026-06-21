@@ -22,12 +22,37 @@ from services.fulfillment_metrics import get_pending_fulfillments
 from services.order_metrics import get_gmv_summary, get_gmv_trend, get_top_skus
 from services.scope_binding import get_binding, set_binding
 from services.scope_resolution import ScopeError, ScopeFilters, list_scopes, resolve_filters
-from services.user_authz import resolve_dialog_account
+from services.user_authz import get_user_permission, resolve_dialog_account
 from services.stock_metrics import get_stock_risk
 from web.signed_link import make_token
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _assert_dialog_registered(open_id: Optional[str], account_id: str) -> None:
+    """对话/MCP 路径登记闸（Phase 7，由 `enforce_dialog_authz` 灰度控制）。
+
+    已登记（boss/operator 且 is_active）→ 放行。未登记 / 已停用 / 无 open_id：
+    - `enforce_dialog_authz=True`：fail-closed，抛 403（友好文案，引导找管理员开通）；
+    - `=False`（默认灰度期）：仅记 warning 后放行，**零行为变更**——先在生产观察
+      "开启后谁会被拒"，确认两租户用户登记齐再翻开关，避免直接锁人。
+
+    注：本闸只管"是否登记"，不管"看多大范围"——operator 的 allowed_scope 收窄尚未在
+    对话路径夹紧（正交项，当前几乎无 operator 用户），仍由 resolve_filters 的租户隔离兜底。
+    """
+    perm = get_user_permission(open_id, account_id=account_id) if open_id else None
+    if perm is not None:
+        return
+    if settings.feishu_oauth.enforce_dialog_authz:
+        raise HTTPException(
+            status_code=403,
+            detail="无数据权限：账号未登记或待审批，请联系管理员开通后再查询。",
+        )
+    logger.warning(
+        "灰度观察(dialog authz)：未登记 open_id=%s account=%s，enforce 关闭→放行；"
+        "开启后将拒答此请求", open_id, account_id,
+    )
 
 
 def _resolve_scope(
@@ -49,8 +74,12 @@ def _resolve_scope(
     多租户：account_id 取当前请求租户——X-Account-Id 头 > open_id 反查 user_roles 登记 >
     DEFAULT（见 resolve_dialog_account）。binding 读取、scope 解析、店铺校验全程按本租户
     隔离；与写端点 (ops_set_scope_binding) 同租户命中同一 binding 行。
+
+    登记闸（Phase 7）：解析租户后先过 _assert_dialog_registered，enforce 开启时未登记
+    open_id 直接 403；灰度期仅记日志放行。
     """
     account_id = resolve_dialog_account(open_id)
+    _assert_dialog_registered(open_id, account_id)
     if not scope_id and open_id:
         binding = get_binding(open_id, account_id=account_id)
         if binding.get("is_set") and binding.get("scope_key"):
@@ -903,6 +932,7 @@ async def set_scope_binding(body: SetScopeBindingRequest):
         # account_id 与 _resolve_scope 同源（头 > open_id 反查 > DEFAULT），保证读写命中
         # 同一 binding 行。channel 走服务端默认 feishu。
         account_id = resolve_dialog_account(body.open_id)
+        _assert_dialog_registered(body.open_id, account_id)  # Phase 7 登记闸，与查询端点一致
         data = set_binding(body.open_id, body.scope_key, account_id=account_id)
     except ScopeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

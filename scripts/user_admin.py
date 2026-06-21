@@ -4,9 +4,9 @@
 boss 看全部；operator 被钉死在 --scope-key 且不可越界。operator 必须给 --scope-key
 且校验该 scope 存在且 active（复用 scope_resolution.expand_scope）；boss 忽略 scope。
 
-⚠️ 上线防自锁（见 plan/14 Phase 6）：先用本 CLI 把老板登记成 boss、运营登记成
-operator+scope，确认无误后再把 settings.feishu_oauth.enforce_dialog_authz 置 True，
-否则一开对话侧硬闸老板自己被锁在外面。
+⚠️ 上线防自锁（对话侧登记闸 plan/09 Phase 7）：置 settings.feishu_oauth.enforce_dialog_authz
+=True 前，先确认 boss/operator 都已登记齐（首登者经 OAuth 自助 bootstrap 成 boss，本 CLI 用于
+补登/改角色/纠错），否则一开硬闸登录态以外的对话路径会把未登记者全部挡在外面。
 
 用法：
   uv run python -m scripts.user_admin list

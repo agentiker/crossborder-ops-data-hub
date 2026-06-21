@@ -76,9 +76,10 @@ class FeishuOAuthConfig(BaseModel):
     # 之后静默发码不再弹。该权限须在飞书后台「权限管理」开通并发版，否则 authorize 报 20027。
     # 注意：authorize 链接刻意不带 prompt=consent（它会强制每次确认）。可经 env 覆盖。
     oauth_scope: str = "contact:user.base:readonly"
-    # 对话侧 fail-closed 硬闸灰度开关（防自锁，见 plan/14 Phase 6）：
-    # 先 False 部署 → CLI 登记 boss/operator → 确认无误再置 True。
-    # False 时 web/routes/data.py::_resolve_scope 维持旧行为（未登记 open_id 不拒）。
+    # 对话侧登记闸的 fail-closed 灰度开关（防自锁）：由 _resolve_scope /
+    # set_scope_binding 的 _assert_dialog_registered 读取（plan/09 Phase 7 接通）。
+    # 先 False 部署 → 自助申请/CLI 登记 boss/operator → 看灰度日志确认登记齐再置 True。
+    # False 时维持旧行为（未登记 open_id 仅记 warning、不拒）；True 时未登记/无 open_id → 403。
     enforce_dialog_authz: bool = False
 
     def credential(self, account_id: str) -> "FeishuAppCredential":
