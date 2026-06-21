@@ -164,9 +164,12 @@ class BaseAPIClient(ABC):
             )
             if record:
                 record.access_token = self.access_token
-                record.refresh_token = self.refresh_token
                 record.token_expire_at = expire_dt
-                record.refresh_token_expire_at = refresh_expire_dt
+                # 空 refresh_token 不抹库：刷新响应可能不返回 refresh_token，无条件写回会把
+                # DB 旧值抹成 NULL，使刷新任务永久排除该行（详注见 TikTokShopClient.save_token）。
+                if self.refresh_token:
+                    record.refresh_token = self.refresh_token
+                    record.refresh_token_expire_at = refresh_expire_dt
                 record.token_payload = token_payload
             else:
                 record = PlatformToken(

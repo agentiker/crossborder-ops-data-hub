@@ -45,8 +45,10 @@ def save_token(
     record = session.query(PlatformToken).filter_by(scope_key=token_key).first()
     if record:
         record.access_token = access_token
-        record.refresh_token = refresh_token
         record.token_expire_at = expires_at
+        # 空 refresh_token 不抹库：保留旧值（与 client.save_token 一致，防刷新任务失明）。
+        if refresh_token:
+            record.refresh_token = refresh_token
     else:
         record = PlatformToken(
             platform=scope.platform,

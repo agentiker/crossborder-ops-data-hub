@@ -193,9 +193,16 @@ class TikTokShopClient(BaseAPIClient):
             )
             if record:
                 record.access_token = self.access_token
-                record.refresh_token = self.refresh_token
                 record.token_expire_at = expire_dt
-                record.refresh_token_expire_at = refresh_expire_dt
+                # 仅在本次确实拿到 refresh_token 时才覆盖：/api/v2/token/refresh 的响应
+                # **可能返回空/None 的 refresh_token**（同 shop_cipher 不返回的坑）。若无条件
+                # 写回会把 DB 里有效的 refresh_token 抹成 NULL → 刷新任务因 `refresh_token
+                # IS NOT NULL` 永久排除该行（静默"找到 0 个"）、access_token 到期后同步无法
+                # 自救只能人工重新授权（2026-06-21 实际烧过数天）。空值保留旧 refresh_token
+                # 及其有效期，二者一起守（给了新 token 才一起更）。
+                if self.refresh_token:
+                    record.refresh_token = self.refresh_token
+                    record.refresh_token_expire_at = refresh_expire_dt
                 # 仅在本次确实拿到 shop_cipher 时才覆盖：token 刷新接口
                 # (/api/v2/token/refresh) 的响应不含 shop_cipher，若无条件写回会把
                 # DB 里的旧 cipher 抹成 None，导致后续 orders/products search 报

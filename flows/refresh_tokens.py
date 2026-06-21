@@ -7,6 +7,7 @@ TikTok Shop access tokens before they expire.
 from datetime import datetime, timedelta, timezone
 
 from prefect import flow, task
+from sqlalchemy import or_
 
 from core.db import SessionLocal, init_db
 from flows.network import log_egress_ip
@@ -57,7 +58,7 @@ def refresh_tokens_flow(hours_before_expiry: int = 24) -> dict:
     init_db()
     session = SessionLocal()
 
-    results = {"success": [], "failed": [], "skipped": []}
+    results = {"success": [], "failed": [], "skipped": [], "needs_reauth": []}
 
     try:
         # Query tokens expiring within the threshold
@@ -102,6 +103,24 @@ def refresh_tokens_flow(hours_before_expiry: int = 24) -> dict:
                 })
                 print(f"刷新失败: {token.scope_key}, 错误: {e}")
 
+        # 加固告警：已/即将过期但 refresh_token 缺失（NULL/空）的 token——它们被上面的主查询
+        # (refresh_token IS NOT NULL) 排除，无法自动刷新，会静默漏刷直到 access_token 到期、
+        # 数据同步报错才暴露（2026-06-21 烧了数天无人知）。单独捞出来，flow 末尾抛错触发
+        # systemd OnFailure → 飞书告警，提示人工重新授权。
+        stuck = (
+            session.query(PlatformToken)
+            .filter(
+                PlatformToken.platform == "tiktok_shop",
+                PlatformToken.token_expire_at < threshold,
+                or_(
+                    PlatformToken.refresh_token.is_(None),
+                    PlatformToken.refresh_token == "",
+                ),
+            )
+            .all()
+        )
+        results["needs_reauth"] = [t.scope_key for t in stuck]
+
     finally:
         session.close()
 
@@ -110,6 +129,15 @@ def refresh_tokens_flow(hours_before_expiry: int = 24) -> dict:
     print(f"  成功: {len(results['success'])}")
     print(f"  失败: {len(results['failed'])}")
     print(f"  跳过: {len(results['skipped'])}")
+    print(f"  需重新授权: {len(results['needs_reauth'])}")
+
+    # 有 token 无法自动刷新（无 refresh_token）→ 抛错，让 systemd OnFailure 发飞书告警。
+    # 放在 summary 之后：能刷的已尽量刷完、统计已打印，再以失败态收尾提示人工介入。
+    if results["needs_reauth"]:
+        raise RuntimeError(
+            f"{len(results['needs_reauth'])} 个 TikTok token 已/即将过期且无 refresh_token，"
+            f"无法自动刷新，需人工重新授权：{results['needs_reauth']}"
+        )
 
     return results
 
