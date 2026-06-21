@@ -16,7 +16,7 @@ from web.routes.chat import router as chat_router
 from web.routes.dashboard import router as dashboard_router
 from web.routes.data import router as data_router
 from web.routes.report import router as report_router
-from web.security import require_internal_token
+from web.security import bind_account_context, require_internal_token
 from web.web_security import register_web_auth_handlers
 
 # 应用 INFO 日志接入 stdout → systemd journal。此前无任何日志配置：应用 logger 走 root
@@ -57,7 +57,9 @@ app.include_router(
     data_router,
     prefix="/api/data",
     tags=["数据查询"],
-    dependencies=[Depends(require_internal_token)],
+    # bind_account_context 在所有数据端点前置跑，把 X-Account-Id 写进请求级 contextvar
+    # （路由级覆盖全部端点，杜绝逐端点透传漏一个就 fail-open）。
+    dependencies=[Depends(require_internal_token), Depends(bind_account_context)],
 )
 
 
@@ -117,6 +119,6 @@ mcp = FastApiMCP(
         "ops_dashboard_link",
         "ops_report_link",
     ],
-    headers=["x-internal-token"],
+    headers=["x-internal-token", "x-account-id"],  # x-account-id 多租户：openclaw 注入当前租户
 )
 mcp.mount_http()  # streamable-http，挂在 /mcp

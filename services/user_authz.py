@@ -29,7 +29,6 @@ from services.scope_resolution import (
     ScopeFilters,
     expand_scope,
     resolve_filters,
-    tenant_visible_shop_ids,
 )
 
 ROLE_BOSS = "boss"
@@ -208,19 +207,8 @@ def resolve_authorized_scope(
     requested_shop_ids = list(requested_shop_ids or [])
 
     if perm.is_boss:
-        # boss 在本租户内无上限，但**绝不跨租户**：全量范围 = 本租户可见店铺并集
-        # （自有 token 店 ∪ 自有 scope 店），而非"无过滤=查全库"。
-        if not requested_scope_key and not requested_shop_ids:
-            shops = sorted(tenant_visible_shop_ids(perm.account_id))
-            return ScopeFilters(
-                platform=None,
-                country=None,
-                # 空集 → 永不命中的哨兵，保证 fail-closed（该租户暂无可见店时看不到任何数据）。
-                shop_ids=shops or ["__no_shop__"],
-                scope_key=None,
-                display_text="全部范围" if shops else "（暂无可见店铺）",
-            )
-        # 指定了 scope/店：按请求在本租户内解析（resolve_filters 仍按本租户可见集校验显式店）。
+        # boss 在本租户内无上限，但**绝不跨租户**：全量范围由 resolve_filters 收口为本租户
+        # 可见店并集（无 scope 无显式店时），空集 fail-closed。指定 scope/店则在本租户内解析。
         return resolve_filters(
             scope_key=requested_scope_key,
             shop_ids=requested_shop_ids or None,

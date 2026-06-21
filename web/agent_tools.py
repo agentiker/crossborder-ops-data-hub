@@ -14,6 +14,7 @@ import asyncio
 import logging
 from typing import Any
 
+from core.tenancy import set_current_account
 from services.llm import ToolSpec
 from services.user_authz import UserPermission, resolve_authorized_scope
 from web.routes.data import (
@@ -130,6 +131,10 @@ def run_tool(name: str, arguments: dict, perm: UserPermission) -> dict:
     """
     if name not in TOOL_NAMES:
         raise ValueError(f"未知工具：{name}")
+
+    # 多租户：WebUI 对话路径不经 /api/data 的 bind_account_context，按登录身份的 account
+    # 设请求级 contextvar，下游显式店校验/链接签发据此隔离（否则落默认 ecom-app 误拒 gtl 店）。
+    set_current_account(perm.account_id)
 
     # 按登录身份夹紧范围：boss=全部、operator=其 allowed_scope（不可越界）
     filters = resolve_authorized_scope(perm)

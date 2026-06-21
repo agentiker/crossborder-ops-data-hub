@@ -15,6 +15,7 @@ host→account 映射放 config（env 驱动）——它是部署拓扑（隧道
 """
 from __future__ import annotations
 
+import contextvars
 from typing import Optional
 
 from core.config import settings
@@ -22,6 +23,26 @@ from core.config import settings
 # 向后兼容锚点：裸域 board.agenticker.cc、未知 host、未传 X-Account-Id 头一律回落到它。
 # 所有存量数据（cookie/token/binding/user_roles）都是 ecom-app，回落语义完全正确。
 DEFAULT_ACCOUNT = "ecom-app"
+
+
+# ── 请求级当前租户（对话/MCP 路径用）─────────────────────────────────────────
+# data API/MCP 工具被 openclaw 调用时不走 Host（同进程 ASGI），租户由请求头 X-Account-Id
+# 注入。web/security.bind_account_context 依赖在每个 /api/data 请求开头把它写进此 contextvar，
+# _resolve_scope / scope_binding / 链接签发等下游读取，免去逐端点透传（漏一个即 fail-open）。
+# 默认 DEFAULT_ACCOUNT：未注入头（旧 openclaw、内部调用）= 主租户，零行为变更。
+_current_account: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "current_account", default=DEFAULT_ACCOUNT
+)
+
+
+def set_current_account(account_id: Optional[str]) -> None:
+    """写当前请求的租户（须在 async 依赖里调，threadpool 的 set 不回传父 context）。"""
+    _current_account.set(account_id or DEFAULT_ACCOUNT)
+
+
+def current_account() -> str:
+    """读当前请求的租户；未设置 → DEFAULT_ACCOUNT。"""
+    return _current_account.get()
 
 
 def account_for_host(host: Optional[str]) -> str:

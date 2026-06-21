@@ -17,6 +17,7 @@ import json
 from fastapi import APIRouter, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from core.tenancy import DEFAULT_ACCOUNT, set_current_account
 from web.routes.data import (
     get_low_stock,
     get_orders_top_skus,
@@ -28,12 +29,16 @@ from web.signed_link import verify_token
 router = APIRouter()
 
 
-async def _collect(open_id: str, period: str) -> dict:
+async def _collect(open_id: str, period: str, account_id: str = DEFAULT_ACCOUNT) -> dict:
     """按 open_id 的 binding scope 取看板四块数据，组装成前端用的 dict。
 
     强制软隔离：scope_id/shop_ids/shop_id 一律钉 None，只按 token 里的 open_id 解析范围。
     服务端取数显式传齐每个参数，绝不让 FastAPI 的 Query(None) 默认值泄漏成 Query 对象。
+
+    多租户：渲染路径不经 /api/data 的 bind_account_context，故这里按 token 解出的 account
+    显式写进请求级 contextvar，下游 _resolve_scope 据此按本租户隔离取数。
     """
+    set_current_account(account_id)
     overview = await get_overview(
         platform=None, country=None, shop_id=None,
         scope_id=None, shop_ids=None, open_id=open_id,
@@ -74,8 +79,8 @@ async def dashboard(
     tok = verify_token(t)
     if not tok:
         return HTMLResponse(_render_error(), status_code=401)
-    open_id, _account = tok
-    data = await _collect(open_id, period)
+    open_id, account = tok
+    data = await _collect(open_id, period, account)
     return HTMLResponse(_render(data))
 
 
@@ -91,8 +96,8 @@ async def dashboard_data(
     tok = verify_token(t)
     if not tok:
         return JSONResponse({"error": "invalid_token"}, status_code=401)
-    open_id, _account = tok
-    data = await _collect(open_id, period)
+    open_id, account = tok
+    data = await _collect(open_id, period, account)
     return JSONResponse(data)
 
 

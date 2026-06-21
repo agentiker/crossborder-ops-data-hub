@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from core.config import settings
 from core.db import SessionLocal
+from core.tenancy import current_account, public_base_url_for
 from core.timezone import PERIOD_KEYS, business_now, business_today, describe_window, resolve_period
 from models.base_models import Inventory, Product
 from services.ad_metrics import (
@@ -43,14 +44,19 @@ def _resolve_scope(
 
     服务器端自动兜底：agent 没传 scope_id 但有 open_id 时，自动查 binding 表取默认范围，
     消除对弱模型「主动读取默认范围」的依赖。带 scope_id 则显式优先、不读 binding。
-    读取走服务端默认 channel/account_id，与写端点 (ops_set_scope_binding) 默认完全一致，
-    保证读写命中同一 binding 行（账号隔离靠 open_id 的 per-app 唯一性，见 SetScopeBindingRequest）。
+
+    多租户：account_id 取当前请求租户（X-Account-Id 头 → contextvar），binding 读取、scope
+    解析、店铺校验全程按本租户隔离；与写端点 (ops_set_scope_binding) 同租户命中同一 binding 行。
     """
+    account_id = current_account()
     if not scope_id and open_id:
-        binding = get_binding(open_id)
+        binding = get_binding(open_id, account_id=account_id)
         if binding.get("is_set") and binding.get("scope_key"):
             scope_id = binding["scope_key"]
-            logger.info("auto-applied scope binding: open_id=%s → %s", open_id, scope_id)
+            logger.info(
+                "auto-applied scope binding: account=%s open_id=%s → %s",
+                account_id, open_id, scope_id,
+            )
 
     id_list = [s.strip() for s in shop_ids.split(",") if s.strip()] if shop_ids else None
     try:
@@ -60,6 +66,7 @@ def _resolve_scope(
             country=country,
             shop_id=shop_id,
             shop_ids=id_list,
+            account_id=account_id,
         )
     except ScopeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -287,10 +294,10 @@ class ReportLinkResponse(BaseModel):
 class SetScopeBindingRequest(BaseModel):
     open_id: str
     scope_key: Optional[str] = None  # None/"" = 切换为全量
-    # channel / account_id 不在请求体暴露：飞书 open_id 是 per-app 唯一的，账号隔离已由
-    # open_id 保证，account_id 维度冗余。写入与数据端点自动注入读取都走服务端默认
-    # (feishu / ecom-app)，保证读写命中同一 binding 行——绝不让 agent 传 account_id
-    # 制造读写不对齐（gtl 账号曾因此切范围静默失效）。多 app 真隔离留待 plan/09。
+    # channel / account_id 不在请求体暴露：account_id 由 X-Account-Id 头注入（contextvar），
+    # 写入(set_binding)与数据端点自动注入读取(_resolve_scope→get_binding)走同一租户，命中
+    # 同一 binding 行——绝不让 agent 传 account_id 制造读写不对齐（gtl 账号曾因此切范围静默
+    # 失效）。铁律：读写 binding 用同一个头（plan/09 Phase 4）。
 
 
 class TrendPoint(BaseModel):
@@ -873,8 +880,8 @@ async def get_products(
 
 @router.get("/scopes", response_model=ScopeListResponse, operation_id="ops_scopes")
 async def get_scopes():
-    """列出所有启用的业务范围（scope）。用于 agent 在用户问"有哪些范围"时回答。"""
-    scopes = list_scopes()
+    """列出本租户启用的业务范围（scope）。用于 agent 在用户问"有哪些范围"时回答。"""
+    scopes = list_scopes(current_account())
     return ScopeListResponse(
         items=[ScopeItem(**s) for s in scopes],
         total=len(scopes),
@@ -891,7 +898,8 @@ async def set_scope_binding(body: SetScopeBindingRequest):
     未知或已停用的 scope_key → 400。写入后返回该范围展示文案，用于"已切换到 X"确认话术。
     """
     try:
-        # channel/account_id 走服务端默认（与 _resolve_scope 的自动注入读取一致）。
+        # account_id 取当前请求租户（X-Account-Id 头），与 _resolve_scope 的自动注入读取
+        # 同租户，保证读写命中同一 binding 行。channel 走服务端默认 feishu。
         data = set_binding(body.open_id, body.scope_key)
     except ScopeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -910,12 +918,13 @@ async def get_dashboard_link(
     （已是飞书可点击链接格式，别贴裸 `url`——那是一长串带 token 的丑字符串）。看板范围由
     open_id 的会话默认范围（binding）锁定，token 短时效（默认 30 分钟）后失效，需重新获取。
     """
-    base = settings.dashboard.public_base_url
+    account_id = current_account()
+    base = public_base_url_for(account_id)  # 多租户：gtl → 其子域名根，未配回落 dashboard 默认
     if not base:
         raise HTTPException(status_code=503, detail="DASHBOARD__PUBLIC_BASE_URL 未配置")
     ttl = settings.dashboard.token_ttl_seconds
     try:
-        token = make_token(open_id, ttl=ttl)
+        token = make_token(open_id, account_id, ttl=ttl)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     url = base.rstrip("/") + "/dashboard?t=" + token
@@ -947,8 +956,10 @@ async def get_dashboard_link(
 _FEISHU_WEBAPP_APPLINK = "https://applink.feishu.cn/client/web_app/open"
 
 
-def _wrap_feishu_applink(url: str, mode: str = "window") -> str:
-    app_id = settings.feishu_oauth.app_id
+def _wrap_feishu_applink(url: str, mode: str = "window", account_id: Optional[str] = None) -> str:
+    # 多租户最隐蔽坑：applink 的 appId 必须用**当前租户的飞书 app**，否则 gtl 用户拿到
+    # 我方 app 的 applink，端内打不开/串租户。按 account 取凭据，未配回落顶层单 app。
+    app_id = settings.feishu_oauth.credential(account_id or current_account()).app_id
     if not app_id:
         return url  # 未配 appId：退回裸链（至少不报错）
     parts = urlsplit(url)
@@ -980,12 +991,13 @@ async def get_report_link(
     wrap_applink（不暴露给 LLM）：飞书渠道默认 True，把链接包成 applink 让飞书端内打开；
     WebUI（agent_tools.ops_report）传 False 用裸链（浏览器里 applink 无意义）。
     """
-    base = settings.dashboard.public_base_url
+    account_id = current_account()
+    base = public_base_url_for(account_id)  # 多租户：gtl → 其子域名根，未配回落 dashboard 默认
     if not base:
         raise HTTPException(status_code=503, detail="DASHBOARD__PUBLIC_BASE_URL 未配置")
     ttl = settings.dashboard.token_ttl_seconds
     try:
-        token = make_token(open_id, ttl=ttl)
+        token = make_token(open_id, account_id, ttl=ttl)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     # 用 /board/report/*（/report/* 的别名）：飞书 applink 的 path 是「替换主页 path」语义
@@ -999,7 +1011,7 @@ async def get_report_link(
         url += "&end_date=" + end_date
     # 直接调用（非 HTTP）不传时 wrap_applink 是 FieldInfo，归一化为飞书默认 True。
     wrap = wrap_applink if isinstance(wrap_applink, bool) else True
-    link = _wrap_feishu_applink(url) if wrap else url
+    link = _wrap_feishu_applink(url, account_id=account_id) if wrap else url
     # 有效期文案友好显示（TTL 可长达数天，写死"分钟"会出现"10080 分钟内有效"这种丑文案）
     if ttl >= 86400:
         ttl_text = f"{ttl // 86400} 天"

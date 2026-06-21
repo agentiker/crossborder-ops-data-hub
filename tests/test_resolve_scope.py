@@ -75,35 +75,51 @@ def test_explicit_scope_id_wins_binding_not_read(session, monkeypatch):
 
 
 def test_no_binding_falls_back_to_all(session, monkeypatch):
-    """open_id 从未切过范围（无 binding 行）→ 全量，无 scope。"""
+    """open_id 从未切过范围（无 binding 行）→ 全量，无 scope。
+
+    多租户后「全量」= 本租户可见店并集（非"不过滤"），故播一个 token 作可见店。
+    """
     _use(session, monkeypatch)
+    _token(session, "s1")
     session.commit()
 
     out = data_routes._resolve_scope(open_id="ou_never")
     assert out.scope_key is None
-    assert out.shop_ids == []
+    assert out.shop_ids == ["s1"]  # 收口为本租户可见店，不再是空=不过滤
     assert out.display_text == "全部范围"
 
 
 def test_explicit_all_binding_falls_back_to_all(session, monkeypatch):
     """切过"全部"（binding is_set 但 scope_key=None）→ 仍走全量，不注入。"""
     _use(session, monkeypatch)
+    _token(session, "s1")
     session.commit()
     set_binding("ou_all", "")  # 显式全量
 
     out = data_routes._resolve_scope(open_id="ou_all")
     assert out.scope_key is None
-    assert out.shop_ids == []
+    assert out.shop_ids == ["s1"]
 
 
 def test_no_open_id_no_scope_is_all(session, monkeypatch):
-    """既无 open_id 又无 scope_id → 全量（不查 binding）。"""
+    """既无 open_id 又无 scope_id → 全量（不查 binding），收口为本租户可见店。"""
     _use(session, monkeypatch)
+    _token(session, "s1")
     session.commit()
 
     out = data_routes._resolve_scope()
     assert out.scope_key is None
-    assert out.shop_ids == []
+    assert out.shop_ids == ["s1"]
+
+
+def test_empty_tenant_full_range_fails_closed(session, monkeypatch):
+    """租户无任何可见店时，全量 → 哨兵 __no_shop__（fail-closed），绝不退化为查全库。"""
+    _use(session, monkeypatch)
+    session.commit()  # 不播任何 token/scope
+
+    out = data_routes._resolve_scope(open_id="ou_x")
+    assert out.scope_key is None
+    assert out.shop_ids == [scope_resolution.NO_SHOP_SENTINEL]
 
 
 def test_auto_injected_scope_narrows_with_in_scope_shop(session, monkeypatch):

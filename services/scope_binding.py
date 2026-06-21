@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Optional
 
 from core.db import SessionLocal
+from core.tenancy import current_account
 from models.base_models import ConversationScopeBinding
 from services.scope_resolution import ScopeError, expand_scope
 
@@ -22,21 +23,25 @@ _ALL_SCOPE_DISPLAY = "全部范围"
 _UNSET_DISPLAY = "未设置默认范围（全部）"
 
 
-def _display_for(scope_key: Optional[str]) -> str:
+def _display_for(scope_key: Optional[str], account_id: str) -> str:
     """已设置 binding 的展示文案。scope_key 为空 = 显式全量。"""
     if not scope_key:
         return _ALL_SCOPE_DISPLAY
-    # 复用 scope 展开拿权威 display_text（也顺带校验仍有效）。
-    return expand_scope(scope_key).display_text
+    # 复用 scope 展开拿权威 display_text（也顺带校验仍有效），按本租户找 scope。
+    return expand_scope(scope_key, account_id=account_id).display_text
 
 
 def get_binding(
     open_id: str,
     *,
     channel: str = "feishu",
-    account_id: str = "ecom-app",
+    account_id: Optional[str] = None,
 ) -> dict:
-    """读会话默认范围绑定。无绑定返回 is_set=False（agent 据此走全量）。"""
+    """读会话默认范围绑定。无绑定返回 is_set=False（agent 据此走全量）。
+
+    多租户：account_id 默认取当前请求租户（X-Account-Id 头）；读写须同租户才命中同一行。
+    """
+    account_id = account_id or current_account()
     session = SessionLocal()
     try:
         row = (
@@ -52,7 +57,7 @@ def get_binding(
             return {"scope_key": None, "scope": _UNSET_DISPLAY, "is_set": False}
         return {
             "scope_key": row.scope_key,
-            "scope": _display_for(row.scope_key),
+            "scope": _display_for(row.scope_key, account_id),
             "is_set": True,
         }
     finally:
@@ -64,17 +69,20 @@ def set_binding(
     scope_key: Optional[str],
     *,
     channel: str = "feishu",
-    account_id: str = "ecom-app",
+    account_id: Optional[str] = None,
 ) -> dict:
     """写/更新会话默认范围绑定（upsert）。
 
     `scope_key` 非空时必须是已存在且启用的 scope（复用 expand_scope 校验，未知/停用抛
     ScopeError）；空字符串归一化为 None，表示"显式全量"。
+
+    多租户：account_id 默认取当前请求租户（X-Account-Id 头）；与读端点同租户才命中同一行。
     """
+    account_id = account_id or current_account()
     scope_key = scope_key or None
     if scope_key is not None:
-        # 校验：未知/停用 scope 直接抛 ScopeError，绝不落脏 binding。
-        expand_scope(scope_key)
+        # 校验：未知/停用 scope 直接抛 ScopeError，绝不落脏 binding（按本租户找 scope）。
+        expand_scope(scope_key, account_id=account_id)
 
     session = SessionLocal()
     try:
@@ -100,7 +108,7 @@ def set_binding(
         session.commit()
         return {
             "scope_key": scope_key,
-            "scope": _display_for(scope_key),
+            "scope": _display_for(scope_key, account_id),
             "is_set": True,
         }
     finally:

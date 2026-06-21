@@ -49,6 +49,40 @@ def test_get_binding_unset_returns_not_set(session, monkeypatch):
     }
 
 
+def test_binding_isolated_by_account(session, monkeypatch):
+    """多租户：account 经 contextvar 注入；同 open_id 不同租户的 binding 互不可见。
+
+    铁律：读写 binding 用同一个头才命中同一行（gtl 曾因读写 account 不对齐切范围静默失效）。
+    """
+    from core.tenancy import set_current_account
+    _use(session, monkeypatch)
+    _scope(session, "tts-id-all", ["s1"])  # ecom-app（默认）名下
+    session.add(
+        BusinessScope(
+            account_id="ecom-app-gtl", scope_key="gtl-all", scope_name="gtl",
+            scope_type="shop_group", platform="tiktok_shop", country="ID",
+            shop_ids=["s1"], is_active=True,
+        )
+    )
+    session.commit()
+
+    # ecom-app 用户在 ecom 租户下设了 binding
+    set_current_account("ecom-app")
+    set_binding("ou_shared", "tts-id-all")
+    assert get_binding("ou_shared")["scope_key"] == "tts-id-all"
+
+    # 同一 open_id 切到 gtl 租户 → 看不到 ecom 的 binding（隔离）
+    set_current_account("ecom-app-gtl")
+    assert get_binding("ou_shared")["is_set"] is False
+    # gtl 租户下设自己的 binding，与 ecom 互不干扰
+    set_binding("ou_shared", "gtl-all")
+    assert get_binding("ou_shared")["scope_key"] == "gtl-all"
+
+    # 切回 ecom：仍是 ecom 自己的 binding，没被 gtl 覆盖
+    set_current_account("ecom-app")
+    assert get_binding("ou_shared")["scope_key"] == "tts-id-all"
+
+
 def test_set_then_get_named_scope(session, monkeypatch):
     _use(session, monkeypatch)
     _scope(session, "tts-id-all", ["s1"])

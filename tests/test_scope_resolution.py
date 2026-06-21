@@ -123,10 +123,20 @@ def test_resolve_filters_rejects_unauthorized_shop_without_scope(session, monkey
 
 def test_resolve_filters_passthrough_without_scope_or_shop(session, monkeypatch):
     _use(session, monkeypatch)
+    _token(session, "s1")  # 本租户有可见店 → 全量收口到它（非空=不过滤）
+    session.commit()
     f = resolve_filters(platform="tiktok_shop", country="ID")
-    assert f.shop_ids == []
+    assert f.shop_ids == ["s1"]  # 收口为本租户可见店
     assert f.scope_key is None
-    assert f.platform == "tiktok_shop"
+    assert f.platform == "tiktok_shop"  # platform/country 仍透传过滤
+
+
+def test_resolve_filters_empty_tenant_fails_closed(session, monkeypatch):
+    """无 scope 无显式店且租户无可见店 → 哨兵，绝不退化为查全库。"""
+    _use(session, monkeypatch)
+    f = resolve_filters()
+    assert f.shop_ids == [scope_resolution.NO_SHOP_SENTINEL]
+    assert f.scope_key is None
 
 
 # ── 多店集合聚合（order_metrics 走 shop_ids in_()） ──────────────────────────

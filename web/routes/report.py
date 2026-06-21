@@ -22,6 +22,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from core.config import settings
+from core.tenancy import set_current_account
 from core.timezone import (
     business_now,
     business_today,
@@ -588,7 +589,9 @@ async def report(
     if viewer_open_id != open_id or viewer_account != token_account:
         return HTMLResponse(_render_forbidden(), status_code=403)
 
-    # 3) 本人：照常取数渲染（软隔离按 open_id 的 binding；account 透传见 Phase 4 data 层）
+    # 3) 本人：照常取数渲染。多租户：把 token 的 account 写进请求级 contextvar，下游
+    # _resolve_scope 据此按本租户隔离（渲染路径不经 /api/data 的 bind_account_context）。
+    set_current_account(token_account)
     if template_name == "weekly_review":
         data = await _collect_weekly(open_id, period)
     else:
@@ -846,9 +849,11 @@ async def report_insight(
     if not viewer_open_id or viewer_open_id != open_id or viewer_account != token_account:
         return JSONResponse({"available": False, "reason": "forbidden"})
 
-    # 缓存键须含 template_name，否则日报/周报同 open_id+period 会串味（拿到对方的洞察）。
-    cache_key = (template_name, open_id, start_date or "", end_date or "", period or "",
-                 str(business_today()))
+    # 多租户：按 token 的 account 隔离取数（与 report() 一致）。
+    set_current_account(token_account)
+    # 缓存键须含 template_name + account，否则日报/周报或跨租户同 open_id+period 会串味。
+    cache_key = (token_account, template_name, open_id, start_date or "", end_date or "",
+                 period or "", str(business_today()))
     if cache_key in _INSIGHT_CACHE:
         return JSONResponse(_INSIGHT_CACHE[cache_key])
 

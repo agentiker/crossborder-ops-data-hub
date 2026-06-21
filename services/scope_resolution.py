@@ -24,6 +24,11 @@ class ScopeError(ValueError):
     """范围解析/校验失败（API 层应转 400）。"""
 
 
+# 永不命中的店铺哨兵：当某租户「全部范围」展开后可见店铺为空时用它占位，
+# 让下游 shop_id IN (...) 过滤命中空集（fail-closed），绝不退化为"不过滤=查全库"。
+NO_SHOP_SENTINEL = "__no_shop__"
+
+
 # 展示名小词表（仅用于 display_text，不参与任何过滤逻辑）
 _PLATFORM_DISPLAY = {
     "tiktok_shop": "TikTok Shop",
@@ -233,14 +238,36 @@ def resolve_filters(
             ),
         )
 
-    # 无 scope_key：兼容旧的显式过滤，但校验店铺合法性（按本租户可见集）
-    _validate_shops_authorized(explicit_shops, account_id=account_id)
+    # 无 scope_key + 有显式店：校验都在本租户可见集内，按显式店过滤。
+    if explicit_shops:
+        _validate_shops_authorized(explicit_shops, account_id=account_id)
+        return ScopeFilters(
+            platform=platform,
+            country=country,
+            shop_ids=explicit_shops,
+            scope_key=None,
+            display_text=_display_text(
+                platform=platform, country=country, shop_ids=explicit_shops
+            ),
+        )
+
+    # 无 scope_key + 无显式店 = 本租户「全部范围」：收口为本租户可见店并集，
+    # **绝不退化为 shop_ids=[]（=不过滤=查全库）**。空集 → 哨兵，fail-closed。
+    visible = sorted(tenant_visible_shop_ids(account_id))
+    if not visible:
+        return ScopeFilters(
+            platform=platform, country=country, shop_ids=[NO_SHOP_SENTINEL],
+            scope_key=None, display_text="（暂无可见店铺）",
+        )
     return ScopeFilters(
         platform=platform,
         country=country,
-        shop_ids=explicit_shops,
+        shop_ids=visible,
         scope_key=None,
-        display_text=_display_text(
-            platform=platform, country=country, shop_ids=explicit_shops
+        # platform/country 仍透传过滤；display 在有维度词时显示维度，否则「全部范围」。
+        display_text=(
+            _display_text(platform=platform, country=country, shop_ids=[])
+            if (platform or country)
+            else "全部范围"
         ),
     )
