@@ -38,9 +38,10 @@ from services.metrics_store import (
 from services.stock_metrics import get_stock_risk
 from services.scope_resolution import resolve_filters
 
-# 收件人配置（单租户阶段写死；scope_id=None → 全部已授权店）。
+# 收件人**真相源 = alert_recipients 表**（plan/09 Phase 6 迁 DB）。下面常量仅作
+# **空表回落**：表未建/未 seed 时退回它，保证迁移过渡期告警不静默中断（会打日志提示）。
 # account 对应 ~/.openclaw/openclaw.json 的 channels.feishu.accounts 键；open_id 为飞书用户 ou_xxx。
-RECIPIENTS = [
+_FALLBACK_RECIPIENTS = [
     {
         "account": "ecom-app",
         "open_id": "ou_7afe4514b269e5a0abfbd395f3f26410",
@@ -52,6 +53,34 @@ RECIPIENTS = [
         "scope_id": None,
     },
 ]
+
+
+def load_recipients() -> list[dict]:
+    """读 alert_recipients 表的启用收件人；表空/读失败 → 回落常量（打日志）。"""
+    try:
+        session = SessionLocal()
+        try:
+            from models.base_models import AlertRecipient
+
+            rows = (
+                session.query(AlertRecipient)
+                .filter(AlertRecipient.is_active.is_(True))
+                .order_by(AlertRecipient.account_id, AlertRecipient.open_id)
+                .all()
+            )
+        finally:
+            session.close()
+    except Exception as exc:  # 表未建/DB 异常：回落，绝不让告警静默中断
+        print(f"[alert] 读 alert_recipients 失败（{exc}），回落内置收件人常量")
+        return list(_FALLBACK_RECIPIENTS)
+
+    if not rows:
+        print("[alert] alert_recipients 表空，回落内置收件人常量（建议跑 Phase 6 迁移 seed）")
+        return list(_FALLBACK_RECIPIENTS)
+    return [
+        {"account": r.account_id, "open_id": r.open_id, "scope_id": r.scope_key}
+        for r in rows
+    ]
 
 
 def _parse_hhmm(value: str) -> time:
@@ -223,7 +252,9 @@ def _scan_one(recipient: dict, *, dry_run: bool) -> list[str]:
     open_id = recipient["open_id"]
     scope_id = recipient.get("scope_id")
 
-    scope = resolve_filters(scope_key=scope_id)
+    # 多租户：按收件人 account 解析范围——gtl 收件人扫 gtl 的店，绝不扫到 ecom 的店
+    # （scope_id=None 时由 resolve_filters 收口为本租户可见店并集）。
+    scope = resolve_filters(scope_key=scope_id, account_id=account)
     session = SessionLocal()
     try:
         lines = []
@@ -256,7 +287,7 @@ def scan_fulfillment_alerts_flow(dry_run: bool = False):
         return []
 
     results = []
-    for recipient in RECIPIENTS:
+    for recipient in load_recipients():
         try:
             results.extend(_scan_one(recipient, dry_run=dry_run))
         except Exception as exc:  # 单个收件人失败不影响其他人

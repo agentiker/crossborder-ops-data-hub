@@ -590,3 +590,32 @@ class StockAlertState(Base):
 
     def __repr__(self):
         return f"<StockAlertState(state_key={self.state_key})>"
+
+
+class AlertRecipient(Base):
+    """主动告警收件人（监控巡检的投递对象）——RECIPIENTS 从代码迁 DB（plan/09 Phase 6）。
+
+    每行 = 一个租户(account_id)下的一个飞书用户(open_id)收某范围(scope_key)的告警。
+    scope_key=None → 本租户全量范围（resolve_filters 收口为本租户可见店并集）。
+    告警 flow 按本表 is_active 行投递；扫描用 (account_id, scope_key) 隔离取数。
+    主键 (channel, account_id, open_id) 与 user_roles / 去重表对齐。
+    """
+
+    __tablename__ = "alert_recipients"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    channel = Column(String(16), nullable=False, default="feishu", index=True)
+    account_id = Column(String(64), nullable=False, index=True)  # ecom-app / ecom-app-gtl
+    open_id = Column(String(64), nullable=False, index=True)  # 飞书用户 ou_xxx
+    scope_key = Column(String(64), nullable=True)  # None = 本租户全量范围
+    is_active = Column(Boolean, nullable=False, default=True)
+    note = Column(String(200), nullable=True)  # 备注（如姓名/岗位）
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("channel", "account_id", "open_id", name="uq_alert_recipient"),
+    )
+
+    def __repr__(self):
+        return f"<AlertRecipient(account={self.account_id}, open_id={self.open_id})>"
