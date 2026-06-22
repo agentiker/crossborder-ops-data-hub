@@ -357,12 +357,15 @@ class TikTokShopClient(BaseAPIClient):
 
     # ── 商品（product/202309）──────────────────────────────────────────────
 
-    def iter_products(self, page_size: int = 100):
+    def iter_products(self, page_size: int = 100, status: str | None = "ACTIVATE"):
         """翻页拉取商品列表（POST /product/202309/products/search）。
 
-        每页 yield data 段（含 products[]、next_page_token）。空 body 即枚举全店
-        （status 默认 ALL）。page_size / page_token / shop_cipher 放 query 参与签名。
+        每页 yield data 段（含 products[]、next_page_token）。默认 status="ACTIVATE"
+        只拉在售商品（草稿/下架/冻结不返回，避免污染经营分析）；传 status=None 则发空
+        body 枚举全店（含全部状态）。status 在请求体里过滤，page_size / page_token /
+        shop_cipher 放 query 参与签名。
         """
+        body: dict = {"status": status} if status else {}
         page_token = None
         while True:
             params: dict = {"page_size": page_size}
@@ -371,7 +374,7 @@ class TikTokShopClient(BaseAPIClient):
             if page_token:
                 params["page_token"] = page_token
             result = self.request(
-                "POST", "/product/202309/products/search", params=params, data={}
+                "POST", "/product/202309/products/search", params=params, data=body
             )
             data = result.get("data", {})
             yield data
@@ -379,10 +382,15 @@ class TikTokShopClient(BaseAPIClient):
             if not page_token:
                 break
 
-    def list_products(self, page_size: int = 100) -> list[dict]:
-        """枚举全店商品，返回 products[] 合并列表（每项含 id、title、skus）。"""
+    def list_products(
+        self, page_size: int = 100, status: str | None = "ACTIVATE"
+    ) -> list[dict]:
+        """枚举全店商品，返回 products[] 合并列表（每项含 id、title、skus）。
+
+        默认只返回 ACTIVATE 在售商品；传 status=None 拉全量（含草稿/下架）。
+        """
         products: list[dict] = []
-        for data in self.iter_products(page_size=page_size):
+        for data in self.iter_products(page_size=page_size, status=status):
             products.extend(data.get("products", []))
         return products
 

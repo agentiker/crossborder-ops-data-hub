@@ -45,6 +45,16 @@
 - **不要**用 `synced_at` 判断同步延迟（曾据此误判"07:59 的单 12 小时才入库、白天没抓到"，实际它在 UTC 01:23 / 印尼 08:23 就抓到了，延迟仅 ~24 分）。
 - **判首次入库 / 同步延迟的正确方法**：查 `raw_api_responses`（`resource='orders'`）——对照每条的 `request_body.create_time_ge/lt` 窗口 + `response_payload.pages[].orders[]` 是否含目标 `order_id` + `fetched_at`（MySQL=UTC）。每小时一条、窗口连续 overlap 1h，是判"哪次抓到/有没有断档"的铁证。
 
+### 商品 / 库存同步口径：只入库 ACTIVATE（2026-06-22 上线）
+
+代码：`flows/sync_inventory.py`、`platforms/tiktok_shop/client.py`、`services/{product,inventory}_store.py`
+
+- **在售口径 = 仅 `ACTIVATE`**：`products`/`inventory` 业务表只保留在售商品。草稿（`DRAFT`）、下架（`SELLER_DEACTIVATED` / `PLATFORM_DEACTIVATED`）、冻结、待审、已删等一律不进表（否则虚增商品数、压低动销率分母、误触断货告警）。需要审计非在售商品时查 `raw_api_responses`。
+- **源头过滤**：`products/search` 请求体传 `{"status": "ACTIVATE"}`（`client.iter_products` 默认值；传 `status=None` 才拉全量，仅排查用）。TikTok 后台默认也不显示草稿，故"后台商品数"应与表内 `ACTIVATE` 数一致。
+- **清退（prune）防僵尸**：只过滤不删会留"僵尸"——商品下架后 API 不再返回，旧行会永远停在 `ACTIVATE`+旧库存。故每次 sync 在 upsert 后清退本次未返回的旧行：`prune_products_not_in`（按 product_id 集合）、`prune_inventory_not_in`（按 SKU `idempotency_key` 集合，连带清退活跃商品被删的旧变体）。
+- **零数据护栏**：本次返回为空（API 异常）时 **跳过 prune**，绝不清空整店（对齐报告侧零数据/低单量护栏思路）。
+- **多租户安全**：prune 删除显式带全 scope 列（platform/account_id/shop_id/seller_id/country）锁定"本店"，不依赖 ORM 自动隔离兜底。
+
 ---
 
 ## 4. 经营报告口径（重点）
@@ -145,3 +155,4 @@
 | 2026-06-21 | 经营周报 `weekly_review` 上线（商品健康度视角 + 两种触发：定时 last_week 整周 / 实时 this_week intraday 周对周） | `web/routes/report.py`、`services/order_metrics.py` |
 | 2026-06-21 | 断货预警拆「两套口径」：告警仍销速模型；报告展示 `include_all=True` 全量按可售天数升序、无销量排末尾（见 §4.4） | `services/stock_metrics.py`、`web/routes/report.py` |
 | 2026-06-21 | 报告链接 TTL 默认延长到 7 天（纯链接推送场景），有效期文案按天/小时/分钟显示 | `.env`、`web/routes/data.py` |
+| 2026-06-22 | 商品/库存同步只入库 `ACTIVATE`（源头 status 过滤 + prune 清退非在售，防草稿/僵尸污染），见 §3 | `flows/sync_inventory.py`、`platforms/tiktok_shop/client.py`、`services/{product,inventory}_store.py` |

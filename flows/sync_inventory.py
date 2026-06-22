@@ -17,8 +17,8 @@ from core.domain import DomainInventoryItem
 from platforms.tiktok_shop.client import PLATFORM as TIKTOK_PLATFORM
 from platforms.tiktok_shop.client import TikTokShopClient
 from platforms.tiktok_shop.normalize import to_domain_inventory, to_domain_products
-from services.inventory_store import upsert_inventory_items
-from services.product_store import upsert_products
+from services.inventory_store import prune_inventory_not_in, upsert_inventory_items
+from services.product_store import prune_products_not_in, upsert_products
 from services.sync_state import record_raw_response, upsert_cursor
 
 RESOURCE = "inventory"
@@ -126,6 +126,18 @@ def save_products(
             account_id=account_id,
             raw_response_id=raw_record.id,
         )
+        # 清退本次未返回（非 ACTIVATE：草稿/下架等）的商品旧行，避免僵尸数据。
+        pruned = prune_products_not_in(
+            session,
+            [it.product_id for it in items],
+            platform=TIKTOK_PLATFORM,
+            country=country,
+            shop_id=shop_id,
+            seller_id=seller_id,
+            account_id=account_id,
+        )
+        if pruned:
+            print(f"清退非在售商品: {pruned} 个")
         session.commit()
         return count
     except Exception:
@@ -204,6 +216,18 @@ def save_to_db(
             account_id=account_id,
             raw_response_id=raw_record.id,
         )
+        # 清退本次未返回的 SKU 旧行（非在售商品的 SKU / 活跃商品被删的变体）。
+        pruned = prune_inventory_not_in(
+            session,
+            items,
+            platform=TIKTOK_PLATFORM,
+            country=country,
+            shop_id=shop_id,
+            seller_id=seller_id,
+            account_id=account_id,
+        )
+        if pruned:
+            print(f"清退非在售库存行: {pruned} 条")
         upsert_cursor(
             session,
             platform=TIKTOK_PLATFORM,
