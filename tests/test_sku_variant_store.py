@@ -53,6 +53,19 @@ def test_parse_chinese_attribute_names():
     assert v.size == "M"
 
 
+def test_parse_indonesian_attribute_names():
+    """实测 TikTok 印尼店属性名为 'Warna'(颜色)/'ukuran kasur'(尺寸)，须命中。回归 hp 真数据 bug。"""
+    details = {"p1": _detail("Kasur", [
+        _sku("s1", [
+            {"name": "Warna", "value_name": "Hitam"},
+            {"name": "ukuran kasur", "value_name": "90 x 200 x 30cm"},
+        ]),
+    ])}
+    v = parse_sku_variants(details)[0]
+    assert v.color == "Hitam"
+    assert v.size == "90 x 200 x 30cm"
+
+
 def test_parse_missing_attributes_default_none():
     details = {"p1": _detail("无属性品", [_sku("s1", [])])}
     v = parse_sku_variants(details)[0]

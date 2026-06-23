@@ -12,9 +12,10 @@ from models.base_models import SkuVariant
 from services.product_store import scope_filters
 from services.scoping import build_sku_variant_key
 
-# 属性名匹配关键词（大小写不敏感）：命中即取该属性的 value_name 作颜色/尺码
-_COLOR_KEYS = ("color", "colour", "颜色", "色")
-_SIZE_KEYS = ("size", "尺码", "尺寸", "码")
+# 属性名匹配关键词（大小写不敏感，子串命中即取该属性 value_name 作颜色/尺码）。
+# 含印尼语：warna=颜色、ukuran=尺寸（实测 TikTok 印尼店属性名为 'Warna'/'ukuran kasur' 等）。
+_COLOR_KEYS = ("color", "colour", "warna", "颜色", "色")
+_SIZE_KEYS = ("size", "ukuran", "尺码", "尺寸", "码")
 
 
 def _match_attr(name: Optional[str], keys: tuple[str, ...]) -> bool:
