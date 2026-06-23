@@ -16,6 +16,7 @@ import logging
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from core.tenancy import set_current_account
 from core.timezone import previous_window, resolve_period
 from services.ad_metrics import get_ad_spend_summary, get_roas
 from services.order_metrics import get_gmv_summary
@@ -66,6 +67,9 @@ def _scope_options(perm: UserPermission) -> list[dict]:
 
 async def _collect(perm: UserPermission, period: str, requested_scope_key: str) -> dict:
     """按权限闸夹紧范围后取看板各块数据。越界由 resolve_authorized_scope 抛 ScopeError。"""
+    # /board 渲染链路不走 X-Account-Id 注入；复用 data.py 路由前先把当前老板的租户写进 context，
+    # 让下游 _resolve_scope / ORM 自动过滤按同一 account_id 生效。
+    set_current_account(perm.account_id)
     filters = resolve_authorized_scope(
         perm, requested_scope_key=requested_scope_key or None
     )

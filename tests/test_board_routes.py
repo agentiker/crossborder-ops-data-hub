@@ -3,12 +3,17 @@
 只测路由层：登录态守卫（无 cookie→302、未登记→403）、权限闸越界→403。
 取数 _collect 的范围夹紧逻辑已在 test_user_authz 覆盖，这里 monkeypatch 掉以隔离路由行为。
 """
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 
 from core.config import settings
+from core.tenancy import current_account, set_current_account
 from services.scope_resolution import ScopeError
+from services.scope_resolution import ScopeFilters
 from services.user_authz import UserPermission
+from web.routes import board as board_routes
 from web import web_security
 from web.app import app
 from web.web_security import require_web_user
@@ -114,3 +119,77 @@ def test_board_data_boss_ok_json(monkeypatch):
     r = TestClient(app).get("/board/data")
     assert r.status_code == 200
     assert r.json()["scope"] == "全部范围"
+
+
+def test_collect_sets_current_account_before_nested_data_calls(monkeypatch):
+    perm = UserPermission(
+        open_id="ou_gtl_boss",
+        role="boss",
+        allowed_scope_key=None,
+        channel="feishu",
+        account_id="ecom-app-gtl",
+    )
+    set_current_account(None)
+
+    monkeypatch.setattr(
+        board_routes,
+        "resolve_authorized_scope",
+        lambda perm, requested_scope_key=None: ScopeFilters(
+            platform=None,
+            country=None,
+            shop_ids=["7494734967204644284"],
+            scope_key=None,
+            display_text="全部范围",
+        ),
+    )
+
+    async def fake_get_overview(**kwargs):
+        assert current_account() == "ecom-app-gtl"
+        return {"scope": "全部范围", "orders": {}, "inventory": {}}
+
+    async def fake_get_orders_trend(**kwargs):
+        assert current_account() == "ecom-app-gtl"
+        return {"points": [], "window_label": "近 30 天"}
+
+    async def fake_get_orders_top_skus(**kwargs):
+        assert current_account() == "ecom-app-gtl"
+        return {"items": []}
+
+    async def fake_get_low_stock(**kwargs):
+        assert current_account() == "ecom-app-gtl"
+        return {"items": [], "buckets": {}}
+
+    async def fake_get_fulfillments_pending(**kwargs):
+        assert current_account() == "ecom-app-gtl"
+        return {"items": [], "buckets": {}}
+
+    monkeypatch.setattr(board_routes, "get_overview", fake_get_overview)
+    monkeypatch.setattr(board_routes, "get_orders_trend", fake_get_orders_trend)
+    monkeypatch.setattr(board_routes, "get_orders_top_skus", fake_get_orders_top_skus)
+    monkeypatch.setattr(board_routes, "get_low_stock", fake_get_low_stock)
+    monkeypatch.setattr(board_routes, "get_fulfillments_pending", fake_get_fulfillments_pending)
+    monkeypatch.setattr(
+        board_routes,
+        "get_gmv_summary",
+        lambda **kwargs: {
+            "gmv": 0,
+            "order_count": 0,
+            "units_sold": 0,
+            "avg_order_value": 0,
+        },
+    )
+    monkeypatch.setattr(
+        board_routes,
+        "get_ad_spend_summary",
+        lambda **kwargs: {
+            "total_ad_spend": 0,
+            "gmv_max_fee": 0,
+            "tap_commission": 0,
+            "affiliate_commission": 0,
+            "currency": "IDR",
+        },
+    )
+    monkeypatch.setattr(board_routes, "get_roas", lambda **kwargs: {"roas": None})
+
+    data = asyncio.run(board_routes._collect(perm, "last_30d", ""))
+    assert data["scope"] == "全部范围"
