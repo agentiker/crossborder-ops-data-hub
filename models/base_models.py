@@ -374,6 +374,63 @@ class FactAdSpendDaily(Base):
         return f"<FactAdSpendDaily(scope_key={self.scope_key}, total_ad_spend={self.total_ad_spend})>"
 
 
+class FactFinanceTransaction(Base):
+    """交易级结算费用拆项事实表（TTS Finance 202501 statement_transactions 全字段）。
+
+    粒度 = 单笔结算交易（含结算/调整 adjustment/预留 reserve），按交易 `id` 幂等。一个
+    order 可对应多笔交易，故订单级/日级口径靠 GROUP BY order_id / metric_date 聚合得到，
+    本表不做合并以免丢失交易粒度。与 fact_ad_spend_daily 解耦并存：日级广告费走旧表（现有
+    日报/利润依赖不变），本表补全 51 项扣点子项 + 税拆项 + 交易级汇总，供 #4 扣点监控、#3
+    利润的扣点项取数。
+
+    提升列 = 高频查询的头部字段（结算/营收/总费税/运费/调整 + 主佣金/引荐费/交易手续费 +
+    三项广告费）；其余 48 项 fee 子项与全部 tax 子项以非零值存入 fee_breakdown/tax_breakdown
+    JSON，平台新增费种自动兜底入库、无需改表。所有金额单位 = 行 currency（IDR 等），换算留
+    阶段3 汇率服务。
+    """
+
+    __tablename__ = "fact_finance_transaction"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String(32), nullable=False, index=True)
+    country = Column(String(16), nullable=False, default="GLOBAL", index=True)
+    shop_id = Column(String(64), index=True)
+    seller_id = Column(String(64), index=True)
+    account_id = Column(String(64), index=True)
+    scope_key = Column(String(500), nullable=False, unique=True, index=True)
+    # 交易级标识：transaction_id 全局唯一（幂等键来源）；order_id 用于聚合到订单/日
+    transaction_id = Column(String(64), nullable=False, index=True)
+    order_id = Column(String(64), index=True)
+    adjustment_id = Column(String(64), index=True)  # 调整类交易才有
+    metric_date = Column(Date, nullable=False, index=True)  # order_create_time 归印尼业务日
+    currency = Column(String(8))
+    # ── 交易级汇总（fee_tax_amount = 全部费税合计；settlement = 实际结算额）──
+    settlement_amount = Column(Numeric(18, 4), nullable=False, default=0)
+    revenue_amount = Column(Numeric(18, 4), nullable=False, default=0)
+    fee_tax_amount = Column(Numeric(18, 4), nullable=False, default=0)
+    shipping_cost_amount = Column(Numeric(18, 4), nullable=False, default=0)
+    adjustment_amount = Column(Numeric(18, 4), nullable=False, default=0)
+    # ── 头部扣点（#4 扣点率/告警直接取）──
+    platform_commission_amount = Column(Numeric(18, 4), nullable=False, default=0)  # 主佣金
+    referral_fee_amount = Column(Numeric(18, 4), nullable=False, default=0)  # 引荐费
+    transaction_fee_amount = Column(Numeric(18, 4), nullable=False, default=0)  # 交易手续费
+    # ── 三项广告费（与 ad_spend_daily 同源，便于利润 join）──
+    gmv_max_fee = Column(Numeric(18, 4), nullable=False, default=0)
+    tap_commission = Column(Numeric(18, 4), nullable=False, default=0)
+    affiliate_commission = Column(Numeric(18, 4), nullable=False, default=0)
+    # ── 全量兜底：fee/tax 的所有非零子项原样存 JSON（string→string，保真）──
+    fee_breakdown = Column(JSON)
+    tax_breakdown = Column(JSON)
+    raw_response_id = Column(Integer, nullable=True)
+    calculated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return (
+            f"<FactFinanceTransaction(transaction_id={self.transaction_id}, "
+            f"order_id={self.order_id}, settlement={self.settlement_amount})>"
+        )
+
+
 class Alert(Base):
     """Business alert generated from trusted metrics."""
 

@@ -1,11 +1,14 @@
-"""广告消耗同步 flow（TTS Finance 结算口径）。
+"""广告消耗 + 结算费用拆项同步 flow（TTS Finance 结算口径）。
 
 增量策略：按结算单 `statement_time` 窗口拉取。游标记录上次窗口结束时间，下次从该时间回退
 overlap（结算有滞后，回看放长）。窗口内的每个结算单再翻页取其交易明细
-（202501 statement_transactions），把每笔交易的三项广告费按 order_create_time 归印尼
-业务日累加，按 (业务日, currency) 分组写 fact_ad_spend_daily（scope_key 幂等 upsert）。
+（202501 statement_transactions）。同一份交易明细落两份（共用 raw_response 审计行）：
+  1. 三项广告费按 order_create_time 归印尼业务日累加，按 (业务日, currency) 分组写
+     fact_ad_spend_daily（旧，日报/利润依赖不变）；
+  2. 每笔交易的全部费用拆项（51 项 fee 子项 + tax 拆项 + 交易级汇总）解析成交易级行写
+     fact_finance_transaction（新，供 #4 扣点监控 / #3 利润扣点项取数），见 order_fee_store。
 
-三项广告费（均为 string）：
+三项广告费（均为 string，在 fee_tax_breakdown.fee 下）：
   gmv_max_ad_fee_amount       —— GMV Max 广告费
   tap_shop_ads_commission     —— TAP 达人广告佣金
   affiliate_ads_commission_amount —— 联盟广告佣金
@@ -26,6 +29,7 @@ from flows.network import log_egress_ip
 from platforms.tiktok_shop.client import PLATFORM as TIKTOK_PLATFORM
 from platforms.tiktok_shop.client import TikTokShopClient
 from services.ad_spend_store import upsert_ad_spend_daily
+from services.order_fee_store import parse_order_fees, upsert_finance_transactions
 from services.sync_state import get_cursor, record_raw_response, upsert_cursor
 
 RESOURCE = "ad_spend"
@@ -194,10 +198,17 @@ def aggregate_ad_spend(transaction_pages: list[dict[str, Any]]) -> list[dict]:
     return list(buckets.values())
 
 
+@task(name="parse-order-fees")
+def parse_order_fees_task(transaction_pages: list[dict[str, Any]]) -> list[dict]:
+    """把每笔交易的全部费用拆项解析成交易级行（不聚合，保交易粒度）。委托 order_fee_store。"""
+    return parse_order_fees(transaction_pages)
+
+
 @task(name="save-ad-spend-to-db", retries=2, retry_delay_seconds=30)
 def save_ad_spend_to_db(
     transaction_pages: list[dict[str, Any]],
     rows: list[dict],
+    fee_rows: list[dict],
     *,
     statement_time_ge: int,
     statement_time_lt: int,
@@ -206,7 +217,11 @@ def save_ad_spend_to_db(
     seller_id: Optional[str] = None,
     account_id: Optional[str] = None,
 ) -> int:
-    """单事务写入 MySQL（幂等 upsert）并记录 raw payload 与 cursor。"""
+    """单事务写入 MySQL（幂等 upsert）并记录 raw payload 与 cursor。
+
+    同一事务里写两份：日级广告费（fact_ad_spend_daily，旧）+ 交易级费用拆项
+    （fact_finance_transaction，新），共用同一 raw_response 审计行。
+    """
     session = SessionLocal()
     try:
         raw_record = record_raw_response(
@@ -243,6 +258,16 @@ def save_ad_spend_to_db(
             account_id=account_id,
             raw_response_id=raw_record.id,
         )
+        fee_count = upsert_finance_transactions(
+            session,
+            fee_rows,
+            platform=TIKTOK_PLATFORM,
+            country=country,
+            shop_id=shop_id,
+            seller_id=seller_id,
+            account_id=account_id,
+            raw_response_id=raw_record.id,
+        )
         upsert_cursor(
             session,
             platform=TIKTOK_PLATFORM,
@@ -252,7 +277,11 @@ def save_ad_spend_to_db(
             account_id=account_id,
             resource=RESOURCE,
             window_end=datetime.fromtimestamp(statement_time_lt, tz=timezone.utc),
-            extra={"row_count": row_count, "page_count": len(transaction_pages)},
+            extra={
+                "row_count": row_count,
+                "fee_row_count": fee_count,
+                "page_count": len(transaction_pages),
+            },
         )
         session.commit()
         return row_count
@@ -293,9 +322,11 @@ def sync_ad_spend_flow(
         account_id=account_id,
     )
     rows = aggregate_ad_spend(transaction_pages)
+    fee_rows = parse_order_fees_task(transaction_pages)
     row_count = save_ad_spend_to_db(
         transaction_pages,
         rows,
+        fee_rows,
         statement_time_ge=statement_time_ge,
         statement_time_lt=statement_time_lt,
         country=country,
@@ -303,7 +334,7 @@ def sync_ad_spend_flow(
         seller_id=seller_id,
         account_id=account_id,
     )
-    print(f"广告消耗同步完成: {row_count} 个业务日分组")
+    print(f"广告消耗同步完成: {row_count} 个业务日分组 + {len(fee_rows)} 笔交易级费用拆项")
     return row_count
 
 
