@@ -44,6 +44,17 @@ def test_intransit_connected_no_warning():
     assert "在途按 0 估" not in msg
 
 
+def test_long_name_keeps_color_size_visible():
+    """印尼语长商品名不能把色/码挤掉——采购单据色/码下单。回归 hp 真数据。"""
+    long_name = "MossWood Kasur Spring Bed Orthopedic Premium Anti Gravity"
+    msg = build_replenishment_message(
+        [_row("s1", 12, name=long_name, color=None, size="140 x 200 x 30cm", units=8, avail=0)],
+        **_KW,
+    )
+    assert "140 x 200 x 30cm" in msg  # 尺寸必须出现
+    assert "补 12 件" in msg
+
+
 def test_super_hot_flagged():
     msg = build_replenishment_message([_row("s1", 40, is_super_hot=True)], **_KW)
     assert "🔥" in msg

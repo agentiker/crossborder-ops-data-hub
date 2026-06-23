@@ -10,16 +10,23 @@ from typing import Optional
 _TOP_ITEMS = 15  # 文案最多列几条，其余汇总
 
 
+_NAME_MAX = 24  # 仅截商品名；色/码永远完整保留（采购单据此下单，不能丢）
+
+
 def _fmt_item(row: dict) -> str:
-    """单条：'款号 / 颜色 / 尺码：补 N 件（销S·存K[·途T]）'。"""
-    parts = [row.get("product_name") or row.get("seller_sku") or row.get("sku_id") or "未知"]
+    """单条：'款号 / 颜色 / 尺码：补 N 件（销S·存K[·途T]）'。
+
+    印尼语商品名常很长，只截名字本身、永远保留色/码——否则运营不知补哪个变体。
+    """
+    name = row.get("product_name") or row.get("seller_sku") or row.get("sku_id") or "未知"
+    if len(name) > _NAME_MAX:
+        name = name[:_NAME_MAX] + "…"
+    parts = [name]
     if row.get("color"):
         parts.append(str(row["color"]))
     if row.get("size"):
         parts.append(str(row["size"]))
     label = " / ".join(parts)
-    if len(label) > 32:
-        label = label[:32] + "…"
     basis = f"销{row.get('units', 0)}·存{row.get('available', 0)}"
     if row.get("intransit"):
         basis += f"·途{row['intransit']}"
