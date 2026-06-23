@@ -18,6 +18,7 @@ from models.base_models import (
     DailyProfit,
     FeeRateAlertState,
     FulfillmentAlertState,
+    HotsellAlertState,
     StockAlertState,
 )
 
@@ -281,6 +282,68 @@ def upsert_fee_rate_alert_state(
         result = existing
     else:
         result = FeeRateAlertState(**values)
+        session.add(result)
+    session.flush()
+    return result
+
+
+def get_hotsell_alert_state(
+    session, *, alert_type: str, account_id: Optional[str], scope_key: Optional[str]
+) -> Optional[HotsellAlertState]:
+    """读某收件人范围的爆单当日去重状态；无则 None。"""
+    state_key = build_alert_state_key(
+        alert_type=alert_type, account_id=account_id, scope_key=scope_key
+    )
+    return session.query(HotsellAlertState).filter_by(state_key=state_key).first()
+
+
+def get_hotsell_reported_ids(state: Optional[HotsellAlertState], today: date) -> list[str]:
+    """当天已报商品集合；state 为空或 report_date≠今天（跨天）按空集处理。"""
+    import json
+
+    if state is None or state.report_date != today or not state.reported_product_ids:
+        return []
+    try:
+        data = json.loads(state.reported_product_ids)
+    except (ValueError, TypeError):
+        return []
+    return [str(s) for s in data] if isinstance(data, list) else []
+
+
+def upsert_hotsell_alert_state(
+    session,
+    *,
+    alert_type: str,
+    account_id: Optional[str],
+    scope_key: Optional[str],
+    report_date: date,
+    reported_product_ids: list[str],
+    mark_sent: bool = False,
+) -> HotsellAlertState:
+    """写回爆单当日去重游标（report_date=今天，reported_product_ids 序列化 JSON）。"""
+    import json
+    from datetime import datetime, timezone
+
+    state_key = build_alert_state_key(
+        alert_type=alert_type, account_id=account_id, scope_key=scope_key
+    )
+    existing = session.query(HotsellAlertState).filter_by(state_key=state_key).first()
+    values = {
+        "state_key": state_key,
+        "alert_type": alert_type,
+        "account_id": account_id,
+        "scope_key": scope_key,
+        "report_date": report_date,
+        "reported_product_ids": json.dumps(sorted(reported_product_ids)),
+    }
+    if mark_sent:
+        values["last_sent_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
+    if existing:
+        for key, value in values.items():
+            setattr(existing, key, value)
+        result = existing
+    else:
+        result = HotsellAlertState(**values)
         session.add(result)
     session.flush()
     return result

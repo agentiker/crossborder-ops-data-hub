@@ -673,6 +673,29 @@ class FeeRateAlertState(Base):
         return f"<FeeRateAlertState(state_key={self.state_key}, last_window_end={self.last_window_end})>"
 
 
+class HotsellAlertState(Base):
+    """爆单提醒的当日去重状态（每「收件人 × 范围」一行，记当天已报爆单的商品集合）。
+
+    report_date 标记这批 reported_product_ids 属于哪个业务日；跨天后 report_date 不等于今天，
+    去重集按空处理（新的一天重新计），同一商品当天只在首次破阈时报一次。
+    """
+
+    __tablename__ = "hotsell_alert_state"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    state_key = Column(String(300), nullable=False, unique=True, index=True)
+    alert_type = Column(String(64), nullable=False, default="hotsell", index=True)
+    account_id = Column(String(64), index=True)
+    scope_key = Column(String(64), nullable=True)
+    report_date = Column(Date)  # reported_product_ids 所属业务日
+    reported_product_ids = Column(Text, nullable=False, default="[]")  # 当日已报商品（JSON 数组）
+    last_sent_at = Column(DateTime)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<HotsellAlertState(state_key={self.state_key}, report_date={self.report_date})>"
+
+
 class AlertRecipient(Base):
     """主动告警收件人（监控巡检的投递对象）——RECIPIENTS 从代码迁 DB（plan/09 Phase 6）。
 

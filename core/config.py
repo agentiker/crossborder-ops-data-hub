@@ -173,6 +173,10 @@ class Settings(BaseSettings):
     fee_rate_alert_abs_pct: float = 0.03  # 绝对升幅阈值（0.03 = 费率高 3 个百分点）
     fee_rate_min_gmv: float = 10_000_000.0  # 窗口 GMV 护栏（默认按 IDR；多币种各自比较）
 
+    # 爆单提醒：某商品当日（印尼业务日，截至 now 的 intraday）已付款销量 ≥ 阈值即提醒。
+    # 当日去重：同一商品同一天只报一次；跨天自动重置（见 services/hotsell_alerts）。
+    hotsell_daily_units_threshold: int = 50
+
     class Config:
         env_file = ".env"
         env_nested_delimiter = "__"

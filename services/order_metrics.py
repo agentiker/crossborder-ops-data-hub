@@ -235,6 +235,50 @@ def get_units_by_sku(
         session.close()
 
 
+def get_units_by_product(
+    *,
+    start_date: date,
+    end_date: date,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_id: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
+    session=None,
+) -> dict[str, dict]:
+    """窗口内各商品的已付款销量（line_item 条数），返回 {product_id: {units, product_name}}。
+
+    口径同 get_units_by_sku 但按 product_id 聚合（爆单提醒用）。product_name 取该商品任一
+    line_item 的名称。无销量商品不在返回中。
+    """
+    start_dt, end_dt = _paid_window(start_date, end_date)
+    own_session = session is None
+    session = session or SessionLocal()
+    try:
+        query = (
+            session.query(
+                OrderLineItem.product_id,
+                func.count(OrderLineItem.line_item_id),
+                func.max(OrderLineItem.product_name),
+            )
+            .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
+            .filter(
+                OrderHeader.paid_time.isnot(None),
+                OrderHeader.paid_time >= start_dt,
+                OrderHeader.paid_time <= end_dt,
+            )
+        )
+        query = _scope_filters(query, OrderHeader, platform, country, shop_id, shop_ids)
+        query = query.group_by(OrderLineItem.product_id)
+        return {
+            pid: {"units": int(units or 0), "product_name": name}
+            for pid, units, name in query.all()
+            if pid
+        }
+    finally:
+        if own_session:
+            session.close()
+
+
 def get_gmv_trend(
     *,
     start_date: date,

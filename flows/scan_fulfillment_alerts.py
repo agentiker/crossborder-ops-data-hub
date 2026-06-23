@@ -26,17 +26,21 @@ from prefect import flow
 from core.config import settings
 from core.db import SessionLocal
 from core.timezone import business_today
-from services import fee_rate_alerts, stock_alerts
+from services import fee_rate_alerts, hotsell_alerts, stock_alerts
 from services.fee_rate_metrics import get_settled_fee_rate
 from services.fulfillment_alerts import ALERT_TYPE, build_decision
 from services.fulfillment_metrics import get_pending_fulfillments
+from services.order_metrics import get_units_by_product
 from services.metrics_store import (
     get_fee_rate_alert_state,
     get_fulfillment_alert_state,
+    get_hotsell_alert_state,
+    get_hotsell_reported_ids,
     get_stock_alert_state,
     get_stock_reported_skus,
     upsert_fee_rate_alert_state,
     upsert_fulfillment_alert_state,
+    upsert_hotsell_alert_state,
     upsert_stock_alert_state,
 )
 from services.stock_metrics import get_stock_risk
@@ -319,8 +323,62 @@ def _scan_fee_rate(session, *, account, open_id, scope, scope_id, dry_run: bool)
     return f"{account}/扣点率: 推送失败（游标不更新，下轮重试）"
 
 
+def _scan_hotsell(session, *, account, open_id, scope, scope_id, dry_run: bool) -> str:
+    """爆单规则：某商品当日已付款销量破阈值即提醒。当日去重。返回一行状态。"""
+    today = business_today()
+    units_by_product = get_units_by_product(
+        start_date=today, end_date=today,
+        platform=scope.platform, country=scope.country, shop_ids=scope.shop_ids or None,
+        session=session,
+    )
+    prev = get_hotsell_alert_state(
+        session, alert_type=hotsell_alerts.ALERT_TYPE, account_id=account, scope_key=scope_id
+    )
+    prev_ids = get_hotsell_reported_ids(prev, today)
+
+    decision = hotsell_alerts.build_decision(
+        units_by_product=units_by_product,
+        threshold=settings.hotsell_daily_units_threshold,
+        prev_reported_ids=prev_ids,
+        scope_display=scope.display_text,
+        date_label=f"{today.month}/{today.day}",
+    )
+
+    if decision.should_alert:
+        if dry_run:
+            print(f"[alert][dry-run] 爆单 → {account}/{open_id}:\n{decision.message}")
+            return f"{account}/爆单: 待推送 新爆款={len(decision.new_products)}（dry-run）"
+        sent = send_feishu_message(account=account, open_id=open_id, text=decision.message)
+        if sent:
+            upsert_hotsell_alert_state(
+                session,
+                alert_type=hotsell_alerts.ALERT_TYPE,
+                account_id=account,
+                scope_key=scope_id,
+                report_date=today,
+                reported_product_ids=decision.new_reported_ids,
+                mark_sent=True,
+            )
+            session.commit()
+            return f"{account}/爆单: 已推送 新爆款={len(decision.new_products)}"
+        return f"{account}/爆单: 推送失败（游标不更新，下轮重试）"
+
+    # 不推：当日破阈集合有变化则更新游标（保持当天状态）
+    if not dry_run and sorted(decision.new_reported_ids) != sorted(prev_ids):
+        upsert_hotsell_alert_state(
+            session,
+            alert_type=hotsell_alerts.ALERT_TYPE,
+            account_id=account,
+            scope_key=scope_id,
+            report_date=today,
+            reported_product_ids=decision.new_reported_ids,
+        )
+        session.commit()
+    return f"{account}/爆单: 不推送 当日破阈={len(decision.new_reported_ids)}"
+
+
 def _scan_one(recipient: dict, *, dry_run: bool) -> list[str]:
-    """评估一个收件人的全部告警规则（待发货 + 库存 + 扣点率）。返回各规则状态行列表。"""
+    """评估一个收件人的全部告警规则（待发货 + 库存 + 扣点率 + 爆单）。返回各规则状态行列表。"""
     from core.tenancy import set_current_account
 
     account = recipient["account"]
@@ -334,7 +392,7 @@ def _scan_one(recipient: dict, *, dry_run: bool) -> list[str]:
     session = SessionLocal()
     try:
         lines = []
-        for rule in (_scan_fulfillment, _scan_stock, _scan_fee_rate):
+        for rule in (_scan_fulfillment, _scan_stock, _scan_fee_rate, _scan_hotsell):
             try:
                 lines.append(
                     rule(
