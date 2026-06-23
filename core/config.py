@@ -177,6 +177,13 @@ class Settings(BaseSettings):
     # 当日去重：同一商品同一天只报一次；跨天自动重置（见 services/hotsell_alerts）。
     hotsell_daily_units_threshold: int = 50
 
+    # 补货公式默认参数（运营可经 replenishment_config 表按范围覆盖，见 services/replenishment_config）。
+    # 目标备货 = 近 velocity_days 天销量 × 系数；普通 SKU 用 normal、超级爆品(人工标记)用 superhot。
+    # 补货量 = 目标备货 − 可用库存 − 在途，≤0 剔除。
+    replenish_velocity_days: int = 30
+    replenish_normal_multiplier: float = 1.5
+    replenish_superhot_multiplier: float = 2.0
+
     class Config:
         env_file = ".env"
         env_nested_delimiter = "__"

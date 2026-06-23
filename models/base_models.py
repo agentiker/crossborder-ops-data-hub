@@ -728,6 +728,49 @@ class HotsellAlertState(Base):
         return f"<HotsellAlertState(state_key={self.state_key}, report_date={self.report_date})>"
 
 
+class ReplenishmentConfig(Base):
+    """补货系数配置（每「租户 × 范围」一行；缺行则用 settings 默认）。运营可改，不硬编码。
+
+    config_key = account_id|scope_key（scope_key 空=租户级默认）。velocity_days/系数 覆盖
+    settings.replenish_* 默认；超级爆品名单另见 SuperHotProduct 表。
+    """
+
+    __tablename__ = "replenishment_config"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    config_key = Column(String(300), nullable=False, unique=True, index=True)
+    account_id = Column(String(64), index=True)
+    scope_key = Column(String(64), nullable=True)
+    velocity_days = Column(Integer)  # None=用默认
+    normal_multiplier = Column(Numeric(6, 3))
+    superhot_multiplier = Column(Numeric(6, 3))
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<ReplenishmentConfig(config_key={self.config_key})>"
+
+
+class SuperHotProduct(Base):
+    """超级爆品名单（人工标记的款，补货量用 superhot 系数 ×）。运营可配。
+
+    一行 = 一个租户(account_id)下的一个商品(product_id)被标超级爆品。is_active=False 即撤标。
+    超级爆品按「款(product)」标记 → 该款全部 SKU 补货都用 superhot 系数。
+    """
+
+    __tablename__ = "super_hot_products"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(String(64), index=True)
+    product_id = Column(String(64), nullable=False, index=True)
+    mark_key = Column(String(300), nullable=False, unique=True, index=True)  # account_id|product_id
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    note = Column(String(500))
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<SuperHotProduct(account_id={self.account_id}, product_id={self.product_id})>"
+
+
 class AlertRecipient(Base):
     """主动告警收件人（监控巡检的投递对象）——RECIPIENTS 从代码迁 DB（plan/09 Phase 6）。
 
