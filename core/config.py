@@ -159,6 +159,20 @@ class Settings(BaseSettings):
     stock_cover_warning_days: int = 7
     stock_velocity_window_days: int = 7
 
+    # 扣点率异常告警（结算口径）。费率 = Σ总扣费(fee_tax_amount) ÷ Σ已结算订单 GMV(total_amount)，
+    # 按订单 join、按 currency 分组（同币种内比，跨币种不混算）。仅纳入已付款且已有结算交易的订单。
+    # 结算滞后：近 fee_rate_settle_lag_days 天订单结算未完成 → 评估/基准窗口都从更早处取，避免虚低。
+    #   评估窗口 = [今天 − lag − eval_window_days + 1, 今天 − lag]（最近一段已结算完的天）
+    #   基准窗口 = 其前 fee_rate_baseline_days 天的同口径费率
+    # 仅当费率「上升」且 相对偏移 > rel_pct 且 绝对偏移 > abs_pct（pct 点）才告警（下降是好事不报）。
+    # 任一窗口 GMV < min_gmv（同币种）或历史不足 → 优雅跳过（低基数/冷启动护栏，不误报）。
+    fee_rate_settle_lag_days: int = 14
+    fee_rate_eval_window_days: int = 7
+    fee_rate_baseline_days: int = 28
+    fee_rate_alert_rel_pct: float = 0.15  # 相对升幅阈值（0.15 = 比基准高 15%）
+    fee_rate_alert_abs_pct: float = 0.03  # 绝对升幅阈值（0.03 = 费率高 3 个百分点）
+    fee_rate_min_gmv: float = 10_000_000.0  # 窗口 GMV 护栏（默认按 IDR；多币种各自比较）
+
     class Config:
         env_file = ".env"
         env_nested_delimiter = "__"

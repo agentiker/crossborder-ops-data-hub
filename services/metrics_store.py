@@ -13,7 +13,13 @@ from analytics.profit_alerts import (
     build_profit_scope_key,
     calculate_gross_profit,
 )
-from models.base_models import Alert, DailyProfit, FulfillmentAlertState, StockAlertState
+from models.base_models import (
+    Alert,
+    DailyProfit,
+    FeeRateAlertState,
+    FulfillmentAlertState,
+    StockAlertState,
+)
 
 
 def upsert_daily_profit(session, record: ProfitRecordInput) -> DailyProfit:
@@ -227,6 +233,54 @@ def upsert_stock_alert_state(
         result = existing
     else:
         result = StockAlertState(**values)
+        session.add(result)
+    session.flush()
+    return result
+
+
+def get_fee_rate_alert_state(
+    session, *, alert_type: str, account_id: Optional[str], scope_key: Optional[str]
+) -> Optional[FeeRateAlertState]:
+    """读某收件人范围的扣点率告警去重状态；无则 None。"""
+    state_key = build_alert_state_key(
+        alert_type=alert_type, account_id=account_id, scope_key=scope_key
+    )
+    return session.query(FeeRateAlertState).filter_by(state_key=state_key).first()
+
+
+def upsert_fee_rate_alert_state(
+    session,
+    *,
+    alert_type: str,
+    account_id: Optional[str],
+    scope_key: Optional[str],
+    last_window_end: date,
+    last_rate: Optional[float] = None,
+    mark_sent: bool = False,
+) -> FeeRateAlertState:
+    """写回扣点率告警去重游标（last_window_end=本次已告警的评估窗口结束日）。"""
+    from datetime import datetime, timezone
+
+    state_key = build_alert_state_key(
+        alert_type=alert_type, account_id=account_id, scope_key=scope_key
+    )
+    existing = session.query(FeeRateAlertState).filter_by(state_key=state_key).first()
+    values = {
+        "state_key": state_key,
+        "alert_type": alert_type,
+        "account_id": account_id,
+        "scope_key": scope_key,
+        "last_window_end": last_window_end,
+        "last_rate": Decimal(str(last_rate)) if last_rate is not None else None,
+    }
+    if mark_sent:
+        values["last_sent_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
+    if existing:
+        for key, value in values.items():
+            setattr(existing, key, value)
+        result = existing
+    else:
+        result = FeeRateAlertState(**values)
         session.add(result)
     session.flush()
     return result

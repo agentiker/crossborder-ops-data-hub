@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -25,13 +25,17 @@ from prefect import flow
 
 from core.config import settings
 from core.db import SessionLocal
-from services import stock_alerts
+from core.timezone import business_today
+from services import fee_rate_alerts, stock_alerts
+from services.fee_rate_metrics import get_settled_fee_rate
 from services.fulfillment_alerts import ALERT_TYPE, build_decision
 from services.fulfillment_metrics import get_pending_fulfillments
 from services.metrics_store import (
+    get_fee_rate_alert_state,
     get_fulfillment_alert_state,
     get_stock_alert_state,
     get_stock_reported_skus,
+    upsert_fee_rate_alert_state,
     upsert_fulfillment_alert_state,
     upsert_stock_alert_state,
 )
@@ -246,8 +250,77 @@ def _scan_stock(session, *, account, open_id, scope, scope_id, dry_run: bool) ->
     return f"{account}/库存: 不推送 风险={decision.total}"
 
 
+def _fmt_window(start, end) -> str:
+    """业务日窗口 → '6/1~6/7'。"""
+    return f"{start.month}/{start.day}~{end.month}/{end.day}"
+
+
+def _scan_fee_rate(session, *, account, open_id, scope, scope_id, dry_run: bool) -> str:
+    """扣点率异常规则：评估窗口费率 vs 基准均值，异常升高则（必要时）投递。返回一行状态。
+
+    结算滞后口径：评估窗口取「今天 − settle_lag」回看一段已结算完的天；基准取其前若干天。
+    去重：同一评估窗口结束日只报一次（last_window_end）。
+    """
+    today = business_today()
+    lag = settings.fee_rate_settle_lag_days
+    eval_end = today - timedelta(days=lag)
+    eval_start = eval_end - timedelta(days=settings.fee_rate_eval_window_days - 1)
+    baseline_end = eval_start - timedelta(days=1)
+    baseline_start = baseline_end - timedelta(days=settings.fee_rate_baseline_days - 1)
+
+    common_scope = dict(
+        platform=scope.platform, country=scope.country, shop_ids=scope.shop_ids or None
+    )
+    eval_by_ccy = get_settled_fee_rate(
+        start_date=eval_start, end_date=eval_end, session=session, **common_scope
+    )
+    baseline_by_ccy = get_settled_fee_rate(
+        start_date=baseline_start, end_date=baseline_end, session=session, **common_scope
+    )
+
+    decision = fee_rate_alerts.build_decision(
+        eval_by_ccy=eval_by_ccy,
+        baseline_by_ccy=baseline_by_ccy,
+        scope_display=scope.display_text,
+        min_gmv=settings.fee_rate_min_gmv,
+        rel_pct=settings.fee_rate_alert_rel_pct,
+        abs_pct=settings.fee_rate_alert_abs_pct,
+        eval_window_label=_fmt_window(eval_start, eval_end),
+        baseline_window_label=_fmt_window(baseline_start, baseline_end),
+    )
+
+    if not decision.should_alert:
+        return f"{account}/扣点率: 不推送（{decision.skip_reason or '无异常'}）"
+
+    # 去重：同一评估窗口已报过则不复读
+    prev = get_fee_rate_alert_state(
+        session, alert_type=fee_rate_alerts.ALERT_TYPE, account_id=account, scope_key=scope_id
+    )
+    if prev is not None and prev.last_window_end is not None and prev.last_window_end >= eval_end:
+        return f"{account}/扣点率: 不推送（窗口 {eval_end} 已报过）"
+
+    if dry_run:
+        print(f"[alert][dry-run] 扣点率 → {account}/{open_id}:\n{decision.message}")
+        return f"{account}/扣点率: 待推送 升至 {decision.eval_rate:.2%}（dry-run）"
+
+    sent = send_feishu_message(account=account, open_id=open_id, text=decision.message)
+    if sent:
+        upsert_fee_rate_alert_state(
+            session,
+            alert_type=fee_rate_alerts.ALERT_TYPE,
+            account_id=account,
+            scope_key=scope_id,
+            last_window_end=eval_end,
+            last_rate=decision.eval_rate,
+            mark_sent=True,
+        )
+        session.commit()
+        return f"{account}/扣点率: 已推送 升至 {decision.eval_rate:.2%}（基准 {decision.baseline_rate:.2%}）"
+    return f"{account}/扣点率: 推送失败（游标不更新，下轮重试）"
+
+
 def _scan_one(recipient: dict, *, dry_run: bool) -> list[str]:
-    """评估一个收件人的全部告警规则（待发货 + 库存）。返回各规则状态行列表。"""
+    """评估一个收件人的全部告警规则（待发货 + 库存 + 扣点率）。返回各规则状态行列表。"""
     from core.tenancy import set_current_account
 
     account = recipient["account"]
@@ -261,7 +334,7 @@ def _scan_one(recipient: dict, *, dry_run: bool) -> list[str]:
     session = SessionLocal()
     try:
         lines = []
-        for rule in (_scan_fulfillment, _scan_stock):
+        for rule in (_scan_fulfillment, _scan_stock, _scan_fee_rate):
             try:
                 lines.append(
                     rule(

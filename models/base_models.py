@@ -649,6 +649,30 @@ class StockAlertState(Base):
         return f"<StockAlertState(state_key={self.state_key})>"
 
 
+class FeeRateAlertState(Base):
+    """扣点率异常告警的去重状态（每「收件人 × 范围」一行，记上次告警的评估窗口与费率）。
+
+    巡检高频跑，但扣点率评估窗口按天推进，故「同一评估窗口」只告警一次（last_window_end 去重）：
+    仅当本次评估窗口比上次更新（eval_window_end > last_window_end）且判异常时才推。费率回落到
+    正常后再次异动会因窗口推进而重新提醒。state_key = alert_type|account_id|scope_key。
+    """
+
+    __tablename__ = "fee_rate_alert_state"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    state_key = Column(String(300), nullable=False, unique=True, index=True)
+    alert_type = Column(String(64), nullable=False, default="fee_rate_anomaly", index=True)
+    account_id = Column(String(64), index=True)
+    scope_key = Column(String(64), nullable=True)
+    last_window_end = Column(Date)  # 上次已告警的评估窗口结束业务日
+    last_rate = Column(Numeric(8, 6))  # 上次告警的评估费率（审计/对比用）
+    last_sent_at = Column(DateTime)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<FeeRateAlertState(state_key={self.state_key}, last_window_end={self.last_window_end})>"
+
+
 class AlertRecipient(Base):
     """主动告警收件人（监控巡检的投递对象）——RECIPIENTS 从代码迁 DB（plan/09 Phase 6）。
 
