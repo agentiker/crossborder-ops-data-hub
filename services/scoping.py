@@ -68,6 +68,26 @@ def build_inventory_key(
     )
 
 
+def build_sku_variant_key(
+    *,
+    platform: str,
+    country: str = "GLOBAL",
+    shop_id: Optional[str] = None,
+    seller_id: Optional[str] = None,
+    account_id: Optional[str] = None,
+    sku_id: str,
+) -> str:
+    """SKU 变体行的 idempotency key（按 sku_id 唯一，跨仓共用一行）。"""
+    return build_scope_key(
+        platform=platform,
+        country=country,
+        shop_id=shop_id,
+        seller_id=seller_id,
+        account_id=account_id,
+        resource=f"sku_variant:{normalize_scope_value(sku_id)}",
+    )
+
+
 def build_product_key(
     *,
     platform: str,

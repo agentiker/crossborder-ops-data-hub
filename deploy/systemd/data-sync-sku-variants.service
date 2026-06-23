@@ -1,0 +1,12 @@
+[Unit]
+Description=TikTok SKU 变体（颜色/尺码）主数据同步
+After=network-online.target
+OnFailure=data-onfailure@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/code/crossborder-ops-data-hub
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/.local/bin/uv run python -m flows.sync_sku_variants
+# 单次最长 10 分钟，挂死自动杀
+TimeoutStartSec=600

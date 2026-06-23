@@ -374,6 +374,63 @@ class FactAdSpendDaily(Base):
         return f"<FactAdSpendDaily(scope_key={self.scope_key}, total_ad_spend={self.total_ad_spend})>"
 
 
+class FactFinanceTransaction(Base):
+    """交易级结算费用拆项事实表（TTS Finance 202501 statement_transactions 全字段）。
+
+    粒度 = 单笔结算交易（含结算/调整 adjustment/预留 reserve），按交易 `id` 幂等。一个
+    order 可对应多笔交易，故订单级/日级口径靠 GROUP BY order_id / metric_date 聚合得到，
+    本表不做合并以免丢失交易粒度。与 fact_ad_spend_daily 解耦并存：日级广告费走旧表（现有
+    日报/利润依赖不变），本表补全 51 项扣点子项 + 税拆项 + 交易级汇总，供 #4 扣点监控、#3
+    利润的扣点项取数。
+
+    提升列 = 高频查询的头部字段（结算/营收/总费税/运费/调整 + 主佣金/引荐费/交易手续费 +
+    三项广告费）；其余 48 项 fee 子项与全部 tax 子项以非零值存入 fee_breakdown/tax_breakdown
+    JSON，平台新增费种自动兜底入库、无需改表。所有金额单位 = 行 currency（IDR 等），换算留
+    阶段3 汇率服务。
+    """
+
+    __tablename__ = "fact_finance_transaction"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String(32), nullable=False, index=True)
+    country = Column(String(16), nullable=False, default="GLOBAL", index=True)
+    shop_id = Column(String(64), index=True)
+    seller_id = Column(String(64), index=True)
+    account_id = Column(String(64), index=True)
+    scope_key = Column(String(500), nullable=False, unique=True, index=True)
+    # 交易级标识：transaction_id 全局唯一（幂等键来源）；order_id 用于聚合到订单/日
+    transaction_id = Column(String(64), nullable=False, index=True)
+    order_id = Column(String(64), index=True)
+    adjustment_id = Column(String(64), index=True)  # 调整类交易才有
+    metric_date = Column(Date, nullable=False, index=True)  # order_create_time 归印尼业务日
+    currency = Column(String(8))
+    # ── 交易级汇总（fee_tax_amount = 全部费税合计；settlement = 实际结算额）──
+    settlement_amount = Column(Numeric(18, 4), nullable=False, default=0)
+    revenue_amount = Column(Numeric(18, 4), nullable=False, default=0)
+    fee_tax_amount = Column(Numeric(18, 4), nullable=False, default=0)
+    shipping_cost_amount = Column(Numeric(18, 4), nullable=False, default=0)
+    adjustment_amount = Column(Numeric(18, 4), nullable=False, default=0)
+    # ── 头部扣点（#4 扣点率/告警直接取）──
+    platform_commission_amount = Column(Numeric(18, 4), nullable=False, default=0)  # 主佣金
+    referral_fee_amount = Column(Numeric(18, 4), nullable=False, default=0)  # 引荐费
+    transaction_fee_amount = Column(Numeric(18, 4), nullable=False, default=0)  # 交易手续费
+    # ── 三项广告费（与 ad_spend_daily 同源，便于利润 join）──
+    gmv_max_fee = Column(Numeric(18, 4), nullable=False, default=0)
+    tap_commission = Column(Numeric(18, 4), nullable=False, default=0)
+    affiliate_commission = Column(Numeric(18, 4), nullable=False, default=0)
+    # ── 全量兜底：fee/tax 的所有非零子项原样存 JSON（string→string，保真）──
+    fee_breakdown = Column(JSON)
+    tax_breakdown = Column(JSON)
+    raw_response_id = Column(Integer, nullable=True)
+    calculated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return (
+            f"<FactFinanceTransaction(transaction_id={self.transaction_id}, "
+            f"order_id={self.order_id}, settlement={self.settlement_amount})>"
+        )
+
+
 class Alert(Base):
     """Business alert generated from trusted metrics."""
 
@@ -400,6 +457,38 @@ class Alert(Base):
 
     def __repr__(self):
         return f"<Alert(scope_key={self.scope_key}, type={self.alert_type})>"
+
+
+class SkuVariant(Base):
+    """SKU 级变体主数据（颜色/尺码），数据来自 Get Product 的 skus[].sales_attributes。
+
+    Product 表只存 product 级 key properties（无变体属性，见 Product 注释）；补货采购单需
+    「款号-颜色-尺码」，故本表按 sku 级存解析出的颜色/尺码。款号 = 商品（product_id/product_name）。
+    快照式：sync_sku_variants 全量覆盖在售商品变体，下架/删除的变体由 prune 清退。
+    color/size 从 sales_attributes 按属性名匹配解析；attributes 存全部属性原样兜底。
+    """
+
+    __tablename__ = "sku_variants"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String(32), nullable=False, default="tiktok_shop", index=True)
+    country = Column(String(16), nullable=False, default="GLOBAL", index=True)
+    shop_id = Column(String(64), index=True)
+    seller_id = Column(String(64), index=True)
+    account_id = Column(String(64), index=True)
+    idempotency_key = Column(String(500), nullable=False, unique=True, index=True)
+    sku_id = Column(String(64), nullable=False, index=True)
+    product_id = Column(String(64), index=True)
+    seller_sku = Column(String(128))
+    product_name = Column(String(500))  # 款号（商品标题）
+    color = Column(String(128))  # 从 sales_attributes 解析
+    size = Column(String(128))   # 从 sales_attributes 解析
+    attributes = Column(JSON)    # 全部 sales_attributes 原样 [{name,value_name}]
+    raw_response_id = Column(Integer, nullable=True)
+    synced_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<SkuVariant(sku_id={self.sku_id}, color={self.color}, size={self.size})>"
 
 
 class OrderHeader(Base):
@@ -590,6 +679,96 @@ class StockAlertState(Base):
 
     def __repr__(self):
         return f"<StockAlertState(state_key={self.state_key})>"
+
+
+class FeeRateAlertState(Base):
+    """扣点率异常告警的去重状态（每「收件人 × 范围」一行，记上次告警的评估窗口与费率）。
+
+    巡检高频跑，但扣点率评估窗口按天推进，故「同一评估窗口」只告警一次（last_window_end 去重）：
+    仅当本次评估窗口比上次更新（eval_window_end > last_window_end）且判异常时才推。费率回落到
+    正常后再次异动会因窗口推进而重新提醒。state_key = alert_type|account_id|scope_key。
+    """
+
+    __tablename__ = "fee_rate_alert_state"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    state_key = Column(String(300), nullable=False, unique=True, index=True)
+    alert_type = Column(String(64), nullable=False, default="fee_rate_anomaly", index=True)
+    account_id = Column(String(64), index=True)
+    scope_key = Column(String(64), nullable=True)
+    last_window_end = Column(Date)  # 上次已告警的评估窗口结束业务日
+    last_rate = Column(Numeric(8, 6))  # 上次告警的评估费率（审计/对比用）
+    last_sent_at = Column(DateTime)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<FeeRateAlertState(state_key={self.state_key}, last_window_end={self.last_window_end})>"
+
+
+class HotsellAlertState(Base):
+    """爆单提醒的当日去重状态（每「收件人 × 范围」一行，记当天已报爆单的商品集合）。
+
+    report_date 标记这批 reported_product_ids 属于哪个业务日；跨天后 report_date 不等于今天，
+    去重集按空处理（新的一天重新计），同一商品当天只在首次破阈时报一次。
+    """
+
+    __tablename__ = "hotsell_alert_state"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    state_key = Column(String(300), nullable=False, unique=True, index=True)
+    alert_type = Column(String(64), nullable=False, default="hotsell", index=True)
+    account_id = Column(String(64), index=True)
+    scope_key = Column(String(64), nullable=True)
+    report_date = Column(Date)  # reported_product_ids 所属业务日
+    reported_product_ids = Column(Text, nullable=False, default="[]")  # 当日已报商品（JSON 数组）
+    last_sent_at = Column(DateTime)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<HotsellAlertState(state_key={self.state_key}, report_date={self.report_date})>"
+
+
+class ReplenishmentConfig(Base):
+    """补货系数配置（每「租户 × 范围」一行；缺行则用 settings 默认）。运营可改，不硬编码。
+
+    config_key = account_id|scope_key（scope_key 空=租户级默认）。velocity_days/系数 覆盖
+    settings.replenish_* 默认；超级爆品名单另见 SuperHotProduct 表。
+    """
+
+    __tablename__ = "replenishment_config"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    config_key = Column(String(300), nullable=False, unique=True, index=True)
+    account_id = Column(String(64), index=True)
+    scope_key = Column(String(64), nullable=True)
+    velocity_days = Column(Integer)  # None=用默认
+    normal_multiplier = Column(Numeric(6, 3))
+    superhot_multiplier = Column(Numeric(6, 3))
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<ReplenishmentConfig(config_key={self.config_key})>"
+
+
+class SuperHotProduct(Base):
+    """超级爆品名单（人工标记的款，补货量用 superhot 系数 ×）。运营可配。
+
+    一行 = 一个租户(account_id)下的一个商品(product_id)被标超级爆品。is_active=False 即撤标。
+    超级爆品按「款(product)」标记 → 该款全部 SKU 补货都用 superhot 系数。
+    """
+
+    __tablename__ = "super_hot_products"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(String(64), index=True)
+    product_id = Column(String(64), nullable=False, index=True)
+    mark_key = Column(String(300), nullable=False, unique=True, index=True)  # account_id|product_id
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    note = Column(String(500))
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<SuperHotProduct(account_id={self.account_id}, product_id={self.product_id})>"
 
 
 class AlertRecipient(Base):

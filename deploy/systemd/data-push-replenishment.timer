@@ -1,0 +1,7 @@
+[Unit]
+Description=每日推送补货采购单（清晨，运营到岗即见）
+[Timer]
+OnCalendar=*-*-* 07:35:00
+Persistent=true
+[Install]
+WantedBy=timers.target

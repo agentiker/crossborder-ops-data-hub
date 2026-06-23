@@ -1,0 +1,7 @@
+[Unit]
+Description=每日同步 SKU 变体主数据（早于补货推送，保证款式数据新鲜）
+[Timer]
+OnCalendar=*-*-* 07:05:00
+Persistent=true
+[Install]
+WantedBy=timers.target

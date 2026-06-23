@@ -1,0 +1,12 @@
+[Unit]
+Description=补货采购单飞书推送
+After=network-online.target
+OnFailure=data-onfailure@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/code/crossborder-ops-data-hub
+Environment=PYTHONUNBUFFERED=1
+# OPENCLAW_BIN 走项目 .env（pydantic settings.openclaw_bin）；deploy.sh 会确保 .env 有绝对路径。
+ExecStart=%h/.local/bin/uv run python -m flows.push_replenishment
+TimeoutStartSec=600
