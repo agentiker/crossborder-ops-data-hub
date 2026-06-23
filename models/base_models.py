@@ -459,6 +459,38 @@ class Alert(Base):
         return f"<Alert(scope_key={self.scope_key}, type={self.alert_type})>"
 
 
+class SkuVariant(Base):
+    """SKU 级变体主数据（颜色/尺码），数据来自 Get Product 的 skus[].sales_attributes。
+
+    Product 表只存 product 级 key properties（无变体属性，见 Product 注释）；补货采购单需
+    「款号-颜色-尺码」，故本表按 sku 级存解析出的颜色/尺码。款号 = 商品（product_id/product_name）。
+    快照式：sync_sku_variants 全量覆盖在售商品变体，下架/删除的变体由 prune 清退。
+    color/size 从 sales_attributes 按属性名匹配解析；attributes 存全部属性原样兜底。
+    """
+
+    __tablename__ = "sku_variants"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String(32), nullable=False, default="tiktok_shop", index=True)
+    country = Column(String(16), nullable=False, default="GLOBAL", index=True)
+    shop_id = Column(String(64), index=True)
+    seller_id = Column(String(64), index=True)
+    account_id = Column(String(64), index=True)
+    idempotency_key = Column(String(500), nullable=False, unique=True, index=True)
+    sku_id = Column(String(64), nullable=False, index=True)
+    product_id = Column(String(64), index=True)
+    seller_sku = Column(String(128))
+    product_name = Column(String(500))  # 款号（商品标题）
+    color = Column(String(128))  # 从 sales_attributes 解析
+    size = Column(String(128))   # 从 sales_attributes 解析
+    attributes = Column(JSON)    # 全部 sales_attributes 原样 [{name,value_name}]
+    raw_response_id = Column(Integer, nullable=True)
+    synced_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<SkuVariant(sku_id={self.sku_id}, color={self.color}, size={self.size})>"
+
+
 class OrderHeader(Base):
     """Order-level facts scoped by platform account (source for GMV/order count)."""
 

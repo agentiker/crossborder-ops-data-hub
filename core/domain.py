@@ -68,6 +68,18 @@ class DomainInventoryItem:
 
 
 @dataclass(frozen=True)
+class DomainSkuVariant:
+    """SKU 变体（一行 = 一个 SKU 的颜色/尺码等属性）。attributes 为全部销售属性原样。"""
+    sku_id: str
+    product_id: Optional[str] = None
+    seller_sku: Optional[str] = None
+    product_name: Optional[str] = None
+    color: Optional[str] = None
+    size: Optional[str] = None
+    attributes: Optional[list[dict]] = None
+
+
+@dataclass(frozen=True)
 class DomainProduct:
     """商品主数据（一行 = 一个商品）。`min_price` 为该商品 SKU 最低售价。"""
     product_id: str
