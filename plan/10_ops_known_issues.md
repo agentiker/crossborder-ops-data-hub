@@ -12,15 +12,15 @@ depends_on: [01_multi_shop_token_and_auth, 07_scope_foundation]
 ## 1. 出口 IP 是住宅 IP，会漂移
 
 TikTok Shop API 走 IP 白名单。本机和服务器在同一局域网（192.168.1.0/24 → 网关 192.168.1.1），
-IPv4 出站被 SNAT 成同一公网 IP **`112.94.74.178`**（广州联通住宅宽带），这个 IP 已登记在
+IPv4 出站被 SNAT 成同一公网 IP（广州联通住宅宽带），这个 IP 已登记在
 TikTok 后台白名单内。
 
-**隐患**：`112.94.74.178` 是**住宅 PPPoE 动态 IP**，不是固定 IP。一旦路由器 re-dial
+**隐患**：出口 IP 是**住宅 PPPoE 动态 IP**，不是固定 IP。一旦路由器 re-dial
 （断电、重启、运营商强制下线），公网 IP 可能变成别的值——此时**本机和服务器会同时失效**
 （两边共用同一出口），所有 TikTok sync / token 刷新会 403。
 
-**怎么发现**：flow 日志开头会打印出口 IP（查 `ddns.oray.com`）。正常是 `112.94.74.178`；
-变了就是这里出问题。或 `journalctl --user -u data-sync-orders` 看到 403。
+**怎么发现**：用 `check-outbound-ip` skill 查出口 IP（`curl -s http://www.baidu.com -o /dev/null -w "%{remote_ip}"`），
+与 TikTok 后台白名单比对。变了就是这里出问题。或 `journalctl --user -u data-sync-orders` 看到 403。
 
 **怎么处理（临时）**：到 TikTok Shop Partner Center 把新出口 IP 加进白名单。
 

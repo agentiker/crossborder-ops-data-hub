@@ -218,7 +218,7 @@ systemctl --user restart <name>.timer
 
 服务器装了 **ShellCrash 透明代理**（iptables TPROXY，网络层劫持全部流量）。TikTok 调用
 要能成功，必须让 TikTok 域名**绕过代理走直连**——这样出口才是局域网真实 NAT IP
-`112.94.74.178`（已在 TikTok 后台白名单内）。已在 ShellCrash 加了两条直连规则：
+（当前出口 IP 见 TikTok 后台白名单，动态 IP 会变）。已在 ShellCrash 加了两条直连规则：
 
 ```yaml
 # /etc/ShellCrash/yamls/config.yaml 的 rules 段（需 sudo 改，改后 sudo systemctl restart shellcrash）
@@ -228,11 +228,11 @@ systemctl --user restart <name>.timer
 
 - 验证直连生效：`grep tiktok /tmp/ShellCrash/config.yaml`（运行配置里要有这两行）
 - 验证能调通：`uv run python -c "from flows._shop_discovery import discover_single_shop; from platforms.tiktok_shop.client import TikTokShopClient; print(len(TikTokShopClient(**discover_single_shop()).list_products(page_size=5)))"`
-- `112.94.74.178` 是住宅联通 IP，可能 re-dial 变动；变了要同步更新 TikTok 后台白名单。
+- 出口 IP 是住宅联通动态 IP，可能 re-dial 变动；变了要同步更新 TikTok 后台白名单。
+- 查出口 IP：运行 `check-outbound-ip` skill，或手动 `curl -s http://www.baidu.com -o /dev/null -w "%{remote_ip}"`。
 
-> **注意日志里的「出口 IP」行**：flow 开头会打印出口 IP（查 `ddns.oray.com`），正常应是
-> `112.94.74.178`。若看到 `104.28.x` 或 `2a09:bac5:...`，说明这次查询被代理兜走了，
-> 不一定代表 TikTok 调用失败——以实际 flow 是否 `Completed` 为准。
+> **注意**：本机开了 ShellCrash 代理，直接 `curl ipinfo.io` 等查到的可能是代理出口 IP。
+> 必须用直连目标（如 `http://www.baidu.com`）才能拿到真实 NAT IP。
 
 ## 核心架构
 
