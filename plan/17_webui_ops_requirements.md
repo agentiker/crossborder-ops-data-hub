@@ -69,36 +69,50 @@
 
 ## 4. 分阶段实施（按见效快/依赖少排序）
 
-### 阶段 0 — 结算扣点全字段入库（1–2 天，零依赖）
+> **进度看板（2026-06-24 更新）**
+>
+> | 阶段 | 状态 | 说明 |
+> |---|---|---|
+> | 0 扣点全字段入库 | ✅ 上线 | merge `7fcfdbb`，hp 部署；`fact_finance_transaction` 表+解析就绪。**数据为空非缺陷**——连入的是沙箱店永不结算，接真实生产店即有值（见 [[roi-roas-alert-data-source]]） |
+> | 1 补货计划 | 🟡 大头已上线 | 变体同步(07:05 timer)+补货公式+飞书采购单(07:35 timer) 端到端通；**剩 F 审核页(WebUI 改量/跳过/标爆品)+ 手动触发按钮**；在途 MVP=0（待马帮） |
+> | 2 扣点告警+爆单 | 🟡 告警已上线 | 2-A 扣点率告警 + 2-B 爆单提醒 已接 `scan_fulfillment_alerts` 第3/4规则；**剩 H 新品按天销量曲线(echarts 前端)** |
+> | 3 汇率+成本+退货率→利润 | ⬜ 未开始 | 链最长：汇率 service → 成本 CSV 录入 → 退货率预估 → profit 端点 503→真数据 + 利润卡 |
+> | 4 马帮对接 | ⬜ 阻塞 | 待马帮开通申请；gwapi v2 已实测可行（`docs/mabang-erp-api.md`） |
+> | 5 渠道饼图 | ⬜ 未开始 | 零依赖、scope 已就绪，**可前移当快赢** |
+>
+> 部署/真数据验证已揪修 3 个 bug（印尼语色码属性名/长名截断/漏建变体 timer），详见 [[plan17-webui-ops-requirements]]。
+
+### 阶段 0 — 结算扣点全字段入库（1–2 天，零依赖）✅ 上线（merge 7fcfdbb）
 - 扩 `flows/sync_ad_spend.py` 的 `AD_FEE_FIELDS` → 提取全部扣点拆项；新增/扩 fact 表存订单级费用拆项
 - 解锁 #4 扣点监控数据源 + #3 利润的扣点项
 
-### 阶段 1 — 补货计划（销速已就绪；在途待马帮开通，先 0/手动）
-- **公式**：普通 SKU 补货量 = 近30天销量×1.5 − 可用库存 − 在途；超级爆品(人工标记)×2；结果 ≤0 剔除
-- **可配置（运营侧）**：系数 1.5 / 超级爆品系数 2 / 超级爆品名单 全部落配置表，运营可改，不硬编码
-- **采购单输出**：款号 − 颜色 − 尺码。**已确认现 `Product` 表只存 product 级 key properties（无 SKU 颜色/尺码，`models/base_models.py:49` 注释明示"本期不做"）** → 阶段1 需新增 SKU 级表 + 解析 `get_product`(`client.py:397`) 的 `skus[].sales_attributes`（零新权限，纯同步工作量）
-- **在途数量**：MVP 马帮未开通前按 0 或手动录入；马帮接通后取 `stock-get-stock-quantity`(v2) 的 `availableStockQuantity`(可用库存) 与 `shippingQuantity`(采购在途)（按需叠加 `allotShippingQuantity`/`processingQuantity`）
-- **skill + 纠偏**：人工改数量/改系数/跳过 SKU/标超级爆品；WebUI 审核页 + 落库"待审核"状态
-- **推送**：飞书（复用 openclaw message send），收件人配置化（运营助理）
-- 触发：定时(凌晨) + WebUI 手动按钮
+### 阶段 1 — 补货计划（销速已就绪；在途待马帮开通，先 0/手动）🟡 公式+同步+推送已上线，剩 F 审核页+手动按钮
+- ✅ **公式**：普通 SKU 补货量 = 近30天销量×1.5 − 可用库存 − 在途；超级爆品(人工标记)×2；结果 ≤0 剔除（`services/replenishment.py`）
+- ✅ **可配置（运营侧）**：系数 1.5 / 超级爆品系数 2 / 超级爆品名单 全部落配置表（`replenishment_config`/`super_hot_products`），运营可改，不硬编码
+- ✅ **采购单输出**：款号 − 颜色 − 尺码。新增 SKU 级表 `sku_variants` + 解析 `get_product` 的 `skus[].sales_attributes`（变体同步 flow + 07:05 timer）。**真数据修：印尼语属性名 `Warna`/`ukuran` 子串匹配、长名只截名保色码**
+- 🟡 **在途数量**：MVP 马帮未开通前按 0（采购单已提示）；马帮接通后取 `stock-get-stock-quantity`(v2) 的 `availableStockQuantity` 与 `shippingQuantity`（按需叠加 `allotShippingQuantity`/`processingQuantity`）
+- ⬜ **skill + 纠偏（F，未做）**：人工改数量/改系数/跳过 SKU/标超级爆品；WebUI 审核页 + 落库"待审核"状态
+- ✅ **推送**：飞书（复用 openclaw message send），收件人配置化（`alert_recipients` 表）；07:35 timer 已上线
+- 🟡 触发：✅ 定时(07:35) / ⬜ WebUI 手动按钮（未做）
 
-### 阶段 2 — 扣点异常告警 + 新品曲线/爆单提醒（接现有 scan flow）
-- #4 扣点告警：实际费率 vs 类目基准/历史，异常推飞书（接 `scan_fulfillment_alerts` 第 3 条规则）
-- #6 新品：按天销量曲线（前端 echarts）+ 单日≥50 单爆单提醒（阶梯轮询 1/5 分钟 + 当日去重缓存）
+### 阶段 2 — 扣点异常告警 + 新品曲线/爆单提醒（接现有 scan flow）🟡 告警已上线，剩 H 新品曲线
+- ✅ #4 扣点告警（2-A）：实际费率 vs 基准历史，异常推飞书（`scan_fulfillment_alerts._scan_fee_rate` 第3规则）；沙箱无结算数据时优雅跳过
+- ✅ #6 爆单提醒（2-B）：单日≥阈值（`hotsell_daily_units_threshold`）当日去重推送（`_scan_hotsell` 第4规则）
+- ⬜ #6 新品按天销量曲线（H，未做）：前端 echarts（后端 `get_units_by_product` 已就绪，缺前端图表）
 
-### 阶段 3 — 汇率服务 + 产品成本录入 → 利润端点上线
+### 阶段 3 — 汇率服务 + 产品成本录入 → 利润端点上线 ⬜ 未开始
 - 汇率 service：免费源+进程内缓存 / 结算单 `exchange_rate` / **马帮 `sys-get-currency-rate-list`**（马帮开通后优先），按订单支付时间取历史汇率
 - 产品成本：CSV/手动录入入口（SKU↔成本，RMB含运费）；**马帮开通后切 `stock-do-search-sku-list-new.defaultCost`（带三级类目，利润可类目拆分）**
 - 退货率（**预估口径，非真实**）：用成熟订单(下单≥20-30天、退货窗口基本走完)算 SKU/类目历史退货率 → 乘当期 GMV **预扣**；真数据仅**回填校准**该率，不参与当期扣减；无历史则人工初始值
   - 退货数据源：TTS `return_refund`（已申请 scope）或**马帮 `order-get-return-order-list-v2`**（专门接口，含 stockSku/platformSku/退款时间/退货原因），二选一/交叉校验
 - 拉通 `analytics/profit_alerts.py` → `/api/data/profit/summary` 由 503 转真数据 + WebUI 利润卡
 
-### 阶段 4 — 马帮对接（gwapi **v2** 已实测可行，待开通申请；详见 `docs/mabang-erp-api.md`）
+### 阶段 4 — 马帮对接（gwapi **v2** 已实测可行，待开通申请；详见 `docs/mabang-erp-api.md`）⬜ 阻塞（待开通）
 - 接口(v2)：成本+类目 `stock-do-search-sku-list-new`(defaultCost/三级类目) / SKU映射 `order-get-order-list-new`(stockSku↔platformSku) / 在途+库存 `stock-get-stock-quantity`(availableStockQuantity/shippingQuantity) / 退货 `order-get-return-order-list-v2` / 汇率 `sys-get-currency-rate-list` / 现成利润表 `multi-platform-item-details`(交叉校验)
 - 替换 CSV 成本为马帮 `defaultCost` 同步；用订单 platformSku↔stockSku 自动建映射表；在途回补阶段1补货公式
 - 取数口径先定：`defaultCost` 是否含运费（不含则叠 `oneExpressMoney`）、按 platformId 筛 TikTok
 
-### 阶段 5 — Top5 渠道饼图（可行性已上调，scope 已就绪可前移）
+### 阶段 5 — Top5 渠道饼图（可行性已上调，scope 已就绪可前移）⬜ 未开始（零依赖，快赢候选）
 - **不走订单 traffic_source（TTS 无此字段），走 Shop Analytics**：`/analytics/202509/shop_products/{product_id}/performance` 的 `sales.breakdowns[].content_type` 拆 LIVE/VIDEO/PRODUCT_CARD（字段名以实测为准，非文档的 `gmv_breakdowns[].type`）
 - 必填入参 `start_date_ge`+`end_date_lt`（YYYY-MM-DD，缺则 400/`36009004`）；签名复用 `platforms/tiktok_shop/client.py` 的 `_request_with_headers`/`_generate_sign`
 - ⚠️ client wrapper 在 code≠0 时 raise 吞掉业务 code，接 analytics 时需显式读 `data`/`code`/`message`

@@ -19,7 +19,8 @@ TikTok 后台白名单内。
 （断电、重启、运营商强制下线），公网 IP 可能变成别的值——此时**本机和服务器会同时失效**
 （两边共用同一出口），所有 TikTok sync / token 刷新会 403。
 
-**怎么发现**：用 `check-outbound-ip` skill 查出口 IP（`curl -s http://www.baidu.com -o /dev/null -w "%{remote_ip}"`），
+**怎么发现**：用 `check-outbound-ip` skill 查出口 IP（`curl -s --noproxy '*' https://ddns.oray.com/checkip`，
+与 `flows/network.py:log_egress_ip` 同源；**勿用 `%{remote_ip}`，那是对端百度 IP 不是出口**），
 与 TikTok 后台白名单比对。变了就是这里出问题。或 `journalctl --user -u data-sync-orders` 看到 403。
 
 **怎么处理（临时）**：到 TikTok Shop Partner Center 把新出口 IP 加进白名单。

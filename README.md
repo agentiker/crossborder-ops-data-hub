@@ -229,10 +229,11 @@ systemctl --user restart <name>.timer
 - 验证直连生效：`grep tiktok /tmp/ShellCrash/config.yaml`（运行配置里要有这两行）
 - 验证能调通：`uv run python -c "from flows._shop_discovery import discover_single_shop; from platforms.tiktok_shop.client import TikTokShopClient; print(len(TikTokShopClient(**discover_single_shop()).list_products(page_size=5)))"`
 - 出口 IP 是住宅联通动态 IP，可能 re-dial 变动；变了要同步更新 TikTok 后台白名单。
-- 查出口 IP：运行 `check-outbound-ip` skill，或手动 `curl -s http://www.baidu.com -o /dev/null -w "%{remote_ip}"`。
+- 查出口 IP：运行 `check-outbound-ip` skill，或手动 `curl -s --noproxy '*' https://ddns.oray.com/checkip`（与 `flows/network.py:log_egress_ip` 同源）。
 
 > **注意**：本机开了 ShellCrash 代理，直接 `curl ipinfo.io` 等查到的可能是代理出口 IP。
-> 必须用直连目标（如 `http://www.baidu.com`）才能拿到真实 NAT IP。
+> 须用**国内直连 echo 服务**（如 oray checkip）才能拿到真实 NAT 出口。
+> ⚠️ 别用 `curl www.baidu.com -w "%{remote_ip}"`——`%{remote_ip}` 是对端百度服务器 IP，不是你的出口。
 
 ## 核心架构
 
