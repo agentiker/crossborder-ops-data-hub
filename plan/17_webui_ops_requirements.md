@@ -45,6 +45,7 @@
 - ✅ 已有：`seller.order.info`（订单/GMV/单量/Top/新品/商品/补货销量）、`seller.finance.info`（结算→广告费+扣点）
 - ✅ **已申请（2026-06-22）`seller.return_refund.basic`**：售后退货（退货率所需）。接口族 `/return_refund/202309/returns/search`、`cancellations/search`、`refunds/calculate`、`aftersales/search`。待写采集 flow 验证。
 - ✅ **已在授权内（2026-06-22 hp 实测调通）`data.shop_analytics.public.read`**：Shop Analytics（渠道饼图 #5），**零新申请**。`/analytics/202509/shop_products/{product_id}/performance` 返回 `sales.breakdowns[].content_type` 实测拆 **LIVE/VIDEO/PRODUCT_CARD**；达人维度 `/analytics/202511/creators/bestselling` 同样已过授权关，仅差补入参（`TimeSlot` 等枚举）。当前 granted_scopes 全集：`seller.product.basic, seller.order.info, seller.finance.info, seller.authorization.info, data.shop_analytics.public.read`。
+  - **2026-06-24 实测更新（阶段5 实现期）**：渠道饼图最终**不用**逐商品 detail——**店铺级 `/analytics/202509/shop/performance` 自身的 `sales.gmv.breakdowns[].type` 就直接拆 LIVE/VIDEO/PRODUCT_CARD（和=overall）**，1 调用/店即得整店三分。同 scope 下店铺级接口同样在授权内（真打 code=0）。详见 §4 阶段5。
 
 **B. 马帮 ERP（要谈价的核心，建议只谈这两类接口）**
 1. **商品成本查询**：库存SKU成本价（**明确含国内头程预缴运费**）+ 马帮SKU ↔ TikTok seller_sku 映射
@@ -78,7 +79,7 @@
 > | 2 扣点告警+爆单 | 🟡 告警已上线 | 2-A 扣点率告警 + 2-B 爆单提醒 已接 `scan_fulfillment_alerts` 第3/4规则；**剩 H 新品按天销量曲线(echarts 前端)** |
 > | 3 汇率+成本+退货率→利润 | ⬜ 未开始 | 链最长：汇率 service → 成本 CSV 录入 → 退货率预估 → profit 端点 503→真数据 + 利润卡 |
 > | 4 马帮对接 | ⬜ 阻塞 | 待马帮开通申请；gwapi v2 已实测可行（`docs/mabang-erp-api.md`） |
-> | 5 渠道饼图 | ⬜ 未开始 | 零依赖、scope 已就绪，**可前移当快赢** |
+> | 5 渠道饼图 | ✅ 上线 | commit `3ffed5b`，hp 部署+前端构建+真打验证。**重大纠偏：`shop/performance` 自带 `sales.gmv.breakdowns[].type`（LIVE/VIDEO/PRODUCT_CARD）直接三分且和=overall→原相减法作废，改单接口精确拆分（1 调用/店）**。后端 `client.get_shop_performance`+`services/channel_metrics`（进程缓存15min/沙箱降级 available）+`board._collect` 注入 channels；前端 `BoardPage.ChannelPie` 环图。双租户真打通+隔离验证。**剩 hp 移动端目测 + 有真直播/视频 GMV 的生产店复验三分**（见 [[plan17-stage5-channel-pie]]） |
 >
 > 部署/真数据验证已揪修 3 个 bug（印尼语色码属性名/长名截断/漏建变体 timer），详见 [[plan17-webui-ops-requirements]]。
 
@@ -112,11 +113,13 @@
 - 替换 CSV 成本为马帮 `defaultCost` 同步；用订单 platformSku↔stockSku 自动建映射表；在途回补阶段1补货公式
 - 取数口径先定：`defaultCost` 是否含运费（不含则叠 `oneExpressMoney`）、按 platformId 筛 TikTok
 
-### 阶段 5 — Top5 渠道饼图（可行性已上调，scope 已就绪可前移）⬜ 未开始（零依赖，快赢候选）
-- **不走订单 traffic_source（TTS 无此字段），走 Shop Analytics**：`/analytics/202509/shop_products/{product_id}/performance` 的 `sales.breakdowns[].content_type` 拆 LIVE/VIDEO/PRODUCT_CARD（字段名以实测为准，非文档的 `gmv_breakdowns[].type`）
-- 必填入参 `start_date_ge`+`end_date_lt`（YYYY-MM-DD，缺则 400/`36009004`）；签名复用 `platforms/tiktok_shop/client.py` 的 `_request_with_headers`/`_generate_sign`
-- ⚠️ client wrapper 在 code≠0 时 raise 吞掉业务 code，接 analytics 时需显式读 `data`/`code`/`message`
-- "达人 vs 自营素材"细分：VIDEO 含两者，需叠加 `creators/bestselling` 二次归因；若不够则展示三分(直播/视频/商品卡)
+### 阶段 5 — Top5 渠道饼图 ✅ 上线（commit `3ffed5b`，2026-06-24 实现+本地真打+hp 部署）
+- **不走订单 traffic_source（TTS 无此字段），走 Shop Analytics**。**实测纠偏（2026-06-24 本地真打，本机=hp 同出口 [[local-lan-hp-egress]]）**：原设计的「逐商品 `shop_products/{id}/performance` detail」与「店铺级 overview 相减法」**双双弃用**——真打发现**店铺级 `GET /analytics/202509/shop/performance` 自身就带** `data.performance.intervals[].sales.gmv.breakdowns[]`，按 `type` 直接拆 LIVE/VIDEO/PRODUCT_CARD，且各项之和=`overall`。故只需**单接口、1 调用/店**即得精确三分，无需遍历商品、无需相减兜底、无负数风险（实测 ecom-app=276998 / ecom-app-gtl=1800036 IDR，均全在 PRODUCT_CARD，沙箱无内容带货）。
+- 入参 `start_date_ge`(含)+`end_date_lt`(**不含**，代码 +1 天)+`granularity=ALL`+`currency=LOCAL`+`shop_cipher`；签名复用 `client._request_with_headers`/`_generate_sign`
+- client wrapper code≠0 时 raise → `client._analytics_overview` 内 try/except 吞为 None，`services/channel_metrics` 据此优雅降级（沙箱/无权限 → `available=False` → 前端「暂无渠道数据」）
+- **落地**：`client.get_shop_performance` → `services/channel_metrics.get_channel_gmv_breakdown`（逐店拆分+跨店累加+进程缓存15min+未知 type 归 product_card+无 breakdowns 退回相减兜底）→ `web/routes/board.py._collect` 注入 `channels` → 前端 `BoardPage.ChannelPie` 环图（移动端自适应）。部署：deploy.sh `--restart-web` + hp `npm run build`（前端 dist 不入库，必单独构建）
+- "达人 vs 自营素材"细分：VIDEO 含两者，需叠加 `creators/bestselling` 二次归因；当前展示三分(直播/视频/商品卡)即可
+- **剩**：hp 移动端目测 + 接到有真实直播/视频 GMV 的生产店复验三分比例
 - ~~依赖补 Shop Analytics scope~~ → **scope `data.shop_analytics.public.read` 已在授权内，无前置依赖**
 
 ## 5. 风险/待确认（2026-06-22 已查证更新）
