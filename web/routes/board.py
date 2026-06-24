@@ -19,6 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from core.tenancy import set_current_account
 from core.timezone import previous_window, resolve_period
 from services.ad_metrics import get_ad_spend_summary, get_roas
+from services.channel_metrics import get_channel_gmv_breakdown
 from services.order_metrics import get_gmv_summary
 from services.scope_resolution import ScopeError, list_scopes
 from services.user_authz import AuthzError, UserPermission, resolve_authorized_scope
@@ -111,6 +112,12 @@ async def _collect(perm: UserPermission, period: str, requested_scope_key: str) 
         cur_start, cur_end = resolve_period("last_30d")
     prev_start, prev_end = previous_window(cur_start, cur_end)
     shop_id_list = filters.shop_ids or None
+    # 渠道 GMV 拆分（直播/视频/商品卡，实时调 TikTok analytics + 进程缓存）。沙箱店无
+    # analytics 数据时内部降级返回 available=False，不抛错、不阻断看板其它块。
+    channels = get_channel_gmv_breakdown(
+        start_date=cur_start, end_date=cur_end,
+        platform=platform, country=country, shop_ids=shop_id_list,
+    )
     cur = get_gmv_summary(
         start_date=cur_start, end_date=cur_end,
         platform=platform, country=country, shop_ids=shop_id_list,
@@ -175,6 +182,7 @@ async def _collect(perm: UserPermission, period: str, requested_scope_key: str) 
         "top": _asdict(top),
         "low": _asdict(low),
         "fulfillment": _asdict(fulfillment),
+        "channels": channels,
     }
 
 

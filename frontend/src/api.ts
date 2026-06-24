@@ -159,6 +159,13 @@ export interface BoardData {
     buckets: { total: number; overdue: number; critical: number; normal: number };
     snapshot_at?: string;
   };
+  // 渠道 GMV 占比（直播/视频/商品卡）。沙箱店无 analytics 数据时 available=false。
+  channels?: {
+    channels: { key: string; label: string; gmv: number; pct: number }[];
+    total_gmv: number;
+    currency: string | null;
+    available: boolean;
+  };
 }
 
 // ── 角色管理（plan/15 Phase C · boss-only CRUD）──

@@ -593,6 +593,43 @@ class TikTokShopClient(BaseAPIClient):
             if not page_token:
                 break
 
+    # ── 店铺分析（analytics/202509，渠道饼图用）─────────────────────────────
+
+    def _analytics_overview(self, path: str, start_date, end_date) -> Optional[dict]:
+        """店铺级 analytics overview 通用 GET（granularity=ALL 聚合整窗）。
+
+        入参语义：start_date_ge 含、end_date_lt **不含**——故传入闭区间 [start_date,
+        end_date] 时把 end_date_lt 设为 end_date+1 天。currency=LOCAL 取店铺本币（IDR）。
+        返回 data 段；任何业务/网络异常（含 _request_with_headers 对 code≠0 的 raise、
+        沙箱店无 analytics 数据）吞为 None，交由 service 降级——一个店报错不拖垮看板。
+        """
+        from datetime import timedelta
+
+        params: dict = {
+            "start_date_ge": start_date.isoformat(),
+            "end_date_lt": (end_date + timedelta(days=1)).isoformat(),
+            "granularity": "ALL",
+            "currency": "LOCAL",
+        }
+        if self.shop_cipher:
+            params["shop_cipher"] = self.shop_cipher
+        try:
+            result = self.request("GET", path, params=params, data=None, version="202509")
+        except Exception as exc:  # noqa: BLE001 — 优雅降级，见 docstring
+            logger.warning("analytics %s shop=%s 取数失败: %s", path, self.shop_id, exc)
+            return None
+        return result.get("data", {})
+
+    def get_shop_performance(self, start_date, end_date) -> Optional[dict]:
+        """整店表现总览（渠道饼图数据源）。
+
+        渠道拆分在 data.performance.intervals[].sales.gmv.breakdowns[]，按 type 分
+        LIVE/VIDEO/PRODUCT_CARD（实测各项之和=overall），总 GMV 在同级 .overall.amount。
+        """
+        return self._analytics_overview(
+            "/analytics/202509/shop/performance", start_date, end_date
+        )
+
 
 def _coerce_expiry(data: dict, key: str, now: float) -> float:
     value = data.get(key)

@@ -121,6 +121,7 @@ export function BoardPage() {
                 <HotProducts data={data} loading={loading} />
                 <InventoryHealth data={data} loading={loading} />
               </div>
+              <ChannelPie data={data} loading={loading} />
               <OrderSection data={data} loading={loading} />
             </>
           )}
@@ -244,6 +245,57 @@ function ChartEmpty({
     >
       {loading ? "加载中…" : empty}
     </div>
+  );
+}
+
+/* ── 渠道分布（plan/17 阶段5：直播/视频/商品卡 GMV 占比环图）──────────── */
+
+// 数据走 /board/data 的 channels 字段（店铺级 overview 相减法）。沙箱店无 analytics
+// 数据时 available=false → 显示「暂无数据」。移动端：父级 space-y-6 单列堆叠 + EChart
+// 的 ResizeObserver 宽度自适应，无需额外媒体查询；legend 置底防窄屏溢出。
+function ChannelPie({ data, loading }: { data: BoardData | null; loading: boolean }) {
+  const t = useChartTokens();
+  const cb = data?.channels;
+  const palette: Record<string, string> = {
+    live: t.negative,
+    video: t.primary,
+    product_card: t.positive,
+  };
+  const option = useMemo(
+    () => ({
+      tooltip: {
+        trigger: "item",
+        formatter: (p: { name: string; value: number; percent: number }) =>
+          `${p.name}<br/>${fmtMoney(p.value)} (${p.percent}%)`,
+      },
+      legend: { bottom: 0, textStyle: { color: t.sub } },
+      series: [
+        {
+          type: "pie",
+          radius: ["45%", "70%"],
+          center: ["50%", "44%"],
+          itemStyle: { borderRadius: 6, borderColor: "#fff", borderWidth: 2 },
+          label: { show: false },
+          data: (cb?.channels || []).map((c) => ({
+            name: c.label,
+            value: c.gmv,
+            itemStyle: { color: palette[c.key] || t.sub },
+          })),
+        },
+      ],
+    }),
+    [cb, t],
+  );
+  const empty = !cb?.available ? "暂无渠道数据（需接生产店）" : "";
+  return (
+    <Card>
+      <CardHead title="渠道分布（GMV 占比）" />
+      {loading || empty ? (
+        <ChartEmpty loading={loading} empty={empty} height={280} />
+      ) : (
+        <EChart option={option} height={280} />
+      )}
+    </Card>
   );
 }
 
