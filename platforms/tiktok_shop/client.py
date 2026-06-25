@@ -6,6 +6,7 @@ import time
 from typing import Optional
 
 from core.base_client import BaseAPIClient
+from core.redact import redact_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +111,8 @@ class TikTokShopClient(BaseAPIClient):
             ok = True
             return result
         except Exception as e:  # noqa: BLE001
-            err = str(e)
+            # 脱敏：异常串可能带含 app_secret/sign/token 的完整 URL，落审计表前抹掉 query。
+            err = redact_secrets(str(e))
             raise
         finally:
             log_api_call_safe(
@@ -388,7 +390,8 @@ class TikTokShopClient(BaseAPIClient):
 
             raise RuntimeError("unreachable")
         except Exception as e:  # noqa: BLE001
-            err = str(e)
+            # 脱敏：异常串可能带含 app_secret/sign/token 的完整 URL，落审计表前抹掉 query。
+            err = redact_secrets(str(e))
             raise
         finally:
             log_api_call_safe(

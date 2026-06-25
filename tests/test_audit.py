@@ -162,3 +162,26 @@ def test_anchor_build_message(session):
     session.flush()
     msg2, breaks2 = _build_message(session)
     assert breaks2 == 1 and "断裂" in msg2 and "⚠️" in msg2
+
+
+def test_before_after_in_chain_tamper_detected(session):
+    """权限变更证据 before/after_json 已纳入哈希链：静默改 after_json（如反向洗白提权）即断链。"""
+    record_audit_event(
+        session, event_type="authz_change", event_action="role.upsert",
+        actor_open_id="ou_boss", actor_source="web", target="ou_victim",
+        summary="改权限", before={"role": "operator"}, after={"role": "boss"},
+        account_id="ecom-app",
+    )
+    session.flush()
+    rec = session.query(AuditLog).filter(AuditLog.account_id == "ecom-app").one()
+    assert verify_chain(session, AuditLog, audit_event_canonical_parts) == []
+    rec.after_json = {"role": "operator"}  # 洗白：把提权记录改成没提权，不重算 hash
+    session.flush()
+    breaks = verify_chain(session, AuditLog, audit_event_canonical_parts)
+    assert [b["id"] for b in breaks] == [rec.id]  # after_json 入链 → 篡改被检出
+
+
+def test_canonical_no_separator_collision(session):
+    """canonical 长度前缀编码：字段含分隔符也不碰撞（旧 `|` join 会把这两组拼成同串）。"""
+    assert compute_row_hash(None, ["a|b", "c"]) != compute_row_hash(None, ["a", "b|c"])
+    assert compute_row_hash(None, ["", "x"]) != compute_row_hash(None, ["x", ""])

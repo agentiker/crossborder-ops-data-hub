@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse
 
 from core.audit_context import set_audit_actor
 from core.db import init_db
+from core.redact import redact_secrets
 from core.tenancy import DEFAULT_ACCOUNT
 from platforms.tiktok_shop.client import TikTokShopClient
 from services.audit import log_audit_event_safe
@@ -65,11 +66,13 @@ async def tiktok_callback(
             },
         }
     except Exception as e:
+        # 脱敏：异常串可能带含 app_secret/授权 code 的完整 URL，禁止落审计表/回显给调用方。
+        safe = redact_secrets(str(e))
         log_audit_event_safe(
             event_type="authorization", event_action="oauth.callback", actor_source="oauth",
-            account_id=DEFAULT_ACCOUNT, summary=f"TikTok OAuth 授权失败: {str(e)[:200]}",
+            account_id=DEFAULT_ACCOUNT, summary=f"TikTok OAuth 授权失败: {safe[:200]}",
         )
-        raise HTTPException(status_code=500, detail=f"授权失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"授权失败: {safe}")
 
 
 @router.get("/callback/tiktok/html")
@@ -134,16 +137,18 @@ async def tiktok_callback_html(
         return HTMLResponse(content=html_content)
     except Exception as e:
         logger.error(f"[OAuth回调] 授权失败: {e}", exc_info=True)
+        # 脱敏：异常串可能带含 app_secret/授权 code 的完整 URL，禁止落审计表/回显给调用方。
+        safe = redact_secrets(str(e))
         log_audit_event_safe(
             event_type="authorization", event_action="oauth.callback", actor_source="oauth",
-            account_id=DEFAULT_ACCOUNT, summary=f"TikTok OAuth 授权失败（HTML 回调）: {str(e)[:200]}",
+            account_id=DEFAULT_ACCOUNT, summary=f"TikTok OAuth 授权失败（HTML 回调）: {safe[:200]}",
         )
         html_content = f"""
         <html>
         <head><title>TikTok Shop 授权失败</title></head>
         <body>
             <h1>授权失败</h1>
-            <p>错误信息: {str(e)}</p>
+            <p>错误信息: {safe}</p>
         </body>
         </html>
         """
