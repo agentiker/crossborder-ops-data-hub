@@ -84,7 +84,9 @@ def anchor_audit_chain_flow(dry_run: bool = False) -> dict:
         return {"sent": False, "breaks": total_breaks, "dry_run": True}
 
     sent = send_feishu_message(account=account, open_id=open_id, text=message)
-    if not sent:
+    if sent:
+        print(f"[anchor] ✅ 已投递运维 {account}/{open_id}（链尾留痕，breaks={total_breaks}）")
+    else:
         print("[anchor] ✗ 飞书投递失败（本轮无外部锚点，下次 timer 重试）")
     return {"sent": sent, "breaks": total_breaks}
 
