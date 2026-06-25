@@ -1,8 +1,9 @@
 [Unit]
 Description=每日聚合各店前一日预估利润（写 fact_profit_daily，供利润卡）
 [Timer]
-# UTC 17:33 = 印尼业务日次日 00:33，晚于 unsettled 采集(17:13)；中国早晨即可看到昨日预估利润
-OnCalendar=*-*-* 17:33:00
+# OnCalendar 按服务器 OS 本地时区 Asia/Shanghai(CST=UTC+8)。01:33 CST = 印尼业务日次日
+# 00:33，晚于 unsettled 采集(01:13)；聚合昨日完整数据，中国早晨即可看到昨日预估利润
+OnCalendar=*-*-* 01:33:00
 Persistent=true
 [Install]
 WantedBy=timers.target
