@@ -31,11 +31,26 @@ MVP 阶段（单租户、单/少店、数据量小：几十到几千订单、定
 - **MySQL 内存要压**（见 1.3），别让 buffer pool 吃满。
 - **错开 timer 触发分钟**（现有单元已错开，别都改成整点）。
 
-稳态内存大致分布（4 GB 上）：OS+systemd ~0.4 G / MySQL（调优后）~0.7–1 G / FastAPI 常驻 ~0.3 G / openclaw(node) ~0.2–0.3 G / cloudflared ~0.05 G。稳态 ~2–2.5 G，峰值靠 swap。
+稳态内存（**hp 实测 RSS**，2026-06 隔离本栈各进程）：
+
+| 组件 | 实测 RSS |
+|---|---|
+| **openclaw 网关**（node，客户对话/飞书推送/登录） | **613 MB** ← 单进程最大头 |
+| MySQL（未调优；调优后见 1.3 约同量） | 511 MB |
+| data-hub web（FastAPI 常驻） | 144 MB |
+| cloudflared | 31 MB |
+| OS + systemd + journald | ~0.4 G |
+| **稳态合计** | **~1.7 GB** |
+
+瞬时叠加：每个 timer 跑（Prefect）+200–300 MB；openclaw 对话并发时会从 613 MB 往上涨。
+
+**4 GB 上**：稳态 ~1.7 G，留 ~2.3 G 给瞬时峰值 + 页缓存 → **能跑，但不宽裕**。**4 GB swap 必须有**。风险：openclaw 对话高峰 + 重 timer 撞点可能冲到 2.5–3 G+，靠 swap 兜但有延迟。
+
+**两个降压杠杆**（强烈建议）：① **剥 Prefect**（见架构说明/记忆）——timer 单跑从 ~250 MB 降到 ~50–100 MB，削最大瞬时尖峰；② **调 MySQL**（1.3）别让它涨。
 
 **CPU 2 核够**：负载是网络/IO 密集（TikTok API、DB），非计算密集。
 
-**什么时候该升配**：加租户、订单上万、聚合变重、看板并发用户增多 → 上 **2C8G / 4C8G** 更从容（主要给 MySQL + Prefect 留头）。结论：2C4G 是 MVP 地板，预算允许直接 2C8G 更省心。
+**结论**：**安静上线（对话量不大）2C4G + swap + 剥 Prefect + 调 MySQL 够用**；**预期有真实客户对话量则直接 2C8G**——openclaw（613 MB 固定 + 对话时 spiky）是承载客户对话的进程，也是将来逼你升配的主因。
 
 ### 1.2 MySQL 用 Docker 还是原生安装
 
