@@ -122,6 +122,13 @@ sudo timedatectl set-timezone Asia/Shanghai
 # 4.4 linger——关键！没它则部署用户登出后 systemctl --user 的服务/定时器全停
 sudo loginctl enable-linger "$USER"
 
+# 4.4b swap——阿里云/云 ECS 镜像默认【不带 swap】，2C4G 必须手动建（瞬时峰值兜底）
+sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-swap.conf && sudo sysctl -p /etc/sysctl.d/99-swap.conf
+#   swap 在云盘上比内存慢，是安全网不是常态；若被持续吃 → 该升 RAM
+
 # 4.5 cloudflared（装到 ~/.local/bin，单元用绝对路径）
 mkdir -p ~/.local/bin
 curl -L -o ~/.local/bin/cloudflared \
@@ -244,7 +251,9 @@ cd ~/code/crossborder-ops-data-hub
 全新生产库**没有存量明文 token**：只要 `TOKEN_ENCRYPTION_KEY` 在**授权店铺之前**就配好（5.3 已配），授权时 token 直接密文落库。
 `scripts/migrate_encrypt_tokens.py` **仅用于迁移已有明文 DB**，全新部署不用跑。
 
-### 6.3 cloudflared 命名隧道
+### 6.3 cloudflared 命名隧道（**不用 nginx**）
+
+公网入口全部由 cloudflared 承担，**不需要 nginx/certbot**。云 ECS 上这更优：隧道是**出站**连 Cloudflare → ECS **不开任何入站端口**（安全组 80/443 全关，只留 SSH），无公网攻击面、无证书运维。
 
 ```bash
 cloudflared tunnel login                          # 浏览器授权 Cloudflare（选你的域名 zone）
@@ -255,6 +264,14 @@ systemctl --user restart cloudflared-board.service
 ```
 
 Cloudflare SSL 模式设 **Full**（勿 Full strict，源站无证书）。
+
+> **TikTok OAuth 回调也走隧道**（无需 nginx）：在 `deploy/cloudflared/config.yml` 的 ingress 加一条放行回调路径，TikTok Partner Center 回调登记 `https://board.example.com/auth/callback/tiktok`：
+> ```yaml
+>   - hostname: board.example.com
+>     path: "^/auth/callback/tiktok($|/)"
+>     service: http://127.0.0.1:8000
+> ```
+> 仓库内 `deploy/nginx.conf` 是早期方案遗留，生产不用。
 
 ### 6.4 密钥托管（off-box，硬要求）
 
