@@ -1,0 +1,12 @@
+[Unit]
+Description=审计哈希链完整性校验（断裂非零退出→OnFailure 发飞书告警）
+After=network-online.target
+OnFailure=data-onfailure@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/code/crossborder-ops-data-hub
+Environment=PYTHONUNBUFFERED=1
+# 检出断裂 → 退出码 1 → OnFailure 触发飞书告警；运行异常 → 退出码 2 同样告警。
+ExecStart=%h/.local/bin/uv run python -m scripts.verify_audit_chain
+TimeoutStartSec=300

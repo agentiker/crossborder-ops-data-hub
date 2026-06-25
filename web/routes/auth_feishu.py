@@ -136,6 +136,15 @@ async def callback(
         logger.exception("自助登记失败：open_id=%s account=%s", open_id, account)
         reg = "existing"
     logger.info("看板登录成功：open_id=%s account=%s name=%s reg=%s", open_id, account, name, reg)
+    if reg in ("boss", "pending"):  # 授权记录：仅新登记，existing 每次登录不刷屏
+        from services.audit import log_audit_event_safe
+
+        log_audit_event_safe(
+            event_type="authorization", event_action="feishu.register",
+            actor_open_id=open_id, actor_source="oauth", account_id=account,
+            target=open_id, summary=f"飞书登录自助登记：{reg}",
+            after={"name": name, "result": reg},
+        )
     cfg = settings.feishu_oauth
     resp = RedirectResponse(dest, status_code=302)
     resp.set_cookie(

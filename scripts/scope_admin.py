@@ -13,10 +13,12 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from core.db import SessionLocal
 from models.base_models import BusinessScope, PlatformToken
+from services.audit import record_audit_event_safe
 
 
 def _known_shop_ids(session) -> set[str]:
@@ -79,6 +81,9 @@ def cmd_create(args) -> int:
             .first()
         )
         if existing:
+            before = {"scope_name": existing.scope_name,
+                      "shop_ids": list(existing.shop_ids or []),
+                      "is_active": existing.is_active}
             existing.scope_name = args.name
             existing.scope_type = args.type
             existing.platform = args.platform
@@ -87,6 +92,7 @@ def cmd_create(args) -> int:
             existing.is_active = True
             action = "更新"
         else:
+            before = None
             session.add(
                 BusinessScope(
                     account_id=args.account_id,
@@ -101,6 +107,14 @@ def cmd_create(args) -> int:
             )
             action = "创建"
         session.commit()
+        record_audit_event_safe(
+            session,
+            event_type="authz_change", event_action="scope.create",
+            actor_open_id=os.getenv("USER"), actor_source="cli", account_id=args.account_id,
+            target=args.key, summary=f"CLI {action}业务范围 {args.key}",
+            before=before,
+            after={"scope_name": args.name, "shop_ids": shop_ids, "is_active": True},
+        )
         print(f"已{action} scope：[{args.account_id}] {args.key}（{len(shop_ids)} 个店铺）")
         return 0
     finally:
@@ -121,8 +135,16 @@ def cmd_deactivate(args) -> int:
         if scope is None:
             print(f"未找到 scope：[{args.account_id}] {args.key}", file=sys.stderr)
             return 2
+        before = {"is_active": scope.is_active}
         scope.is_active = False
         session.commit()
+        record_audit_event_safe(
+            session,
+            event_type="authz_change", event_action="scope.deactivate",
+            actor_open_id=os.getenv("USER"), actor_source="cli", account_id=args.account_id,
+            target=args.key, summary=f"CLI 停用业务范围 {args.key}",
+            before=before, after={"is_active": False},
+        )
         print(f"已停用 scope：{args.key}")
         return 0
     finally:
@@ -167,10 +189,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    from core.audit_context import set_audit_actor
     from core.tenancy import TENANT_BYPASS, set_current_account
 
     args = build_parser().parse_args(argv)
     set_current_account(getattr(args, "account_id", None) or TENANT_BYPASS)
+    set_audit_actor(open_id=os.getenv("USER"), source="cli")  # CLI 审计身份
     return args.func(args)
 
 

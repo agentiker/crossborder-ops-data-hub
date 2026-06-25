@@ -58,6 +58,10 @@ def refresh_tokens_flow(hours_before_expiry: int = 24) -> dict:
     log_egress_ip()
     init_db()
     set_current_account(TENANT_BYPASS)  # 扫描全租户 token，不按 account_id 过滤
+    # 审计身份（plan 审计合规第 3 节）：刷新触发的 _auth_get 在 api_call_logs 标 timer。
+    from core.audit_context import set_audit_actor
+
+    set_audit_actor(open_id="system", source="timer")
     session = SessionLocal()
 
     results = {"success": [], "failed": [], "skipped": [], "needs_reauth": []}

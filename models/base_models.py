@@ -1,9 +1,10 @@
 """ORM database models for platform sync and business metrics."""
 
-from sqlalchemy import Column, String, Integer, DateTime, UniqueConstraint, Text
+from sqlalchemy import Column, String, Integer, BigInteger, DateTime, UniqueConstraint, Text
 from sqlalchemy import Boolean, Date, JSON, Numeric
 from sqlalchemy.sql import func
 from core.db import Base
+from core.crypto import EncryptedText
 
 
 class Inventory(Base):
@@ -249,8 +250,10 @@ class PlatformToken(Base):
     seller_id = Column(String(64), index=True)
     account_id = Column(String(64), index=True)
     scope_key = Column(String(500), nullable=False, unique=True, index=True)
-    access_token = Column(Text)
-    refresh_token = Column(Text)
+    # 透明加密（plan 审计合规第 5 节）：写时 Fernet 加密、读时解密，业务代码无感。
+    # 存量明文经 scripts/migrate_encrypt_tokens.py 转密文；EncryptedText 读时兼容存量明文。
+    access_token = Column(EncryptedText)
+    refresh_token = Column(EncryptedText)
     token_expire_at = Column(DateTime)
     refresh_token_expire_at = Column(DateTime)
     shop_cipher = Column(String(128), index=True)
@@ -904,3 +907,73 @@ class AlertRecipient(Base):
 
     def __repr__(self):
         return f"<AlertRecipient(account={self.account_id}, open_id={self.open_id})>"
+
+
+# ── 审计与合规（plan 审计合规）——append-only + 哈希链，6 月不可篡改长存 ──────────
+# 两表都带 account_id，受 core/db.py do_orm_execute 自动租户过滤；导出/校验跨租户用
+# set_current_account(TENANT_BYPASS)。哈希链「按 account_id 分链」：每租户一条链，读链尾
+# 时显式 filter account_id（services/audit._append_with_chain），与 ORM 自动隔离天然契合、
+# 并发只在同租户内争用。链尾 hash 每日经 flows/anchor_audit_chain 发飞书留痕 → 不可抵赖。
+
+
+class ApiCallLog(Base):
+    """API 调用审计（轻量长存，**不存 payload**，与 raw_api_responses 业务缓存区别）。
+
+    在 client 两单点（_request_with_headers / _auth_get）插桩，覆盖 100% 出站 TikTok HTTP。
+    合规要的是「谁、调了什么、结果、何时」，非数据内容——故不存 request_body/response。
+    """
+
+    __tablename__ = "api_call_logs"
+
+    # BigInteger（生产 MySQL，api_call_logs 高频）；sqlite 测试回落 Integer 才能 rowid 自增。
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    account_id = Column(String(64), index=True)
+    platform = Column(String(32), nullable=False, default="tiktok_shop", index=True)
+    scope_key = Column(String(500), index=True)
+    shop_id = Column(String(64), index=True)
+    category = Column(String(16), nullable=False, index=True)  # business / auth_token / oauth
+    method = Column(String(16), nullable=False)
+    path = Column(String(500), nullable=False, index=True)  # 已剥 query（去 sign/timestamp 噪声）
+    http_status = Column(Integer)
+    business_code = Column(String(64))  # TikTok result.code
+    ok = Column(Boolean, nullable=False, default=True, index=True)
+    error = Column(String(500))  # 截断
+    duration_ms = Column(Integer)
+    actor_open_id = Column(String(64), index=True)
+    actor_source = Column(String(16))  # web / cli / timer / oauth
+    request_id = Column(String(64))
+    created_at = Column(DateTime, server_default=func.now(), index=True)
+    # 哈希链：prev_hash = 同租户上一行 row_hash；row_hash = sha256(规范串)
+    prev_hash = Column(String(64))
+    row_hash = Column(String(64), index=True)
+
+    def __repr__(self):
+        return f"<ApiCallLog(account={self.account_id}, path={self.path}, ok={self.ok})>"
+
+
+class AuditLog(Base):
+    """账号操作 + 权限变更 + 授权记录（合一表，event_type 区分）。
+
+    三类都是低频结构化事件，字段高度重合（who/what/target/when/before-after），合表便于
+    统一哈希链与统一导出。权限变更必须填 before_json/after_json（审核重点：谁何时改了谁的权限）。
+    """
+
+    __tablename__ = "audit_log"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    account_id = Column(String(64), index=True)
+    event_type = Column(String(24), nullable=False, index=True)  # account_op / authz_change / authorization
+    event_action = Column(String(48), nullable=False, index=True)  # 如 role.upsert / oauth.callback
+    actor_open_id = Column(String(64), index=True)
+    actor_source = Column(String(16))  # web / cli / timer / oauth
+    target = Column(String(128), index=True)  # 被改角色 open_id / scope_key / shop_id
+    summary = Column(String(500))
+    before_json = Column(JSON)
+    after_json = Column(JSON)
+    request_id = Column(String(64))
+    created_at = Column(DateTime, server_default=func.now(), index=True)
+    prev_hash = Column(String(64))
+    row_hash = Column(String(64), index=True)
+
+    def __repr__(self):
+        return f"<AuditLog(account={self.account_id}, action={self.event_action})>"

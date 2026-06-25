@@ -13,11 +13,13 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from core.db import SessionLocal
 from core.tenancy import is_valid_account
 from models.base_models import PlatformToken
+from services.audit import record_audit_event_safe
 
 
 def cmd_list(args) -> int:
@@ -65,6 +67,15 @@ def cmd_assign(args) -> int:
         if not changed:
             print(f"shop_id={args.shop_id} 已归属 {args.account_id}，无需变更")
         else:
+            record_audit_event_safe(
+                session,
+                event_type="authz_change", event_action="shop.assign",
+                actor_open_id=os.getenv("USER"), actor_source="cli", account_id=args.account_id,
+                target=args.shop_id,
+                summary=f"CLI 改店铺租户归属 shop={args.shop_id} → {args.account_id}",
+                before={"changed_from": [{"scope_key": sk, "account_id": old} for sk, old in changed]},
+                after={"account_id": args.account_id},
+            )
             for scope_key, old in changed:
                 print(f"已改归属：shop={args.shop_id} {old} → {args.account_id}（{scope_key}）")
         return 0
@@ -89,10 +100,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     # 跨租户操作：查/改任意租户的 token 行，须 BYPASS 绕过 ORM 自动租户过滤。
+    from core.audit_context import set_audit_actor
     from core.tenancy import TENANT_BYPASS, set_current_account
 
     args = build_parser().parse_args(argv)
     set_current_account(TENANT_BYPASS)
+    set_audit_actor(open_id=os.getenv("USER"), source="cli")  # CLI 审计身份
     return args.func(args)
 
 

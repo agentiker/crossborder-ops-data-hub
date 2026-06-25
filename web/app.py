@@ -16,7 +16,7 @@ from web.routes.chat import router as chat_router
 from web.routes.dashboard import router as dashboard_router
 from web.routes.data import router as data_router
 from web.routes.report import router as report_router
-from web.security import bind_account_context, require_internal_token
+from web.security import bind_account_context, bind_audit_context, require_internal_token
 from web.web_security import register_web_auth_handlers
 
 # 应用 INFO 日志接入 stdout → systemd journal。此前无任何日志配置：应用 logger 走 root
@@ -43,15 +43,17 @@ app.include_router(report_router, tags=["经营报告"])
 # 独立运营看板（plan/14）：飞书 OAuth 登录态 + user_authz 权限闸；公网经 cloudflared 只放行 /board*。
 # 不带 internal token（鉴权靠登录 cookie），include_in_schema=False 故不入 OpenAPI/MCP。
 app.include_router(auth_feishu_router, prefix="/board/auth/feishu", tags=["看板登录"])
-app.include_router(board_router, tags=["运营看板"])
+# bind_audit_context（plan 审计合规第 3 节）：board/chat/admin 路由级注入审计 actor
+# （source=web + open_id + request_id），供这些请求触发的深层 client API 调用带上调用者身份。
+app.include_router(board_router, tags=["运营看板"], dependencies=[Depends(bind_audit_context)])
 # Web 对话端（plan/15 Phase A）：自建 agent + 会话 API（/api/chat、/api/conversations、/api/me）。
 # 鉴权用飞书 OAuth 登录 cookie（require_web_user_api，未登录返 401），不带 internal token，
 # include_in_schema=False 故不入 OpenAPI/MCP（避免被 openclaw 当工具调用）。
-app.include_router(chat_router, tags=["Web对话"])
+app.include_router(chat_router, tags=["Web对话"], dependencies=[Depends(bind_audit_context)])
 # 角色权限可配置 admin API（plan/15 Phase C，boss-only）：管理 user_roles 真相源。
 # 鉴权用飞书 OAuth 登录 cookie + boss 守卫（require_boss），不带 internal token，
 # include_in_schema=False 故不入 OpenAPI/MCP（避免被 openclaw 当工具调用）。
-app.include_router(admin_router)
+app.include_router(admin_router, dependencies=[Depends(bind_audit_context)])
 register_web_auth_handlers(app)  # 装 WebAuthRedirect→302 / WebAuthForbidden→403 页
 app.include_router(
     data_router,

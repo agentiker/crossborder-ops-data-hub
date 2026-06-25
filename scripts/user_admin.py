@@ -18,10 +18,12 @@ boss 看全部；operator 被钉死在 --scope-key 且不可越界。operator �
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from core.db import SessionLocal
 from models.base_models import UserRole
+from services.audit import record_audit_event_safe
 from services.scope_resolution import ScopeError, expand_scope
 
 
@@ -82,6 +84,7 @@ def cmd_set(args) -> int:
             .first()
         )
         if row is None:
+            before = None
             row = UserRole(
                 channel=args.channel,
                 account_id=args.account_id,
@@ -94,6 +97,8 @@ def cmd_set(args) -> int:
             session.add(row)
             action = "创建"
         else:
+            before = {"role": row.role, "allowed_scope_key": row.allowed_scope_key,
+                      "is_active": row.is_active}
             row.role = role
             row.allowed_scope_key = scope_key
             if args.note is not None:
@@ -101,6 +106,14 @@ def cmd_set(args) -> int:
             row.is_active = True
             action = "更新"
         session.commit()
+        record_audit_event_safe(
+            session,
+            event_type="authz_change", event_action="role.upsert",
+            actor_open_id=os.getenv("USER"), actor_source="cli", account_id=args.account_id,
+            target=args.open_id, summary=f"CLI {action}角色 {role}",
+            before=before,
+            after={"role": role, "allowed_scope_key": scope_key, "is_active": True},
+        )
         scope_display = "全部" if role == "boss" else scope_key
         print(f"已{action}用户角色：{args.open_id}（{role}，scope={scope_display}）")
         return 0
@@ -123,8 +136,16 @@ def cmd_deactivate(args) -> int:
         if row is None:
             print(f"未找到用户角色：{args.open_id}", file=sys.stderr)
             return 2
+        before = {"role": row.role, "is_active": row.is_active}
         row.is_active = False
         session.commit()
+        record_audit_event_safe(
+            session,
+            event_type="authz_change", event_action="role.deactivate",
+            actor_open_id=os.getenv("USER"), actor_source="cli", account_id=args.account_id,
+            target=args.open_id, summary=f"CLI 停用角色 {before['role']}",
+            before=before, after={"is_active": False},
+        )
         print(f"已停用用户角色：{args.open_id}")
         return 0
     finally:
@@ -164,10 +185,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    from core.audit_context import set_audit_actor
     from core.tenancy import TENANT_BYPASS, set_current_account
 
     args = build_parser().parse_args(argv)
     set_current_account(getattr(args, "account_id", None) or TENANT_BYPASS)
+    set_audit_actor(open_id=os.getenv("USER"), source="cli")  # CLI 审计身份
     return args.func(args)
 
 

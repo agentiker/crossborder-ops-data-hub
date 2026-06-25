@@ -193,6 +193,22 @@ class Settings(BaseSettings):
     profit_currency: str = "CNY"
     unsettled_lookback_days: int = 3
 
+    # ── 上线前审计与合规（plan 审计合规：API/操作/权限/授权日志 + token 加密 + 备份）──
+    # token_encryption_key：platform_tokens.access_token/refresh_token 透明加密的 Fernet 密钥
+    #   （urlsafe base64 32B，`python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"` 生成）。
+    #   未配置时：写非空 token 直接 raise（fail closed 防裸明文落库）、读存量明文放行（迁移兼容）。
+    #   生产与 hp 各用独立 key，丢 key = 现存 token 不可解需重授权，须随 DB 一起备份保管。
+    # backup_gpg_passphrase：每日 mysqldump 加密备份的 GPG 对称口令（deploy/backup.sh 读）。
+    # audit_anchor_enabled：哈希链尾每日锚定（发飞书运维群留痕）开关。
+    # audit_anchor_account/open_id：锚定消息的飞书收件人（运维），同 notify-failure.sh 约定。
+    #   两者任一为空 → 锚定只写 journald（同机可被同管理员篡改，无外部留痕）；生产必须配，
+    #   否则"不可抵赖"失效——anchor flow 会 print 警告提示未配置外部锚点。
+    token_encryption_key: str = ""
+    backup_gpg_passphrase: str = ""
+    audit_anchor_enabled: bool = True
+    audit_anchor_account: str = ""
+    audit_anchor_open_id: str = ""
+
     class Config:
         env_file = ".env"
         env_nested_delimiter = "__"

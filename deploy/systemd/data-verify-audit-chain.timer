@@ -1,0 +1,7 @@
+[Unit]
+Description=每 6 小时校验审计哈希链完整性（独立于每日锚定，更快发现篡改）
+[Timer]
+OnCalendar=*-*-* 03,09,15,21:17:00
+Persistent=true
+[Install]
+WantedBy=timers.target

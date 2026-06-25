@@ -23,6 +23,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from core.config import settings
+from services.audit import log_audit_event_safe
 from services.llm import ChatMessage, LLMError, TextDelta, TurnComplete, get_provider
 from services.scope_resolution import ScopeError
 from services.user_authz import AuthzError, UserPermission, resolve_authorized_scope
@@ -190,6 +191,11 @@ async def conversation_rename(
 ):
     if not rename_conversation(conversation_id, perm.open_id, body.title):
         raise HTTPException(status_code=404, detail="会话不存在")
+    log_audit_event_safe(
+        event_type="account_op", event_action="conversation.rename",
+        actor_open_id=perm.open_id, actor_source="web", account_id=perm.account_id,
+        target=str(conversation_id), summary="重命名会话", after={"title": body.title},
+    )
     return {"ok": True}
 
 
@@ -200,6 +206,11 @@ async def conversation_delete(
 ):
     if not delete_conversation(conversation_id, perm.open_id):
         raise HTTPException(status_code=404, detail="会话不存在")
+    log_audit_event_safe(
+        event_type="account_op", event_action="conversation.delete",
+        actor_open_id=perm.open_id, actor_source="web", account_id=perm.account_id,
+        target=str(conversation_id), summary="删除会话",
+    )
     return {"ok": True}
 
 
@@ -223,6 +234,11 @@ async def chat(body: ChatRequest, perm: UserPermission = Depends(require_web_use
 
     # 先落库用户消息，再开始流式
     append_message(conv_id, "user", message)
+    log_audit_event_safe(  # 账号操作审计（不记消息内容，仅元数据）
+        event_type="account_op", event_action="chat.message",
+        actor_open_id=perm.open_id, actor_source="web", account_id=perm.account_id,
+        target=str(conv_id), summary="发送对话消息",
+    )
 
     def stream() -> Iterator[str]:
         yield _sse("meta", {"conversation_id": conv_id, "title": title})

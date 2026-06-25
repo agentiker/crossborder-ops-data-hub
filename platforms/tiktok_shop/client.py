@@ -86,18 +86,39 @@ class TikTokShopClient(BaseAPIClient):
 
     def _auth_get(self, path: str, params: dict, version: str = "202309") -> dict:
         """Call TikTok auth endpoints that do not use shop access tokens."""
-        request_params = {"app_key": self.app_key, "app_secret": self.app_secret, "version": version, **params}
-        request_params["sign"] = self._generate_sign(path, request_params)
-        resp = self.session.get(
-            f"{self.auth_base_url}{path}",
-            params=request_params,
-            timeout=30,
-        )
-        resp.raise_for_status()
-        result = resp.json()
-        if result.get("code") not in (0, "0", None):
-            raise Exception(f"TikTok auth API error: {result.get('message')}")
-        return result
+        # 审计单点②（plan 审计合规第 3 节）：覆盖 authenticate / refresh_access_token /
+        # 401 自动刷新链。category="auth_token"；try/finally 保证成功/失败都记一行。
+        from services.audit import log_api_call_safe
+
+        start = time.time()
+        status = bcode = err = None
+        ok = False
+        try:
+            request_params = {"app_key": self.app_key, "app_secret": self.app_secret, "version": version, **params}
+            request_params["sign"] = self._generate_sign(path, request_params)
+            resp = self.session.get(
+                f"{self.auth_base_url}{path}",
+                params=request_params,
+                timeout=30,
+            )
+            status = resp.status_code
+            resp.raise_for_status()
+            result = resp.json()
+            bcode = result.get("code")
+            if result.get("code") not in (0, "0", None):
+                raise Exception(f"TikTok auth API error: {result.get('message')}")
+            ok = True
+            return result
+        except Exception as e:  # noqa: BLE001
+            err = str(e)
+            raise
+        finally:
+            log_api_call_safe(
+                category="auth_token", method="GET", path=path,
+                account_id=self.account_id, shop_id=self.shop_id,
+                http_status=status, business_code=bcode, ok=ok, error=err,
+                duration_ms=int((time.time() - start) * 1000),
+            )
 
     def authenticate(self, auth_code: str) -> dict:
         """使用授权码获取access_token，并按已授权店铺落库（含 shop_cipher）。
@@ -315,45 +336,67 @@ class TikTokShopClient(BaseAPIClient):
         max_retries: int,
         version: str = "202309",
     ) -> dict:
-        url = f"{self.base_url}{path}"
-        params.update({
-            "app_key": self.app_key,
-            "timestamp": str(int(time.time())),
-            "version": version,
-        })
-        # data 为 {} 时也需序列化成 "{}" 并带 Content-Type（POST 空 body 合法，
-        # 否则 TikTok 对缺失 Content-Type 的 POST 返回 415）；GET 时 data=None 不带 body。
-        body_str = json.dumps(data, separators=(",", ":")) if data is not None else ""
-        params["sign"] = self._generate_sign(path, params, body=body_str)
-        if body_str:
-            headers = {**headers, "Content-Type": "application/json"}
+        # 审计单点①（plan 审计合规第 3 节）：覆盖所有带 token 的业务 API
+        # （products/orders/finance/analytics/inventory/authorization/shops）。try/finally
+        # 保证成功(ok)/HTTP 4xx/code≠0/抛异常都记一行；duration 含重试时间。
+        from services.audit import log_api_call_safe
 
-        for attempt in range(max_retries + 1):
-            resp = self.session.request(
-                method,
-                url,
-                params=params,
-                data=body_str.encode("utf-8") if body_str else None,
-                headers=headers,
-                timeout=30,
-            )
-            if resp.status_code == 401 and attempt < max_retries:
-                self.refresh_access_token()
-                headers["x-tts-access-token"] = self.access_token or ""
-                params["sign"] = self._generate_sign(path, params, body=body_str)
-                continue
-            if resp.status_code >= 400:
-                logger.error(
-                    "TikTok %s %s -> %s: %s",
-                    method, path, resp.status_code, resp.text,
+        start = time.time()
+        status = bcode = err = None
+        ok = False
+        try:
+            url = f"{self.base_url}{path}"
+            params.update({
+                "app_key": self.app_key,
+                "timestamp": str(int(time.time())),
+                "version": version,
+            })
+            # data 为 {} 时也需序列化成 "{}" 并带 Content-Type（POST 空 body 合法，
+            # 否则 TikTok 对缺失 Content-Type 的 POST 返回 415）；GET 时 data=None 不带 body。
+            body_str = json.dumps(data, separators=(",", ":")) if data is not None else ""
+            params["sign"] = self._generate_sign(path, params, body=body_str)
+            if body_str:
+                headers = {**headers, "Content-Type": "application/json"}
+
+            for attempt in range(max_retries + 1):
+                resp = self.session.request(
+                    method,
+                    url,
+                    params=params,
+                    data=body_str.encode("utf-8") if body_str else None,
+                    headers=headers,
+                    timeout=30,
                 )
-            resp.raise_for_status()
-            result = resp.json()
-            if result.get("code") not in (0, "0", None):
-                raise Exception(f"API错误: {result.get('message')}")
-            return result
+                status = resp.status_code
+                if resp.status_code == 401 and attempt < max_retries:
+                    self.refresh_access_token()
+                    headers["x-tts-access-token"] = self.access_token or ""
+                    params["sign"] = self._generate_sign(path, params, body=body_str)
+                    continue
+                if resp.status_code >= 400:
+                    logger.error(
+                        "TikTok %s %s -> %s: %s",
+                        method, path, resp.status_code, resp.text,
+                    )
+                resp.raise_for_status()
+                result = resp.json()
+                bcode = result.get("code")
+                if result.get("code") not in (0, "0", None):
+                    raise Exception(f"API错误: {result.get('message')}")
+                ok = True
+                return result
 
-        raise RuntimeError("unreachable")
+            raise RuntimeError("unreachable")
+        except Exception as e:  # noqa: BLE001
+            err = str(e)
+            raise
+        finally:
+            log_api_call_safe(
+                category="business", method=method, path=path,
+                account_id=self.account_id, shop_id=self.shop_id,
+                http_status=status, business_code=bcode, ok=ok, error=err,
+                duration_ms=int((time.time() - start) * 1000),
+            )
 
     # ── 商品（product/202309）──────────────────────────────────────────────
 

@@ -1000,6 +1000,13 @@ async def set_scope_binding(body: SetScopeBindingRequest):
         data = set_binding(body.open_id, body.scope_key, account_id=account_id)
     except ScopeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    from services.audit import log_audit_event_safe
+
+    log_audit_event_safe(
+        event_type="authz_change", event_action="scope_binding.set",
+        actor_open_id=body.open_id, actor_source="skill", account_id=account_id,
+        target=body.scope_key or "(全量)", summary="设置会话默认查询范围", after=data,
+    )
     return ScopeBindingResponse(open_id=body.open_id, **data)
 
 

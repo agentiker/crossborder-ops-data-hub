@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from core.db import SessionLocal
 from core.tenancy import set_current_account
 from models.base_models import UserRole
+from services.audit import record_audit_event_safe
 from services.product_cost_store import import_costs_from_rows
 from services.scope_resolution import ScopeError, expand_scope, list_scopes
 from services.user_authz import UserPermission, get_user_permission
@@ -163,6 +164,7 @@ async def upsert_role(body: RoleUpsertIn, boss: UserPermission = Depends(require
             .first()
         )
         if row is None:
+            before = None
             row = UserRole(
                 channel=channel,
                 account_id=account_id,
@@ -174,13 +176,29 @@ async def upsert_role(body: RoleUpsertIn, boss: UserPermission = Depends(require
             )
             session.add(row)
         else:
+            # commit 前捕获旧值快照（权限变更审计须记 before/after）
+            before = {
+                "role": row.role,
+                "allowed_scope_key": row.allowed_scope_key,
+                "is_active": row.is_active,
+            }
             row.role = body.role
             row.allowed_scope_key = scope_key
             if body.note is not None:
                 row.note = body.note
             row.is_active = True
         session.commit()
-        return _role_out(row)
+        out = _role_out(row)
+        record_audit_event_safe(
+            session,
+            event_type="authz_change", event_action="role.upsert",
+            actor_open_id=boss.open_id, actor_source="web", account_id=account_id,
+            target=body.open_id,
+            summary=("新建" if before is None else "更新") + f"角色 {body.role}",
+            before=before,
+            after={"role": body.role, "allowed_scope_key": scope_key, "is_active": True},
+        )
+        return out
     finally:
         session.close()
 
@@ -220,9 +238,18 @@ async def deactivate_role(body: RoleDeactivateIn, boss: UserPermission = Depends
             raise HTTPException(
                 status_code=404, detail=f"未找到用户角色：{body.open_id}"
             )
+        before = {"role": row.role, "is_active": row.is_active}
         row.is_active = False
         session.commit()
-        return _role_out(row)
+        out = _role_out(row)
+        record_audit_event_safe(
+            session,
+            event_type="authz_change", event_action="role.deactivate",
+            actor_open_id=boss.open_id, actor_source="web", account_id=boss.account_id,
+            target=body.open_id, summary=f"停用角色 {row.role}",
+            before=before, after={"is_active": False},
+        )
+        return out
     finally:
         session.close()
 
@@ -257,6 +284,14 @@ async def import_product_costs(
             session, rows, account_id=boss.account_id, platform="tiktok_shop"
         )
         session.commit()
+        record_audit_event_safe(
+            session,
+            event_type="account_op", event_action="product_costs.import",
+            actor_open_id=boss.open_id, actor_source="web", account_id=boss.account_id,
+            target=file.filename,
+            summary=f"导入产品成本 CSV：{file.filename}",
+            after=result,
+        )
         return result
     finally:
         session.close()

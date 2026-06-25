@@ -1,11 +1,35 @@
 """Internal access control for the skill-facing data API."""
 
 import secrets
+import uuid
 
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Request
 
 from core.config import settings
 from core.tenancy import DEFAULT_ACCOUNT, set_current_account
+
+
+async def bind_audit_context(request: Request) -> None:
+    """把当前 web 请求的审计身份写进 contextvar（plan 审计合规第 3 节）。
+
+    best-effort 从登录 cookie 取 open_id（失败忽略，审计是旁路、不阻断业务），标 source="web"
+    + 生成 request_id。挂在 board/chat/admin 路由级依赖，供这些请求触发的深层 client API
+    调用（如 OAuth 外的同步）在 api_call_logs 里带上 actor。**必须 async**：sync 依赖丢
+    threadpool，其 contextvar.set 不回传父 context（同 bind_account_context）。
+    """
+    from core.audit_context import set_audit_actor
+
+    open_id = None
+    try:
+        from web.web_session import verify_session_cookie
+
+        raw = request.cookies.get(settings.feishu_oauth.cookie_name, "")
+        sess = verify_session_cookie(raw) if raw else None
+        if sess:
+            open_id = sess[0]
+    except Exception:  # noqa: BLE001
+        pass
+    set_audit_actor(open_id=open_id, source="web", request_id=uuid.uuid4().hex)
 
 
 async def bind_account_context(

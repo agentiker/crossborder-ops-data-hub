@@ -71,6 +71,11 @@ def run_for_all_shops(flow_fn: Callable, platform: str = "tiktok_shop") -> None:
     Per-shop error isolation: one shop failing does not abort the rest. If any shop
     failed, raise SystemExit at the end so systemd `OnFailure` still fires the alert.
     """
+    # 审计身份（plan 审计合规第 3 节）：定时任务触发的 client 调用在 api_call_logs 标 timer。
+    from core.audit_context import set_audit_actor
+
+    set_audit_actor(open_id="system", source="timer")
+
     shops = discover_all_shops(platform)
     print(f"Discovered {len(shops)} shop(s) for {platform}")
     failed = []

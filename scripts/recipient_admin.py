@@ -12,10 +12,12 @@ scope_key 留空 = 本租户全量范围。add 时若 scope_key 非空会校验�
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from core.db import SessionLocal
 from models.base_models import AlertRecipient
+from services.audit import record_audit_event_safe
 from services.scope_resolution import ScopeError, expand_scope
 
 
@@ -61,18 +63,27 @@ def cmd_add(args) -> int:
             .first()
         )
         if row:
+            before = {"scope_key": row.scope_key, "is_active": row.is_active}
             row.scope_key = scope_key
             row.is_active = True
             if args.note is not None:
                 row.note = args.note
             action = "更新"
         else:
+            before = None
             session.add(AlertRecipient(
                 channel="feishu", account_id=args.account_id, open_id=args.open_id,
                 scope_key=scope_key, note=args.note, is_active=True,
             ))
             action = "创建"
         session.commit()
+        record_audit_event_safe(
+            session,
+            event_type="account_op", event_action="recipient.add",
+            actor_open_id=os.getenv("USER"), actor_source="cli", account_id=args.account_id,
+            target=args.open_id, summary=f"CLI {action}告警收件人 {args.open_id}",
+            before=before, after={"scope_key": scope_key, "is_active": True},
+        )
         print(f"已{action}收件人：[{args.account_id}] {args.open_id}（scope={scope_key or '全量'}）")
         return 0
     finally:
@@ -94,8 +105,16 @@ def cmd_deactivate(args) -> int:
         if row is None:
             print(f"未找到收件人：[{args.account_id}] {args.open_id}", file=sys.stderr)
             return 2
+        before = {"is_active": row.is_active}
         row.is_active = False
         session.commit()
+        record_audit_event_safe(
+            session,
+            event_type="account_op", event_action="recipient.deactivate",
+            actor_open_id=os.getenv("USER"), actor_source="cli", account_id=args.account_id,
+            target=args.open_id, summary=f"CLI 停用告警收件人 {args.open_id}",
+            before=before, after={"is_active": False},
+        )
         print(f"已停用收件人：[{args.account_id}] {args.open_id}")
         return 0
     finally:
@@ -126,10 +145,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    from core.audit_context import set_audit_actor
     from core.tenancy import TENANT_BYPASS, set_current_account
 
     args = build_parser().parse_args(argv)
     set_current_account(getattr(args, "account_id", None) or TENANT_BYPASS)
+    set_audit_actor(open_id=os.getenv("USER"), source="cli")  # CLI 审计身份
     return args.func(args)
 
 

@@ -5,9 +5,11 @@ import logging
 from fastapi import APIRouter, Query, HTTPException
 from fastapi.responses import HTMLResponse
 
+from core.audit_context import set_audit_actor
 from core.db import init_db
 from core.tenancy import DEFAULT_ACCOUNT
 from platforms.tiktok_shop.client import TikTokShopClient
+from services.audit import log_audit_event_safe
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -28,6 +30,8 @@ async def tiktok_callback(
 
     # 初始化数据库
     init_db()
+    # 审计身份（plan 审计合规第 3 节）：authenticate 的 _auth_get 在 api_call_logs 标 oauth。
+    set_audit_actor(source="oauth")
 
     try:
         # account_id=DEFAULT_ACCOUNT 决定 save_token 写进 platform_tokens.account_id
@@ -38,6 +42,17 @@ async def tiktok_callback(
         result = client.authenticate(code)
         data = result.get("data", {})
 
+        log_audit_event_safe(
+            event_type="authorization", event_action="oauth.callback", actor_source="oauth",
+            account_id=DEFAULT_ACCOUNT, target=client.shop_id,
+            summary="TikTok OAuth 授权成功",
+            after={
+                "scope_key": client.scope_key,
+                "has_shop_cipher": bool(client.shop_cipher),
+                "granted_scopes": data.get("granted_scopes"),
+                "access_token_expire_in": data.get("access_token_expire_in"),
+            },
+        )
         return {
             "success": True,
             "message": "授权成功",
@@ -50,6 +65,10 @@ async def tiktok_callback(
             },
         }
     except Exception as e:
+        log_audit_event_safe(
+            event_type="authorization", event_action="oauth.callback", actor_source="oauth",
+            account_id=DEFAULT_ACCOUNT, summary=f"TikTok OAuth 授权失败: {str(e)[:200]}",
+        )
         raise HTTPException(status_code=500, detail=f"授权失败: {str(e)}")
 
 
@@ -73,6 +92,8 @@ async def tiktok_callback_html(
 
     # 初始化数据库
     init_db()
+    # 审计身份（plan 审计合规第 3 节）：authenticate 的 _auth_get 在 api_call_logs 标 oauth。
+    set_audit_actor(source="oauth")
 
     try:
         # account_id=DEFAULT_ACCOUNT 决定 save_token 写进 platform_tokens.account_id
@@ -84,6 +105,16 @@ async def tiktok_callback_html(
         result = client.authenticate(code)
         data = result.get("data", {})
         logger.info(f"[OAuth回调] Token换取成功! shop_cipher={client.shop_cipher}, scope_key={client.scope_key}")
+        log_audit_event_safe(
+            event_type="authorization", event_action="oauth.callback", actor_source="oauth",
+            account_id=DEFAULT_ACCOUNT, target=client.shop_id,
+            summary="TikTok OAuth 授权成功（HTML 回调）",
+            after={
+                "scope_key": client.scope_key,
+                "has_shop_cipher": bool(client.shop_cipher),
+                "granted_scopes": data.get("granted_scopes"),
+            },
+        )
 
         html_content = f"""
         <html>
@@ -103,6 +134,10 @@ async def tiktok_callback_html(
         return HTMLResponse(content=html_content)
     except Exception as e:
         logger.error(f"[OAuth回调] 授权失败: {e}", exc_info=True)
+        log_audit_event_safe(
+            event_type="authorization", event_action="oauth.callback", actor_source="oauth",
+            account_id=DEFAULT_ACCOUNT, summary=f"TikTok OAuth 授权失败（HTML 回调）: {str(e)[:200]}",
+        )
         html_content = f"""
         <html>
         <head><title>TikTok Shop 授权失败</title></head>
