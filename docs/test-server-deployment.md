@@ -1,5 +1,7 @@
 # 测试服务器部署手册
 
+> ⚠️ **部分内容已过时**。本文成文较早，其中 `uv pip install -e .`、系统级 `sudo systemd`、cron 调度、nginx+certbot 等做法已被现状取代（现状：`uv sync` + `deploy/deploy.sh` 一键 + `systemctl --user` 定时器 + cloudflared 命名隧道 + 上线合规）。**生产部署以 [`production-deployment.md`](./production-deployment.md) 为权威**；本文的 TikTok OAuth/nginx、openclaw skill 同步两节仍可作参考。
+
 本文用于把 Crossborder Ops Data Hub 部署到测试服务器，并把 `openclaw-skills/` 下的 skill 同步给 openclaw 使用。
 
 ## 部署建议
