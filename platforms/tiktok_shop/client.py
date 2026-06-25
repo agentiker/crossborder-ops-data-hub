@@ -593,6 +593,45 @@ class TikTokShopClient(BaseAPIClient):
             if not page_token:
                 break
 
+    def iter_unsettled_transactions(
+        self,
+        *,
+        search_time_ge: int,
+        search_time_lt: int,
+        page_size: int = 50,
+        sort_field: str = "order_create_time",
+        sort_order: str = "ASC",
+    ):
+        """翻页拉取**未结算**订单的预估费用（GET /finance/202507/orders/unsettled）。
+
+        返回 TikTok 官方预估额（subject to change before settlement），反映当前费率政策，
+        供「今早出昨日预估利润」用。订单一旦结算即从此接口消失（转 statement_transactions
+        取真实值）。仅含 2025-01-01 后创建且未结算的交易。sort_field 必填（仅 order_create_time）。
+        GET 无 body，分页/shop_cipher 放 query（参与签名）。沙箱无真实订单 → total_count=0 空页。
+        """
+        page_token = None
+        while True:
+            params: dict = {
+                "page_size": page_size,
+                "sort_field": sort_field,
+                "sort_order": sort_order,
+                "search_time_ge": search_time_ge,
+                "search_time_lt": search_time_lt,
+            }
+            if self.shop_cipher:
+                params["shop_cipher"] = self.shop_cipher
+            if page_token:
+                params["page_token"] = page_token
+            result = self.request(
+                "GET", "/finance/202507/orders/unsettled",
+                params=params, data=None, version="202507",
+            )
+            data = result.get("data", {})
+            yield data
+            page_token = data.get("next_page_token")
+            if not page_token:
+                break
+
     # ── 店铺分析（analytics/202509，渠道饼图用）─────────────────────────────
 
     def _analytics_overview(self, path: str, start_date, end_date) -> Optional[dict]:

@@ -166,6 +166,26 @@ export interface BoardData {
     currency: string | null;
     available: boolean;
   };
+  // 预估利润（折 CNY）。estimated=今早预估（主口径）；settled=结算后真实（3b 回填，本期 null）。
+  // 无聚合数据时 available=false（前端显「暂无利润数据」）。
+  profit?: {
+    available: boolean;
+    currency: string;
+    estimated: ProfitBreakdown | null;
+    settled: ProfitBreakdown | null;
+  };
+}
+
+export interface ProfitBreakdown {
+  gmv: number;
+  gross_profit: number;
+  commission_fee: number;
+  ad_cost: number;
+  product_cost: number;
+  refund_amount: number;
+  order_count: number;
+  units_sold: number;
+  profit_margin: number | null;
 }
 
 // ── 角色管理（plan/15 Phase C · boss-only CRUD）──

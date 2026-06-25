@@ -1,0 +1,12 @@
+[Unit]
+Description=TikTok 预估利润聚合（GMV−扣点−广告−成本−退货，折 CNY）
+After=network-online.target
+OnFailure=data-onfailure@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/code/crossborder-ops-data-hub
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/.local/bin/uv run python -m flows.aggregate_profit
+# 单次最长 10 分钟，挂死自动杀
+TimeoutStartSec=600

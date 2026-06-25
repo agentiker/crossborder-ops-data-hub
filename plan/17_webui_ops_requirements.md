@@ -43,6 +43,9 @@
 
 **A. TikTok Shop（已是 ISV，多为补 scope，基本不额外收费）**
 - ✅ 已有：`seller.order.info`（订单/GMV/单量/Top/新品/商品/补货销量）、`seller.finance.info`（结算→广告费+扣点）
+- ✅ **【2026-06-24 调研重大发现】未结算订单预估费用 `GET /finance/202507/orders/unsettled`（GetUnsettledTransactions）**：本机真打 **code=0 Success，两 ID 店均通，在现有 `seller.finance.info` 内、零新申请**。专门返回**尚未结算**订单的 **TikTok 官方预估费用**，带与结算单**同构的 `fee_tax_breakdown.fee` 全拆项**（平台佣金/引荐费/交易手续费/动态佣金 dynamic_commission/GMV Max·TAP·联盟广告/各促销费/税…）+ 顶层汇总 `estimated_{fee,revenue,settlement,adjustment}_amount`。官方说明：**"estimated amount based on TikTok Shop policy, subject to change before settlement"**——即按 TikTok **当前费率政策**实时估算，**反映最新费率**。仅含 2025-01-01 后创建且未结算的交易，**一旦结算即从本接口移除**（转 statement 接口取真实值）。入参：`sort_field=order_create_time`(必填)/`sort_order`/`search_time_ge`·`search_time_lt`(Unix ts)/`page_*`/`shop_cipher`。**沙箱店 total_count=0（无真实订单），字段命名/真实值待接生产店复验**。
+  - **方案影响（推翻原"历史费率×GMV 自估"）**：预估扣点**直接用本接口官方值**（准且含拆项），自估降级为 unsettled 不可用时的兜底；"及时"费率监控有了**真正的事前数据源**——平台一调佣，unsettled 预估费率立即变 → 订单结算前即可发现。未结算→unsettled 预估 / 已结算→statement 真实，两者拼成完整订单费用全景，天然支撑"预估 vs 真实双展示 + 校准差异"。
+  - **排除项**：订单 `GET /order/202407/orders/{id}/price_detail` 仅含买家支付构成（sku 价/税/运费/voucher），**无平台佣金/引荐费**，非费率来源；商品接口无挂牌佣金率字段。
 - ✅ **已申请（2026-06-22）`seller.return_refund.basic`**：售后退货（退货率所需）。接口族 `/return_refund/202309/returns/search`、`cancellations/search`、`refunds/calculate`、`aftersales/search`。待写采集 flow 验证。
 - ✅ **已在授权内（2026-06-22 hp 实测调通）`data.shop_analytics.public.read`**：Shop Analytics（渠道饼图 #5），**零新申请**。`/analytics/202509/shop_products/{product_id}/performance` 返回 `sales.breakdowns[].content_type` 实测拆 **LIVE/VIDEO/PRODUCT_CARD**；达人维度 `/analytics/202511/creators/bestselling` 同样已过授权关，仅差补入参（`TimeSlot` 等枚举）。当前 granted_scopes 全集：`seller.product.basic, seller.order.info, seller.finance.info, seller.authorization.info, data.shop_analytics.public.read`。
   - **2026-06-24 实测更新（阶段5 实现期）**：渠道饼图最终**不用**逐商品 detail——**店铺级 `/analytics/202509/shop/performance` 自身的 `sales.gmv.breakdowns[].type` 就直接拆 LIVE/VIDEO/PRODUCT_CARD（和=overall）**，1 调用/店即得整店三分。同 scope 下店铺级接口同样在授权内（真打 code=0）。详见 §4 阶段5。
@@ -77,7 +80,8 @@
 > | 0 扣点全字段入库 | ✅ 上线 | merge `7fcfdbb`，hp 部署；`fact_finance_transaction` 表+解析就绪。**数据为空非缺陷**——连入的是沙箱店永不结算，接真实生产店即有值（见 [[roi-roas-alert-data-source]]） |
 > | 1 补货计划 | 🟡 大头已上线 | 变体同步(07:05 timer)+补货公式+飞书采购单(07:35 timer) 端到端通；**剩 F 审核页(WebUI 改量/跳过/标爆品)+ 手动触发按钮**；在途 MVP=0（待马帮） |
 > | 2 扣点告警+爆单 | 🟡 告警已上线 | 2-A 扣点率告警 + 2-B 爆单提醒 已接 `scan_fulfillment_alerts` 第3/4规则；**剩 H 新品按天销量曲线(echarts 前端)** |
-> | 3 汇率+成本+退货率→利润 | ⬜ 未开始 | 链最长：汇率 service → 成本 CSV 录入 → 退货率预估 → profit 端点 503→真数据 + 利润卡 |
+> | 3a 预估利润 MVP | 🟡 代码完成+本地验证/待部署 | unsettled 采集(17:13 timer)+利润聚合(17:33 timer)+成本 CSV 导入+退货率占位+汇率固定值+端点解封(503→真)+利润卡前端(预估/真实双展示折CNY)；407 测试绿、本地真打沙箱降级通；**剩 hp 部署+生产店 unsettled 字段复验**（见 [[tiktok-unsettled-estimated-fee-api]]） |
+> | 3b 利润增强 | ⬜ 后续 | 退货真实采集(return_refund)+历史率校准、及时费率告警(unsettled vs 基准)、结算后真实利润回填校准、易宝汇率 API |
 > | 4 马帮对接 | ⬜ 阻塞 | 待马帮开通申请；gwapi v2 已实测可行（`docs/mabang-erp-api.md`） |
 > | 5 渠道饼图 | ✅ 上线 | commit `3ffed5b`，hp 部署+前端构建+真打验证。**重大纠偏：`shop/performance` 自带 `sales.gmv.breakdowns[].type`（LIVE/VIDEO/PRODUCT_CARD）直接三分且和=overall→原相减法作废，改单接口精确拆分（1 调用/店）**。后端 `client.get_shop_performance`+`services/channel_metrics`（进程缓存15min/沙箱降级 available）+`board._collect` 注入 channels；前端 `BoardPage.ChannelPie` 环图。双租户真打通+隔离验证。**剩 hp 移动端目测 + 有真直播/视频 GMV 的生产店复验三分**（见 [[plan17-stage5-channel-pie]]） |
 >
@@ -97,11 +101,14 @@
 - 🟡 触发：✅ 定时(07:35) / ⬜ WebUI 手动按钮（未做）
 
 ### 阶段 2 — 扣点异常告警 + 新品曲线/爆单提醒（接现有 scan flow）🟡 告警已上线，剩 H 新品曲线
-- ✅ #4 扣点告警（2-A）：实际费率 vs 基准历史，异常推飞书（`scan_fulfillment_alerts._scan_fee_rate` 第3规则）；沙箱无结算数据时优雅跳过
+- ✅ #4 扣点告警（2-A，结算口径/滞后）：实际费率 vs 基准历史，异常推飞书（`scan_fulfillment_alerts._scan_fee_rate` 第3规则）；现窗口主动取 `today−settle_lag` 已结算完的天，**故告警本身滞后**；沙箱无结算数据时优雅跳过
+- ⬜ #4 扣点告警「及时版」（2-A+，2026-06-23 客户强诉求）：客户要**在结算前**及时知道平台调佣（佣金费率本应固定，某天升了若没及时看到通知就来不及调营销）。**用 unsettled 预估费率**（反映 TikTok 当前政策）vs 历史基准 → 平台一调佣即可在订单结算前告警；与结算口径告警互补（事前预警 + 事后确认）
 - ✅ #6 爆单提醒（2-B）：单日≥阈值（`hotsell_daily_units_threshold`）当日去重推送（`_scan_hotsell` 第4规则）
 - ⬜ #6 新品按天销量曲线（H，未做）：前端 echarts（后端 `get_units_by_product` 已就绪，缺前端图表）
 
-### 阶段 3 — 汇率服务 + 产品成本录入 → 利润端点上线 ⬜ 未开始
+### 阶段 3 — 汇率服务 + 产品成本录入 + 扣点/退货双轨预估 → 利润端点上线 ⬜ 未开始（2026-06-23 客户澄清「今早出昨日预估利润」后重定方向）
+> **客户澄清（2026-06-23 会议）**：要做到「今早出前一日**预估**利润」。昨日订单绝大多数**未结算**，故**扣点与退货都必须预估**（不能等结算单滞后）。利润卡**同时展示「预估利润（今早）」与「结算后真实利润（回填）」**让老板看校准差异。
+- **扣点（双轨，核心）**：预估走 `finance/202507/orders/unsettled`（TikTok 官方未结算预估费，含拆项，见 §3.A）→ 真实走结算单 `FactFinanceTransaction` 回填替换 + 校准。原"有历史按 SKU/没历史退类目·店铺级自估"降级为 unsettled 不可用时兜底（粒度决策见会议拍板，已被官方接口取代为更优解）。
 - 汇率 service：免费源+进程内缓存 / 结算单 `exchange_rate` / **马帮 `sys-get-currency-rate-list`**（马帮开通后优先），按订单支付时间取历史汇率
 - 产品成本：CSV/手动录入入口（SKU↔成本，RMB含运费）；**马帮开通后切 `stock-do-search-sku-list-new.defaultCost`（带三级类目，利润可类目拆分）**
 - 退货率（**预估口径，非真实**）：用成熟订单(下单≥20-30天、退货窗口基本走完)算 SKU/类目历史退货率 → 乘当期 GMV **预扣**；真数据仅**回填校准**该率，不参与当期扣减；无历史则人工初始值

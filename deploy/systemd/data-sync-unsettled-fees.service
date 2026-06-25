@@ -1,0 +1,12 @@
+[Unit]
+Description=TikTok 未结算订单预估费用同步（预估口径，供预估利润）
+After=network-online.target
+OnFailure=data-onfailure@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/code/crossborder-ops-data-hub
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/.local/bin/uv run python -m flows.sync_unsettled_fees
+# 单次最长 10 分钟，挂死自动杀
+TimeoutStartSec=600

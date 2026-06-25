@@ -337,6 +337,10 @@ class DailyProfit(Base):
     refund_amount = Column(Numeric(18, 4), nullable=False, default=0)
     other_cost = Column(Numeric(18, 4), nullable=False, default=0)
     gross_profit = Column(Numeric(18, 4), nullable=False, default=0)
+    # 阶段3a：展示币种（MVP 各金额已折 CNY）+ 口径区分。profit_kind 入 scope_key，
+    # estimated=今早预估利润 / settled=结算后真实利润回填(3b)，同日同店两行并存。
+    currency = Column(String(8), nullable=False, server_default="CNY")
+    profit_kind = Column(String(16), nullable=False, server_default="estimated", index=True)
     calculated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     def __repr__(self):
@@ -429,6 +433,108 @@ class FactFinanceTransaction(Base):
             f"<FactFinanceTransaction(transaction_id={self.transaction_id}, "
             f"order_id={self.order_id}, settlement={self.settlement_amount})>"
         )
+
+
+class FactUnsettledFee(Base):
+    """未结算订单的 TikTok 官方**预估**费用（GET /finance/202507/orders/unsettled）。
+
+    与 fact_finance_transaction 同构但语义不同：本表是「结算前预估额」（subject to change），
+    反映 TikTok 当前费率政策，用于「今早出昨日预估利润」与（3b）及时费率监控。订单一旦结算
+    即从该接口消失 → 采集用**全量替换**（每店每业务日先 DELETE 当日旧行再插全量，见
+    services/unsettled_fee_store.replace_unsettled_for_day），预估行随结算自然消退、无需过期任务。
+    3b 校准：按 order_id JOIN fact_finance_transaction 做 estimated vs settled 差异分析。
+    提升列对齐结算表（estimated_* 顶层汇总 + 三项广告费），其余 fee 子项入 fee_breakdown JSON。
+    """
+
+    __tablename__ = "fact_unsettled_fee"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String(32), nullable=False, index=True)
+    country = Column(String(16), nullable=False, default="GLOBAL", index=True)
+    shop_id = Column(String(64), index=True)
+    seller_id = Column(String(64), index=True)
+    account_id = Column(String(64), index=True)
+    scope_key = Column(String(500), nullable=False, unique=True, index=True)
+    transaction_id = Column(String(64), nullable=False, index=True)  # 幂等键来源
+    order_id = Column(String(64), index=True)  # 聚合到订单/日 + 3b 与结算表 JOIN
+    metric_date = Column(Date, nullable=False, index=True)  # order_create_time 归印尼业务日
+    currency = Column(String(8))
+    # ── 顶层预估汇总（estimated_fee_amount = 预估总费税，不含运费）──
+    estimated_fee_amount = Column(Numeric(18, 4), nullable=False, default=0)
+    estimated_revenue_amount = Column(Numeric(18, 4), nullable=False, default=0)
+    estimated_settlement_amount = Column(Numeric(18, 4), nullable=False, default=0)
+    estimated_adjustment_amount = Column(Numeric(18, 4), nullable=False, default=0)
+    # ── 三项广告费（从 fee_tax_breakdown.fee 提升，利润里广告费单列、避免与扣点双算）──
+    gmv_max_fee = Column(Numeric(18, 4), nullable=False, default=0)
+    tap_commission = Column(Numeric(18, 4), nullable=False, default=0)
+    affiliate_commission = Column(Numeric(18, 4), nullable=False, default=0)
+    # ── 全量兜底：fee 的所有非零子项原样存 JSON（平台新增费种自动入库）──
+    fee_breakdown = Column(JSON)
+    raw_response_id = Column(Integer, nullable=True)
+    fetched_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return (
+            f"<FactUnsettledFee(transaction_id={self.transaction_id}, "
+            f"order_id={self.order_id}, estimated_fee={self.estimated_fee_amount})>"
+        )
+
+
+class ProductCost(Base):
+    """SKU 级产品成本主数据（RMB，含国内头程运费），运营经 CSV 导入维护。
+
+    利润公式的「产品成本」项数据源。MVP 用 seller_sku 关联（OrderLineItem.seller_sku 已有列）；
+    成本以 RMB 录入、不折算（利润统一折 CNY 展示）。account_id 维度做多租户隔离。
+    马帮开通后（阶段4）可由 stock-do-search-sku-list-new.defaultCost 同步替换 CSV。
+    """
+
+    __tablename__ = "product_costs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String(32), nullable=False, default="tiktok_shop", index=True)
+    account_id = Column(String(64), index=True)
+    seller_sku = Column(String(128), nullable=False, index=True)
+    unit_cost_rmb = Column(Numeric(18, 4), nullable=False, default=0)  # 含运费
+    note = Column(String(500))
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id", "platform", "seller_sku", name="uq_product_cost_sku"
+        ),
+    )
+
+    def __repr__(self):
+        return f"<ProductCost(seller_sku={self.seller_sku}, unit_cost_rmb={self.unit_cost_rmb})>"
+
+
+class ReturnRateConfig(Base):
+    """预估退货率配置（三级：default / category / sku，运营可配）。
+
+    阶段3a MVP 只用全店 default 一级（category/sku 列预留 3b 细化）。取数优先级
+    sku > category > default(表) > settings.estimated_return_rate_default（见 services/return_rate）。
+    预估退货 = 退货率 × 当期 GMV，避免真实退货滞后高估当期利润。
+    """
+
+    __tablename__ = "return_rate_configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String(32), nullable=False, default="tiktok_shop", index=True)
+    account_id = Column(String(64), index=True)
+    scope_level = Column(String(16), nullable=False, default="default")  # default|category|sku
+    scope_value = Column(String(128), nullable=False, default="")  # category 名 / seller_sku；default 为空串
+    return_rate = Column(Numeric(8, 6), nullable=False, default=0)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id", "platform", "scope_level", "scope_value",
+            name="uq_return_rate_scope",
+        ),
+    )
+
+    def __repr__(self):
+        return f"<ReturnRateConfig({self.scope_level}={self.scope_value}, rate={self.return_rate})>"
 
 
 class Alert(Base):

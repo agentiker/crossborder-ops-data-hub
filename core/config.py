@@ -184,6 +184,15 @@ class Settings(BaseSettings):
     replenish_normal_multiplier: float = 1.5
     replenish_superhot_multiplier: float = 2.0
 
+    # 阶段3a 预估利润（利润 = GMV − 扣点 − 广告费 − 产品成本(含运费) − 预估退货，统一折 CNY 展示）。
+    # idr_to_rmb：IDR→CNY 乘数（MVP 固定值，易宝汇率 API 留 3b，见 services/fx_rate）；1e7 IDR≈4500 CNY。
+    # estimated_return_rate_default：全店默认预估退货率（无 return_rate_configs 配置时回落，运营可在 .env 调）。
+    # unsettled_lookback_days：unsettled 采集按 order_create_time 回看天数（覆盖结算滞后边缘）。
+    idr_to_rmb: float = 0.00045
+    estimated_return_rate_default: float = 0.05
+    profit_currency: str = "CNY"
+    unsettled_lookback_days: int = 3
+
     class Config:
         env_file = ".env"
         env_nested_delimiter = "__"

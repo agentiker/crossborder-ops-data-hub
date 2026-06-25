@@ -20,6 +20,7 @@ from services.ad_metrics import (
 )
 from services.fulfillment_metrics import get_pending_fulfillments
 from services.order_metrics import get_gmv_summary, get_gmv_trend, get_top_skus
+from services.profit_summary import get_profit_card
 from services.scope_binding import get_binding, set_binding
 from services.scope_resolution import ScopeError, ScopeFilters, list_scopes, resolve_filters
 from services.user_authz import (
@@ -183,12 +184,21 @@ class InventoryResponse(BaseModel):
 class ProfitSummary(BaseModel):
     start_date: str
     end_date: str
-    gmv: float
-    gross_profit: float
-    ad_cost: float
-    order_count: int
-    units_sold: int
-    profit_margin: float
+    available: bool = True
+    currency: str = "CNY"
+    # 预估利润（今早出，主口径）+ 结算后真实利润（3b 回填，本期通常 None）
+    estimated_profit: float = 0.0
+    settled_profit: Optional[float] = None
+    # 旧字段保留向后兼容：映射预估口径
+    gmv: float = 0.0
+    gross_profit: float = 0.0
+    commission_fee: float = 0.0
+    ad_cost: float = 0.0
+    product_cost: float = 0.0
+    refund_amount: float = 0.0
+    order_count: int = 0
+    units_sold: int = 0
+    profit_margin: Optional[float] = None
 
 
 class AlertItem(BaseModel):
@@ -547,19 +557,53 @@ ALERTS_NOT_READY = (
 )
 
 
-@router.get("/profit/summary", response_model=ProfitSummary)
+@router.get("/profit/summary", response_model=ProfitSummary, operation_id="ops_profit_summary")
 async def get_profit(
     start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
+    period: Optional[str] = Query(None, description="相对时间窗口（按印尼时区、周一起算）：today/yesterday/this_week/last_week/last_7d/last_30d/this_month。"),
     platform: Optional[str] = Query(None, description="平台标识，如 tiktok_shop / shopee"),
     country: Optional[str] = Query(None, description="国家/地区，如 ID / GLOBAL"),
     shop_id: Optional[str] = Query(None, description="店铺ID"),
+    scope_id: Optional[str] = Query(None, description="业务范围 scope_key（命名店铺集合）"),
+    shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
+    open_id: Optional[str] = Query(None, description="飞书用户 open_id（ou_xxx，用于自动应用会话默认范围）"),
 ):
-    """利润汇总（规划中，本期不提供）。
+    """预估利润汇总（阶段3a，折 CNY），默认最近7天。
 
-    计算逻辑已就绪，但缺成本数据源（结算/广告/商品成本），返回数据会误导，故显式 503。
+    口径：利润 = GMV − 扣点 − 广告费 − 产品成本(含运费) − 预估退货。扣点/广告走「未结算预估
+    (TikTok 官方) + 已结算真实」双源，退货按可配置率预估，成本来自 CSV 录入。同时返回预估利润
+    （estimated_profit，主口径）与结算后真实利润（settled_profit，3b 回填，本期通常 None）。
+    无聚合数据 → available=False（不再 503）。
     """
-    raise HTTPException(status_code=503, detail=PROFIT_NOT_READY)
+    scope = _resolve_scope(
+        scope_id=scope_id, platform=platform, country=country,
+        shop_id=shop_id, shop_ids=shop_ids, open_id=open_id,
+    )
+    sd, ed = _resolve_window(start_date, end_date, period, default_back_days=7)
+    card = get_profit_card(
+        start_date=sd, end_date=ed,
+        platform=scope.platform, country=scope.country, shop_ids=scope.shop_ids,
+    )
+    est = card.get("estimated") or {}
+    settled = card.get("settled")
+    return ProfitSummary(
+        start_date=sd.isoformat(),
+        end_date=ed.isoformat(),
+        available=card["available"],
+        currency=card["currency"],
+        estimated_profit=est.get("gross_profit", 0.0),
+        settled_profit=(settled or {}).get("gross_profit") if settled else None,
+        gmv=est.get("gmv", 0.0),
+        gross_profit=est.get("gross_profit", 0.0),
+        commission_fee=est.get("commission_fee", 0.0),
+        ad_cost=est.get("ad_cost", 0.0),
+        product_cost=est.get("product_cost", 0.0),
+        refund_amount=est.get("refund_amount", 0.0),
+        order_count=est.get("order_count", 0),
+        units_sold=est.get("units_sold", 0),
+        profit_margin=est.get("profit_margin"),
+    )
 
 
 @router.get("/alerts", response_model=AlertResponse)

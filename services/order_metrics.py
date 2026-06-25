@@ -238,6 +238,45 @@ def get_units_by_sku(
             session.close()
 
 
+def get_units_by_seller_sku(
+    *,
+    start_date: date,
+    end_date: date,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_id: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
+    session=None,
+) -> dict[str, int]:
+    """窗口内各 seller_sku 的已付款销量（line_item 条数），返回 {seller_sku: units}。
+
+    口径同 get_units_by_sku，但按 OrderLineItem.seller_sku 聚合——供利润聚合 join 产品成本
+    （ProductCost 按 seller_sku 关联）。seller_sku 为空的行不计入（无法 join 成本→该部分成本计 0）。
+    """
+    start_dt, end_dt = _paid_window(start_date, end_date)
+    own_session = session is None
+    session = session or SessionLocal()
+    try:
+        query = (
+            session.query(
+                OrderLineItem.seller_sku,
+                func.count(OrderLineItem.line_item_id),
+            )
+            .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
+            .filter(
+                OrderHeader.paid_time.isnot(None),
+                OrderHeader.paid_time >= start_dt,
+                OrderHeader.paid_time <= end_dt,
+            )
+        )
+        query = _scope_filters(query, OrderHeader, platform, country, shop_id, shop_ids)
+        query = query.group_by(OrderLineItem.seller_sku)
+        return {sku: int(units or 0) for sku, units in query.all() if sku}
+    finally:
+        if own_session:
+            session.close()
+
+
 def get_units_by_product(
     *,
     start_date: date,

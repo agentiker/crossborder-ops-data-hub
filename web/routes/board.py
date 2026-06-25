@@ -21,6 +21,7 @@ from core.timezone import previous_window, resolve_period
 from services.ad_metrics import get_ad_spend_summary, get_roas
 from services.channel_metrics import get_channel_gmv_breakdown
 from services.order_metrics import get_gmv_summary
+from services.profit_summary import get_profit_card
 from services.scope_resolution import ScopeError, list_scopes
 from services.user_authz import AuthzError, UserPermission, resolve_authorized_scope
 from web.routes.data import (
@@ -118,6 +119,11 @@ async def _collect(perm: UserPermission, period: str, requested_scope_key: str) 
         start_date=cur_start, end_date=cur_end,
         platform=platform, country=country, shop_ids=shop_id_list,
     )
+    # 预估利润卡（折 CNY）：从 fact_profit_daily 聚合预估/真实双套；无聚合数据 available=False。
+    profit = get_profit_card(
+        start_date=cur_start, end_date=cur_end,
+        platform=platform, country=country, shop_ids=shop_id_list,
+    )
     cur = get_gmv_summary(
         start_date=cur_start, end_date=cur_end,
         platform=platform, country=country, shop_ids=shop_id_list,
@@ -183,6 +189,7 @@ async def _collect(perm: UserPermission, period: str, requested_scope_key: str) 
         "low": _asdict(low),
         "fulfillment": _asdict(fulfillment),
         "channels": channels,
+        "profit": profit,
     }
 
 

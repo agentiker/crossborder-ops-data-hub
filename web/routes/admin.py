@@ -13,14 +13,17 @@ user_authz 确认 role==boss，否则 403（与既有 AuthzError/ScopeError→40
 
 from __future__ import annotations
 
+import csv
+import io
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from core.db import SessionLocal
 from core.tenancy import set_current_account
 from models.base_models import UserRole
+from services.product_cost_store import import_costs_from_rows
 from services.scope_resolution import ScopeError, expand_scope, list_scopes
 from services.user_authz import UserPermission, get_user_permission
 from web.web_security import require_web_user_api
@@ -220,5 +223,40 @@ async def deactivate_role(body: RoleDeactivateIn, boss: UserPermission = Depends
         row.is_active = False
         session.commit()
         return _role_out(row)
+    finally:
+        session.close()
+
+
+# ── 产品成本导入（阶段3a，利润公式的成本项）────────────────────────────────────
+
+
+@router.post("/product-costs/import", include_in_schema=False)
+async def import_product_costs(
+    file: UploadFile = File(...),
+    boss: UserPermission = Depends(require_boss),
+):
+    """CSV 批量导入 SKU 产品成本（RMB 含运费），boss-only。
+
+    CSV 列：seller_sku,unit_cost_rmb[,note]（首行表头）。按 (account_id, platform, seller_sku)
+    幂等 upsert。坏行收集进 errors 不中断。多租户：钉死 boss 自己的 account_id。
+    """
+    set_current_account(boss.account_id)
+    try:
+        content = (await file.read()).decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="CSV 须为 UTF-8 编码")
+    reader = csv.DictReader(io.StringIO(content))
+    if not reader.fieldnames or "seller_sku" not in reader.fieldnames:
+        raise HTTPException(
+            status_code=400, detail="CSV 缺表头列 seller_sku（需 seller_sku,unit_cost_rmb[,note]）"
+        )
+    rows = [dict(r) for r in reader]
+    session = SessionLocal()
+    try:
+        result = import_costs_from_rows(
+            session, rows, account_id=boss.account_id, platform="tiktok_shop"
+        )
+        session.commit()
+        return result
     finally:
         session.close()

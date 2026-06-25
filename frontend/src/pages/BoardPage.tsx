@@ -49,6 +49,11 @@ const fmtMoney = (n: number | undefined) =>
   n == null
     ? "—"
     : "Rp " + Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
+// 利润折 CNY 展示（¥ 前缀），与 fmtMoney(Rp/IDR) 区分，避免币种误标。
+const fmtMoneyCny = (n: number | undefined | null) =>
+  n == null
+    ? "—"
+    : "¥ " + Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
 
 export function BoardPage() {
   const [period, setPeriod] = useState("last_30d");
@@ -117,6 +122,7 @@ export function BoardPage() {
           ) : (
             <>
               <BusinessOverview data={data} loading={loading} />
+              <ProfitCard data={data} loading={loading} />
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                 <HotProducts data={data} loading={loading} />
                 <InventoryHealth data={data} loading={loading} />
@@ -294,6 +300,79 @@ function ChannelPie({ data, loading }: { data: BoardData | null; loading: boolea
         <ChartEmpty loading={loading} empty={empty} height={280} />
       ) : (
         <EChart option={option} height={280} />
+      )}
+    </Card>
+  );
+}
+
+/* ── 预估利润卡（plan/17 阶段3a：预估利润 + 结算后真实利润双展示，折 CNY）──────── */
+
+// 数据走 /board/data 的 profit 字段。利润 = GMV − 扣点 − 广告 − 成本 − 退货（折 CNY）。
+// estimated=今早预估（主口径）；settled=结算后真实（3b 回填，本期 null → 显「待结算回填」）。
+// 无聚合数据 available=false → 显「暂无利润数据」。移动端：明细 grid-cols-2 sm:grid-cols-3 自适应。
+function ProfitCard({ data, loading }: { data: BoardData | null; loading: boolean }) {
+  const p = data?.profit;
+  const est = p?.estimated;
+  const settled = p?.settled;
+  const empty = !p?.available ? "暂无利润数据（需接生产店并跑聚合）" : "";
+  const detail: { label: string; value: number | undefined }[] = [
+    { label: "GMV", value: est?.gmv },
+    { label: "扣点", value: est?.commission_fee },
+    { label: "广告费", value: est?.ad_cost },
+    { label: "产品成本", value: est?.product_cost },
+    { label: "预估退货", value: est?.refund_amount },
+  ];
+  return (
+    <Card>
+      <CardHead
+        title="预估利润（折 CNY）"
+        right={
+          <span className="text-xs text-foreground-tertiary">
+            GMV − 扣点 − 广告 − 成本 − 退货
+          </span>
+        }
+      />
+      {loading || empty ? (
+        <ChartEmpty loading={loading} empty={empty} height={200} />
+      ) : (
+        <div className="space-y-4">
+          {/* 两大数：预估利润 / 结算后真实利润 */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="rounded-xl bg-fill-shallow p-4">
+              <div className="text-xs text-foreground-tertiary">预估利润（今早）</div>
+              <div className="tabnum text-2xl font-bold text-foreground">
+                {fmtMoneyCny(est?.gross_profit)}
+              </div>
+              {est?.profit_margin != null && (
+                <div className="text-xs text-foreground-tertiary">
+                  利润率 {est.profit_margin.toFixed(1)}%
+                </div>
+              )}
+            </div>
+            <div className="rounded-xl bg-fill-shallow p-4">
+              <div className="text-xs text-foreground-tertiary">结算后真实利润</div>
+              {settled ? (
+                <div className="tabnum text-2xl font-bold text-foreground">
+                  {fmtMoneyCny(settled.gross_profit)}
+                </div>
+              ) : (
+                <div className="pt-1 text-sm text-foreground-tertiary">待结算回填</div>
+              )}
+            </div>
+          </div>
+          {/* 成本拆解明细 */}
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+            {detail.map((d) => (
+              <div key={d.label} className="flex items-center justify-between text-sm">
+                <span className="text-foreground-tertiary">{d.label}</span>
+                <span className="tabnum text-foreground">{fmtMoneyCny(d.value)}</span>
+              </div>
+            ))}
+          </div>
+          <div className="text-xs text-foreground-tertiary">
+            预估口径：扣点/广告含未结算订单 TikTok 官方预估 + 已结算真实；退货按配置率预估
+          </div>
+        </div>
       )}
     </Card>
   );

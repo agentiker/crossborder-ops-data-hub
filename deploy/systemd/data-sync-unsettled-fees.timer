@@ -1,0 +1,8 @@
+[Unit]
+Description=每日拉 TikTok 未结算订单预估费用（供今早出昨日预估利润）
+[Timer]
+# UTC 17:13 = 印尼业务日(UTC+7)次日 00:13，昨日订单已全部产生、聚合前拉取
+OnCalendar=*-*-* 17:13:00
+Persistent=true
+[Install]
+WantedBy=timers.target

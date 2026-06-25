@@ -32,6 +32,8 @@ def get_profit_summary(
         ).filter(
             DailyProfit.metric_date >= start_date,
             DailyProfit.metric_date <= end_date,
+            # 只取预估口径，避免 3b settled 行与 estimated 行重复求和
+            DailyProfit.profit_kind == "estimated",
         )
         if platform:
             query = query.filter(DailyProfit.platform == platform)

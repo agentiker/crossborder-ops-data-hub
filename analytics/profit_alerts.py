@@ -58,6 +58,10 @@ class ProfitRecordInput:
     tax_fee: Decimal = Decimal("0")
     refund_amount: Decimal = Decimal("0")
     other_cost: Decimal = Decimal("0")
+    # 阶段3a：利润行的展示币种（MVP 各金额已折算为 CNY）与口径（estimated=预估 / settled=结算后真实）。
+    # profit_kind 纳入 scope_key，使同日同店的预估行与真实回填行（3b）并存、互不覆盖。
+    currency: str = "CNY"
+    profit_kind: str = "estimated"
 
 
 def calculate_profit_metrics(inputs: ProfitInputs) -> ProfitMetrics:
@@ -102,13 +106,14 @@ def calculate_gross_profit(record: ProfitRecordInput) -> Decimal:
 
 def build_profit_scope_key(record: ProfitRecordInput) -> str:
     grain = record.internal_sku or "all"
+    # profit_kind 入 key：预估行(estimated)与结算后真实行(settled，3b)同日同店共存、互不覆盖。
     return build_scope_key(
         platform=record.platform,
         country=record.country,
         shop_id=record.shop_id,
         seller_id=record.seller_id,
         account_id=record.account_id,
-        resource=f"profit:{record.metric_date.isoformat()}:{grain}",
+        resource=f"profit:{record.profit_kind}:{record.metric_date.isoformat()}:{grain}",
     )
 
 

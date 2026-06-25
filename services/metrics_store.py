@@ -46,6 +46,8 @@ def upsert_daily_profit(session, record: ProfitRecordInput) -> DailyProfit:
         "tax_fee": record.tax_fee,
         "refund_amount": record.refund_amount,
         "other_cost": record.other_cost,
+        "currency": record.currency,
+        "profit_kind": record.profit_kind,
         "gross_profit": calculate_gross_profit(record),
     }
     if existing:
