@@ -80,7 +80,7 @@
 > | 0 扣点全字段入库 | ✅ 上线 | merge `7fcfdbb`，hp 部署；`fact_finance_transaction` 表+解析就绪。**数据为空非缺陷**——连入的是沙箱店永不结算，接真实生产店即有值（见 [[roi-roas-alert-data-source]]） |
 > | 1 补货计划 | 🟡 大头已上线 | 变体同步(07:05 timer)+补货公式+飞书采购单(07:35 timer) 端到端通；**剩 F 审核页(WebUI 改量/跳过/标爆品)+ 手动触发按钮**；在途 MVP=0（待马帮） |
 > | 2 扣点告警+爆单 | 🟡 告警已上线 | 2-A 扣点率告警 + 2-B 爆单提醒 已接 `scan_fulfillment_alerts` 第3/4规则；**剩 H 新品按天销量曲线(echarts 前端)** |
-> | 3a 预估利润 MVP | 🟡 代码完成+本地验证/待部署 | unsettled 采集(17:13 timer)+利润聚合(17:33 timer)+成本 CSV 导入+退货率占位+汇率固定值+端点解封(503→真)+利润卡前端(预估/真实双展示折CNY)；407 测试绿、本地真打沙箱降级通；**剩 hp 部署+生产店 unsettled 字段复验**（见 [[tiktok-unsettled-estimated-fee-api]]） |
+> | 3a 预估利润 MVP | ✅ 已部署 hp 测试环境 | unsettled 采集(01:13 CST timer)+利润聚合(01:33 timer)+成本 CSV 导入+退货率占位+汇率固定值+端点解封(503→真)+利润卡前端(预估/真实双展示折CNY)；407 测试绿、hp 真打沙箱降级+两店聚合通过(GMV/退货折CNY)；**剩 生产店 unsettled 交易级字段复验(沙箱 total_count=0 验不了) + 成本导入前端 admin UI(后端端点/CLI 已可用)**（见 [[tiktok-unsettled-estimated-fee-api]]） |
 > | 3b 利润增强 | ⬜ 后续 | 退货真实采集(return_refund)+历史率校准、及时费率告警(unsettled vs 基准)、结算后真实利润回填校准、易宝汇率 API |
 > | 4 马帮对接 | ⬜ 阻塞 | 待马帮开通申请；gwapi v2 已实测可行（`docs/mabang-erp-api.md`） |
 > | 5 渠道饼图 | ✅ 上线 | commit `3ffed5b`，hp 部署+前端构建+真打验证。**重大纠偏：`shop/performance` 自带 `sales.gmv.breakdowns[].type`（LIVE/VIDEO/PRODUCT_CARD）直接三分且和=overall→原相减法作废，改单接口精确拆分（1 调用/店）**。后端 `client.get_shop_performance`+`services/channel_metrics`（进程缓存15min/沙箱降级 available）+`board._collect` 注入 channels；前端 `BoardPage.ChannelPie` 环图。双租户真打通+隔离验证。**剩 hp 移动端目测 + 有真直播/视频 GMV 的生产店复验三分**（见 [[plan17-stage5-channel-pie]]） |
