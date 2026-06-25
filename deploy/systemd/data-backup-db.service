@@ -1,0 +1,12 @@
+[Unit]
+Description=每日加密数据库备份（mysqldump→gzip→GPG AES256，落 ~/backups/data-hub）
+After=network-online.target
+OnFailure=data-onfailure@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/code/crossborder-ops-data-hub
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/.local/bin/uv run python -m scripts.backup_db
+# dump+加密最长 30 分钟（库小，富余）
+TimeoutStartSec=1800

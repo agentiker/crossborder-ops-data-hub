@@ -163,11 +163,24 @@ def test_collect_sets_current_account_before_nested_data_calls(monkeypatch):
         assert current_account() == "ecom-app-gtl"
         return {"items": [], "buckets": {}}
 
+    # 渠道饼图(阶段5)/利润卡(阶段3a)是 _collect 的同步嵌套数据调用——同样要 mock，否则会构造
+    # 真实 client 读 platform_tokens（token 已密文化后本地无 key 解不开）。它们也属"嵌套调用"，
+    # 故一并断言 current_account 已就位。
+    def fake_get_channel_gmv_breakdown(**kwargs):
+        assert current_account() == "ecom-app-gtl"
+        return {"available": False}
+
+    def fake_get_profit_card(**kwargs):
+        assert current_account() == "ecom-app-gtl"
+        return {"available": False}
+
     monkeypatch.setattr(board_routes, "get_overview", fake_get_overview)
     monkeypatch.setattr(board_routes, "get_orders_trend", fake_get_orders_trend)
     monkeypatch.setattr(board_routes, "get_orders_top_skus", fake_get_orders_top_skus)
     monkeypatch.setattr(board_routes, "get_low_stock", fake_get_low_stock)
     monkeypatch.setattr(board_routes, "get_fulfillments_pending", fake_get_fulfillments_pending)
+    monkeypatch.setattr(board_routes, "get_channel_gmv_breakdown", fake_get_channel_gmv_breakdown)
+    monkeypatch.setattr(board_routes, "get_profit_card", fake_get_profit_card)
     monkeypatch.setattr(
         board_routes,
         "get_gmv_summary",

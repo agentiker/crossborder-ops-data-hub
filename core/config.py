@@ -198,7 +198,9 @@ class Settings(BaseSettings):
     #   （urlsafe base64 32B，`python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"` 生成）。
     #   未配置时：写非空 token 直接 raise（fail closed 防裸明文落库）、读存量明文放行（迁移兼容）。
     #   生产与 hp 各用独立 key，丢 key = 现存 token 不可解需重授权，须随 DB 一起备份保管。
-    # backup_gpg_passphrase：每日 mysqldump 加密备份的 GPG 对称口令（deploy/backup.sh 读）。
+    # backup_gpg_passphrase：每日 mysqldump 加密备份的 GPG 对称口令（scripts/backup_db.py 读）。
+    #   它和 token_encryption_key 都须存在**备份之外**（异地/密管）：备份口令不能只躺在它加密的备份里，
+    #   token key 也不能只躺在被它加密的 DB 备份里——否则丢机即双双不可恢复。
     # audit_anchor_enabled：哈希链尾每日锚定（发飞书运维群留痕）开关。
     # audit_anchor_account/open_id：锚定消息的飞书收件人（运维），同 notify-failure.sh 约定。
     #   两者任一为空 → 锚定只写 journald（同机可被同管理员篡改，无外部留痕）；生产必须配，
