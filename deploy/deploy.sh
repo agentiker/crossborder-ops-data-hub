@@ -5,6 +5,7 @@
 # 做什么（幂等）：
 #   1) （--pull）git pull
 #   2) uv sync 装依赖
+#   2.5) 构建前端 SPA（frontend/dist；node/npm 在 nvm，脚本自动加载 PATH）
 #   3) init_db 建新表（create_all，只建不存在的）
 #   4) 确保项目 .env 有 OPENCLAW_BIN 绝对路径（告警/直投需要，systemd PATH 无 nvm）
 #   5) 安装 deploy/systemd/*.{service,timer} 到 ~/.config/systemd/user/（unit 用 %h，无机器绝对路径）
@@ -41,6 +42,24 @@ echo "== Data Hub 部署 @ $REPO_DIR =="
 [ "$PULL" -eq 1 ] && run git pull
 
 echo "-- 依赖 --"; run "$UV" sync
+
+echo "-- 构建前端 SPA（frontend/dist）--"
+# node/npm 在 nvm 里，systemd/非交互登录 PATH 通常没有；先加载 nvm，再退化到探测 node bin。
+if ! command -v npm >/dev/null 2>&1; then
+  export NVM_DIR="$HOME/.nvm"
+  # shellcheck disable=SC1091
+  [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" >/dev/null 2>&1 || true
+  if ! command -v npm >/dev/null 2>&1; then
+    NODE_BIN="$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -1 || true)"
+    [ -n "$NODE_BIN" ] && PATH="$NODE_BIN:$PATH"
+  fi
+fi
+if command -v npm >/dev/null 2>&1; then
+  # package-lock 可能与 package.json 不同步（npm ci 会拒绝），用 install 自行调和。
+  run bash -c "cd '$REPO_DIR/frontend' && npm install --no-audit --no-fund && npm run build"
+else
+  echo "  ⚠️ 未探测到 npm，跳过前端构建（/app 将 404）。装 node 后重跑或手动 cd frontend && npm run build。"
+fi
 
 echo "-- 建表（init_db，幂等）--"
 run "$UV" run python -c "from core.db import init_db; init_db()"
