@@ -1,4 +1,4 @@
-"""Prefect order sync flow (TTS order/202309)。
+"""Order sync flow (TTS order/202309)。
 
 增量策略：按订单创建时间窗口拉取。游标记录上次窗口结束时间，下次从该时间回退 1 小时
 （overlap 缓冲，防止边界漏单），到当前时间。重复运行同一窗口靠 order_id/line_item_id

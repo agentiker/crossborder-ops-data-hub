@@ -1,4 +1,4 @@
-"""Network diagnostics shared by Prefect flows."""
+"""Network diagnostics shared by sync flows."""
 
 import re
 

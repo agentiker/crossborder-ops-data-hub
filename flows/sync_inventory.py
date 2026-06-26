@@ -1,4 +1,4 @@
-"""Prefect inventory sync flow.
+"""Inventory sync flow.
 
 两步流程：先 products/search 枚举全店商品（拿 product_id 与 title），再分批
 inventory/search 查库存。inventory/search 必须按 product_id 查、本身无翻页，故依赖

@@ -11,7 +11,7 @@
 | ORM | SQLAlchemy 2.0 | 配合 pymysql |
 | 数据校验 | Pydantic V2 | API 响应清洗 |
 | HTTP 客户端 | Requests | 统一请求封装 |
-| 任务编排 | Prefect 3.x | 自带 Web UI 监控 |
+| 任务调度 | systemd user timer | 零额外常驻；失败 OnFailure→飞书告警 |
 | Web 框架 | FastAPI | OAuth 回调 & 数据查询 API |
 | 配置管理 | python-dotenv | .env 文件加载 |
 
@@ -38,10 +38,10 @@ crossborder-ops-data-hub/
 │   ├── sync_state.py           # 同步游标管理
 │   ├── metrics_store.py        # 指标数据存储
 │   └── scoping.py              # 平台/国家/店铺维度管理
-├── flows/                      # Prefect 任务流（业务逻辑）
-│   ├── sync_inventory.py       # 库存同步 Flow
-│   ├── sync_orders.py          # 订单增量同步 Flow
-│   └── refresh_tokens.py       # Token 自动刷新 Flow
+├── flows/                      # 定时任务流（业务逻辑，systemd timer 直调）
+│   ├── sync_inventory.py       # 库存同步
+│   ├── sync_orders.py          # 订单增量同步
+│   └── refresh_tokens.py       # Token 自动刷新
 ├── web/                        # FastAPI Web 服务
 │   ├── app.py                  # FastAPI 应用入口
 │   ├── security.py             # 内部 API 鉴权（X-Internal-Token）
@@ -58,7 +58,7 @@ crossborder-ops-data-hub/
 ├── tests/                      # 测试用例
 ├── main.py                     # 启动入口（本地调试用）
 ├── auth.py                     # CLI 手动授权脚本
-├── prefect.yaml                # Prefect 部署配置（定时调度）
+├── deploy/systemd/             # 定时任务 systemd unit（.service/.timer）
 ├── pyproject.toml              # 项目配置与依赖声明
 ├── requirements.txt            # 兼容 pip 的依赖列表
 ├── .env.example
@@ -140,15 +140,7 @@ python auth.py <auth_code>
 
 > **注意**：`auth_code` 是一次性授权码，只能使用一次。授权完成后 Token 会自动持久化到 MySQL，后续定时任务会自动加载并刷新 Token，无需重复授权。
 
-### 4. 启动 Prefect Server（可选，提供 Web UI）
-
-```bash
-prefect server start
-```
-
-访问 `http://127.0.0.1:4200` 查看任务管理界面。
-
-### 5. 运行同步任务
+### 4. 运行同步任务
 
 **本地调试（直接执行）：**
 
@@ -156,19 +148,18 @@ prefect server start
 uv run python main.py
 ```
 
-**生产部署（定时调度）：** 用 **systemd user timer**，不用 Prefect server。
+**生产部署（定时调度）：** 用 **systemd user timer**（Prefect 已剥离，见 commit `afe3e60`）。
 
 ```bash
 ./deploy/deploy.sh --pull     # 拉代码 + uv sync + 建表 + 装/启用所有 systemd timer
 ```
 
 > 详见「服务器定时任务运维」节与 [docs/proactive-push-ops.md](docs/proactive-push-ops.md)。
-> ⚠️ `prefect deploy` **不是**当前生产路径（没有 worker 在跑，会空转）——`@flow`/`@task` 只作编程模型用。
 
 ## 服务器定时任务运维（测试服务器 yamk）
 
 > 测试服务器 `yamk`（局域网 192.168.1.129，本机用 `ssh hp` 免密登录）上的数据拉取
-> **不走 Prefect server，也不走 cron**，用 **systemd user timer** 跑。下面是日常运维口径。
+> **不走 cron**，用 **systemd user timer** 跑。下面是日常运维口径。
 
 ### 部署了什么
 
@@ -270,14 +261,22 @@ class ShopeeClient(BaseAPIClient):
         pass
 ```
 
-### Prefect 任务流
+### 定时任务流
 
-使用 `@task` 和 `@flow` 装饰器定义 ETL 流程：
+flow = 普通 Python 函数（systemd timer 直调），ETL 的取数/写库步骤用零依赖
+`core.retry.retry` 装饰器加失败重试（语义同原 Prefect `@task(retries=)`）：
 
 ```python
-@flow(name="tiktok-inventory-sync", log_prints=True)
+from core.retry import retry
+
+@retry(retries=3, delay_seconds=60)   # 取数失败重试 3 次
+def fetch_inventory(): ...
+
+@retry(retries=2, delay_seconds=30)   # 写库失败重试 2 次
+def save_to_db(data): ...
+
 def sync_inventory_flow():
-    raw_data = fetch_inventory()      # E: Extract
+    raw_data = fetch_inventory()       # E: Extract
     valid_data = validate_inventory()  # T: Transform
     count = save_to_db(valid_data)     # L: Load
 ```
@@ -309,18 +308,6 @@ uvicorn web.app:app --host 0.0.0.0 --port 8000
 | `GET /api/data/profit/summary` | 利润汇总（规划中，本期返回 503） |
 | `GET /api/data/alerts` | 未处理告警（规划中，本期返回 503） |
 
-## Prefect Web UI 功能
-
-> ⚠️ **当前生产未运行 Prefect server**，本节仅未来迁移到 Prefect 时参考。现状调度见「服务器定时任务运维」。
-
-启动 `prefect server start` 后访问 `http://127.0.0.1:4200`：
-
-- 任务运行历史查看
-- 实时日志流
-- 任务状态监控（成功/失败/运行中）
-- 手动触发任务
-- 定时调度配置
-
 ## 扩展指南
 
 ### 新增平台接口
@@ -338,52 +325,40 @@ def get_orders(self, start_time: int, end_time: int) -> dict:
 
 ### 新增同步任务
 
-> ⚠️ **当前生产用 systemd timer**：新增定时任务 = ① `flows/` 写 flow（`@flow` + `if __name__=="__main__"` 入口）② `deploy/systemd/` 加一对 `.service`/`.timer`（照现有的；service 记得加 `OnFailure=data-onfailure@%n.service`）③ 跑 `deploy/deploy.sh` 自动安装启用。下面的 Prefect 写法仅未来迁移时用。
+新增定时任务三步（全走 systemd timer）：
 
-**第一步**：在 `flows/` 下新建 Flow 文件
+**第一步**：在 `flows/` 下新建 flow 文件（普通函数 + `@retry` + `__main__` 入口）
 
 ```python
 # flows/sync_orders.py
-from prefect import flow, task
+from core.retry import retry
 
-@task(name="fetch-orders")
+@retry(retries=3, delay_seconds=60)
 def fetch_orders() -> list:
     ...
 
-@flow(name="tiktok-orders-sync", log_prints=True)
 def sync_orders_flow():
     ...
+
+if __name__ == "__main__":
+    sync_orders_flow()
 ```
 
-**第二步**：在 `prefect.yaml` 中注册调度
+**第二步**：在 `deploy/systemd/` 加一对 `.service`/`.timer`（照现有单元抄；
+`.service` 记得加 `OnFailure=data-onfailure@%n.service` 以接飞书失败告警）。
 
-```yaml
-deployments:
-  # 已有任务
-  - name: tiktok-inventory-sync
-    entrypoint: flows/sync_inventory.py:sync_inventory_flow
-    schedule:
-      interval: 3600
-
-  # 新增任务
-  - name: tiktok-orders-sync
-    entrypoint: flows/sync_orders.py:sync_orders_flow
-    schedule:
-      interval: 1800
-```
-
-**第三步**：部署
+**第三步**：部署（自动安装并启用新单元）
 
 ```bash
-prefect deploy --all
+./deploy/deploy.sh --pull
 ```
 
 ## 后续扩展
 
 1. **接入更多平台**：在 `platforms/` 下新建目录，继承 `BaseAPIClient`
 2. **新增数据表**：在 `models/` 下定义 ORM 模型
-3. **新增同步任务**：在 `flows/` 下定义新的 Prefect Flow
-4. **分布式部署**：Prefect 支持多 Worker 分布式执行
+3. **新增同步任务**：在 `flows/` 下定义 flow + `deploy/systemd/` 加 timer（见上「新增同步任务」）
+4. **要 Web UI / 多 worker 编排**：达到多租户规模再评估迁 Prefect Cloud（见架构记忆）
 
 ## License
 

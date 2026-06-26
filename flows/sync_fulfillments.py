@@ -1,4 +1,4 @@
-"""Prefect 待发货快照同步 flow（TTS order/202309，order_status=AWAITING_SHIPMENT）。
+"""待发货快照同步 flow（TTS order/202309，order_status=AWAITING_SHIPMENT）。
 
 快照式（参考 flows/sync_inventory.py，无时间窗口）：每次全量拉当前所有待发货单，覆盖
 pending_fulfillments 表并删除已离开待发货态的旧行。订单增量同步走 create_time 窗口、抓不到
