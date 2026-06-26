@@ -1,8 +1,8 @@
 [Unit]
 Description=每日拉 TikTok 未结算订单预估费用（供今早出昨日预估利润）
 [Timer]
-# OnCalendar 按 OS 本地时区。生产机 OS=Asia/Jakarta(WIB=UTC+7)，故 01:13 = 印尼当地，
-# 在昨日业务日(午夜)收盘之后——昨日订单已全部产生、聚合前拉取。(hp 测试机 OS=CST 会早 1h，无碍。)
+# OnCalendar 按服务器 OS 本地时区 Asia/Shanghai(CST=UTC+8)。01:13 CST = 印尼业务日(WIB)
+# 次日 00:13——印尼昨日业务日刚结束(CST 次日 01:00)，昨日订单已全部产生、聚合前拉取
 OnCalendar=*-*-* 01:13:00
 Persistent=true
 [Install]
