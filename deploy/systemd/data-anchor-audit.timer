@@ -1,8 +1,8 @@
 [Unit]
 Description=每日锚定审计链尾发飞书运维群留痕（删尾即与昨日锚点对不上→不可抵赖）
 [Timer]
-# OnCalendar 按服务器 OS 本地时区 Asia/Shanghai(CST)。02:07 CST = 印尼业务日次日凌晨，
-# 晚于各 sync/聚合 timer，锚定当日已沉淀完整的链尾。
+# OnCalendar 按 OS 本地时区。生产机 OS=Asia/Jakarta(WIB)，02:07 = 印尼当地凌晨，晚于各
+# sync/聚合 timer，锚定当日已沉淀完整的链尾。(hp 测试机 OS=CST 早 1h，无碍。)
 OnCalendar=*-*-* 02:07:00
 Persistent=true
 [Install]

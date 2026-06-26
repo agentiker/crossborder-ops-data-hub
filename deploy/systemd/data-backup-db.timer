@@ -1,7 +1,7 @@
 [Unit]
 Description=每日加密数据库备份（保留最近 14 份，错开锚定 02:07）
 [Timer]
-# OnCalendar 按服务器 OS 本地时区 Asia/Shanghai(CST)。02:43 CST 业务低峰，晚于审计锚定。
+# OnCalendar 按 OS 本地时区。生产机 OS=Asia/Jakarta(WIB)，02:43 = 印尼当地业务低峰，晚于审计锚定。
 OnCalendar=*-*-* 02:43:00
 Persistent=true
 [Install]

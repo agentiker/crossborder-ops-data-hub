@@ -115,9 +115,12 @@ sudo apt install -y git curl build-essential mysql-server gnupg
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source ~/.bashrc && uv --version
 
-# 4.3 时区——定时任务 OnCalendar 按服务器 OS 本地时区解读（单元注释假定 CST）
-sudo timedatectl set-timezone Asia/Shanghai
-#   若生产机定在别的时区，要么改这里，要么逐个改 deploy/systemd/*.timer 的 OnCalendar
+# 4.3 时区——定时任务 OnCalendar 按服务器 OS 本地时区解读。
+#     本服务专供印尼商家（机器也在阿里云雅加达 ap-southeast-5），用印尼本地时区，让 timer
+#     钟点 = 印尼当地时间（如 07:35 推送 = 印尼早晨；收盘后任务落印尼午夜后）。
+sudo timedatectl set-timezone Asia/Jakarta
+#   注意：业务日/GMV 的 UTC+7 口径写死在 core/timezone，与 OS 时区无关 → 报表不受此设置影响；
+#   此设置只决定 timer 触发钟点。换别的市场再按当地时区设；deploy/systemd/*.timer 注释以 WIB 为准。
 
 # 4.4 linger——关键！没它则部署用户登出后 systemctl --user 的服务/定时器全停
 sudo loginctl enable-linger "$USER"
@@ -220,6 +223,10 @@ LLM__MODEL=deepseek-chat
 
 # ── openclaw 直投（绝对路径，systemd PATH 无 nvm）──
 OPENCLAW_BIN=/home/<user>/.nvm/versions/node/vXX/bin/openclaw
+
+# ── 印尼本地化 ──
+ALERT_QUIET_TZ=Asia/Jakarta                 # 告警静默时段(23:00~08:30)按此时区解读；
+#   默认 Asia/Shanghai 对印尼会偏 1h，**必须覆盖**。业务日 UTC+7 另在 core/timezone 写死，不受此影响。
 
 # ── 上线合规（本轮新增）──
 TOKEN_ENCRYPTION_KEY=<Fernet key>           # 配好后再授权店铺，token 即密文落库
@@ -343,7 +350,7 @@ git checkout <上一个好 tag/commit> && ./deploy/deploy.sh --restart-web
 
 ## 附录 A：systemd 单元一览
 
-`deploy/deploy.sh` 自动安装 enable `deploy/systemd/` 下全部 `*.service`/`*.timer`。新增 timer 只要丢进该目录重跑 deploy 即生效。常驻服务：`data-hub.service`、`cloudflared-board.service`。定时任务时刻见各 `.timer` 的 `OnCalendar`（CST）。
+`deploy/deploy.sh` 自动安装 enable `deploy/systemd/` 下全部 `*.service`/`*.timer`。新增 timer 只要丢进该目录重跑 deploy 即生效。常驻服务：`data-hub.service`、`cloudflared-board.service`。定时任务时刻见各 `.timer` 的 `OnCalendar`（生产机 OS=Asia/Jakarta，即 WIB 印尼当地时间）。
 
 ## 附录 B：恢复演练 / DR 手册（已在 hp 验证）
 
