@@ -15,8 +15,7 @@ from flows.sync_ad_spend import aggregate_ad_spend as _aggregate_task
 from models.base_models import FactAdSpendDaily
 from services.ad_spend_store import build_ad_spend_scope_key, upsert_ad_spend_daily
 
-# aggregate_ad_spend 是 @task；用 .fn 拿原函数，避免触发 Prefect 运行时。
-aggregate_ad_spend = _aggregate_task.fn
+aggregate_ad_spend = _aggregate_task  # 已是普通函数（Prefect 已剥离）
 
 
 def _ts(dt: datetime) -> int:

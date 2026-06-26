@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
-from prefect import flow, task
+from core.retry import retry
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +77,7 @@ def _resolve_window(
     return int(start.timestamp()), int(now.timestamp())
 
 
-@task(name="fetch-tiktok-ad-spend", retries=3, retry_delay_seconds=60)
+@retry(retries=3, delay_seconds=60)
 def fetch_ad_spend(
     *,
     statement_time_ge: int,
@@ -134,7 +134,6 @@ def _parse_fee(value) -> Decimal:
     return Decimal(str(value))
 
 
-@task(name="aggregate-ad-spend")
 def aggregate_ad_spend(transaction_pages: list[dict[str, Any]]) -> list[dict]:
     """把每笔交易的三项广告费按 (业务日, currency) 分组累加。
 
@@ -198,13 +197,12 @@ def aggregate_ad_spend(transaction_pages: list[dict[str, Any]]) -> list[dict]:
     return list(buckets.values())
 
 
-@task(name="parse-order-fees")
 def parse_order_fees_task(transaction_pages: list[dict[str, Any]]) -> list[dict]:
     """把每笔交易的全部费用拆项解析成交易级行（不聚合，保交易粒度）。委托 order_fee_store。"""
     return parse_order_fees(transaction_pages)
 
 
-@task(name="save-ad-spend-to-db", retries=2, retry_delay_seconds=30)
+@retry(retries=2, delay_seconds=30)
 def save_ad_spend_to_db(
     transaction_pages: list[dict[str, Any]],
     rows: list[dict],
@@ -292,7 +290,6 @@ def save_ad_spend_to_db(
         session.close()
 
 
-@flow(name="tiktok-ad-spend-sync", log_prints=True)
 def sync_ad_spend_flow(
     country: str = "GLOBAL",
     shop_id: Optional[str] = None,

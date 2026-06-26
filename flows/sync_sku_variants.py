@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from prefect import flow, task
+from core.retry import retry
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ RESOURCE = "sku_variants"
 PRODUCT_DETAIL_PATH = "/product/202309/products/{product_id}"
 
 
-@task(name="fetch-sku-variant-details", retries=3, retry_delay_seconds=60)
+@retry(retries=3, delay_seconds=60)
 def fetch_variant_details(
     *,
     country: str = "GLOBAL",
@@ -56,13 +56,12 @@ def fetch_variant_details(
     return titles, details
 
 
-@task(name="normalize-sku-variants")
 def normalize_variants(titles: dict[str, str], details: dict[str, dict]) -> list:
     """解析 sales_attributes → DomainSkuVariant 列表。委托 sku_variant_store.parse_sku_variants。"""
     return parse_sku_variants(details, titles)
 
 
-@task(name="save-sku-variants", retries=2, retry_delay_seconds=30)
+@retry(retries=2, delay_seconds=30)
 def save_variants(
     items: list,
     *,
@@ -134,7 +133,6 @@ def save_variants(
         session.close()
 
 
-@flow(name="tiktok-sku-variant-sync", log_prints=True)
 def sync_sku_variants_flow(
     country: str = "GLOBAL",
     shop_id: Optional[str] = None,

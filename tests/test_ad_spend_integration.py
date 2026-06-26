@@ -4,7 +4,7 @@ get_ad_spend_summary 读回，金额闭环验证。
 隔离点：
   - flows.sync_ad_spend.TikTokShopClient 换成 FakeClient（不发网络）；
   - flows.sync_ad_spend.SessionLocal 与 ad_metrics.SessionLocal 都指向同一内存 session。
-直接调 @task 的 .fn 跳过 Prefect 运行时。
+flow 内已是普通函数（Prefect 已剥离），直接调用。
 """
 from __future__ import annotations
 
@@ -68,13 +68,13 @@ def test_flow_end_to_end_writes_and_reads_back(session, monkeypatch):
     monkeypatch.setattr(ad_metrics, "SessionLocal", lambda: session)
 
     ge, lt = 1000, 2000
-    pages = flow_mod.fetch_ad_spend.fn(
+    pages = flow_mod.fetch_ad_spend(
         statement_time_ge=ge, statement_time_lt=lt,
         country="ID", shop_id="shop-1",
     )
-    rows = flow_mod.aggregate_ad_spend.fn(pages)
-    fee_rows = flow_mod.parse_order_fees_task.fn(pages)
-    count = flow_mod.save_ad_spend_to_db.fn(
+    rows = flow_mod.aggregate_ad_spend(pages)
+    fee_rows = flow_mod.parse_order_fees_task(pages)
+    count = flow_mod.save_ad_spend_to_db(
         pages, rows, fee_rows, statement_time_ge=ge, statement_time_lt=lt,
         country="ID", shop_id="shop-1",
     )
@@ -129,12 +129,12 @@ def test_flow_save_is_idempotent(session, monkeypatch):
     monkeypatch.setattr(flow_mod, "SessionLocal", TestSession)
 
     for _ in range(2):
-        pages = flow_mod.fetch_ad_spend.fn(
+        pages = flow_mod.fetch_ad_spend(
             statement_time_ge=1000, statement_time_lt=2000, country="ID", shop_id="shop-1",
         )
-        rows = flow_mod.aggregate_ad_spend.fn(pages)
-        fee_rows = flow_mod.parse_order_fees_task.fn(pages)
-        flow_mod.save_ad_spend_to_db.fn(
+        rows = flow_mod.aggregate_ad_spend(pages)
+        fee_rows = flow_mod.parse_order_fees_task(pages)
+        flow_mod.save_ad_spend_to_db(
             pages, rows, fee_rows, statement_time_ge=1000, statement_time_lt=2000,
             country="ID", shop_id="shop-1",
         )

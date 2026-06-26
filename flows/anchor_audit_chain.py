@@ -12,8 +12,6 @@
 """
 from __future__ import annotations
 
-from prefect import flow
-
 from core.config import settings
 from core.db import SessionLocal
 from core.tenancy import TENANT_BYPASS, set_current_account
@@ -56,7 +54,6 @@ def _build_message(session) -> tuple[str, int]:
     return "\n".join(lines), total_breaks
 
 
-@flow(name="anchor-audit-chain", log_prints=True)
 def anchor_audit_chain_flow(dry_run: bool = False) -> dict:
     """每日锚定主流程：内联校验两链 → 链尾外发飞书留痕。"""
     if not settings.audit_anchor_enabled:

@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from prefect import flow, task
+from core.retry import retry
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ def _resolve_window() -> tuple[int, int]:
     return int(start.timestamp()), int(now.timestamp())
 
 
-@task(name="fetch-tiktok-unsettled", retries=3, retry_delay_seconds=60)
+@retry(retries=3, delay_seconds=60)
 def fetch_unsettled(
     *,
     search_time_ge: int,
@@ -64,13 +64,12 @@ def fetch_unsettled(
     return pages
 
 
-@task(name="parse-unsettled-fees")
 def parse_unsettled_task(pages: list[dict[str, Any]]) -> list[dict]:
     """把每笔未结算交易解析成预估费用行（委托 unsettled_fee_store）。"""
     return parse_unsettled_fees(pages)
 
 
-@task(name="save-unsettled-to-db", retries=2, retry_delay_seconds=30)
+@retry(retries=2, delay_seconds=30)
 def save_unsettled_to_db(
     pages: list[dict[str, Any]],
     rows: list[dict],
@@ -148,7 +147,6 @@ def save_unsettled_to_db(
         session.close()
 
 
-@flow(name="tiktok-unsettled-fees-sync", log_prints=True)
 def sync_unsettled_fees_flow(
     country: str = "GLOBAL",
     shop_id: Optional[str] = None,

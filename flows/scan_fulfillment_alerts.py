@@ -11,7 +11,7 @@
 为什么不用 openclaw cron：cron job 必经 agent/LLM，而告警要阈值/去重/稳定文案、每跑必准。
 openclaw 在这里只当飞书出站通道（message send 走本地 gateway RPC，不出网、不经 agent）。
 收件人/范围当前写死在 RECIPIENTS（单租户阶段）；多租户后可迁 DB/config（见 plan/09）。
-（文件名沿用 scan_fulfillment_alerts 以免动 timer/main/prefect 引用；现已是「告警总巡检」。）
+（文件名沿用 scan_fulfillment_alerts 以免动 timer/main 引用；现已是「告警总巡检」。）
 """
 from __future__ import annotations
 
@@ -20,8 +20,6 @@ import subprocess
 from datetime import datetime, time, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
-
-from prefect import flow
 
 from core.config import settings
 from core.db import SessionLocal
@@ -412,7 +410,6 @@ def _scan_one(recipient: dict, *, dry_run: bool) -> list[str]:
         session.close()
 
 
-@flow(name="scan-fulfillment-alerts", log_prints=True)
 def scan_fulfillment_alerts_flow(dry_run: bool = False):
     """待发货超时监控巡检主流程。dry_run=True 时只打印文案、不实发、不写游标。"""
     if is_quiet_now() and not dry_run:

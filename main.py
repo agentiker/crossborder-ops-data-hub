@@ -1,6 +1,6 @@
 """
 本地调试入口
-生产部署请使用 prefect deploy --all（配置见 prefect.yaml）
+生产定时任务由 systemd user timer 调度（见 deploy/systemd/*），不再用 Prefect。
 """
 import argparse
 import sys

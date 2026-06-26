@@ -8,7 +8,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from prefect import flow, task
+from core.retry import retry
 
 from core.db import SessionLocal
 from core.domain import DomainOrder
@@ -55,7 +55,7 @@ def _resolve_window(
     return int(start.timestamp()), int(now.timestamp())
 
 
-@task(name="fetch-tiktok-orders", retries=3, retry_delay_seconds=60)
+@retry(retries=3, delay_seconds=60)
 def fetch_orders(
     *,
     create_time_ge: int,
@@ -84,13 +84,12 @@ def fetch_orders(
     return pages
 
 
-@task(name="validate-orders")
 def validate_orders(pages: list[dict[str, Any]]) -> list[DomainOrder]:
     """原始分页 dict → 平台中立 DomainOrder（展平/校验/容错均下沉到 normalize 边界）。"""
     return to_domain_orders(pages)
 
 
-@task(name="save-orders-to-db", retries=2, retry_delay_seconds=30)
+@retry(retries=2, delay_seconds=30)
 def save_orders_to_db(
     pages: list[dict[str, Any]],
     orders: list[DomainOrder],
@@ -159,7 +158,6 @@ def save_orders_to_db(
         session.close()
 
 
-@flow(name="tiktok-order-sync", log_prints=True)
 def sync_orders_flow(
     country: str = "GLOBAL",
     shop_id: Optional[str] = None,

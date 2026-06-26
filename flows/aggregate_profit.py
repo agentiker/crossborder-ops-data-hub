@@ -9,7 +9,7 @@ import logging
 from datetime import timedelta
 from typing import Optional
 
-from prefect import flow, task
+from core.retry import retry
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ from services.metrics_store import upsert_daily_profit
 from services.profit_aggregation import compute_daily_profit
 
 
-@task(name="aggregate-daily-profit", retries=2, retry_delay_seconds=30)
+@retry(retries=2, delay_seconds=30)
 def aggregate_one(
     *,
     target_date,
@@ -51,7 +51,6 @@ def aggregate_one(
         session.close()
 
 
-@flow(name="tiktok-aggregate-profit", log_prints=True)
 def aggregate_profit_flow(
     country: str = "GLOBAL",
     shop_id: Optional[str] = None,

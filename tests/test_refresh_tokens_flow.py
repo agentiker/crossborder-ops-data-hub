@@ -5,7 +5,7 @@
 报错才暴露（2026-06-21 烧了数天无告警）。本文件锁定：flow 末尾捞出这些 token 并抛错，
 让 systemd OnFailure → 飞书告警，提示人工重新授权。
 
-用 `.fn` 直接调底层函数绕过 Prefect runtime（stuck token 被主查询排除、不进刷新 task，
+直接调 flow 函数（Prefect 已剥离，本就是普通函数；stuck token 被主查询排除、不进刷新逻辑，
 故不触网）。过期时间用 2020（naive）避开 sqlite aware/naive datetime 字符串比较的坑。
 """
 from datetime import datetime, timezone
@@ -45,7 +45,7 @@ def test_flow_raises_on_expired_token_without_refresh(session, monkeypatch):
     _add_token(session, "scope-stuck", refresh_token=None, expire=datetime(2020, 1, 1))
 
     with pytest.raises(RuntimeError, match="需人工重新授权"):
-        rt.refresh_tokens_flow.fn()
+        rt.refresh_tokens_flow()
 
 
 def test_flow_raises_on_expired_token_with_empty_refresh(session, monkeypatch):
@@ -54,7 +54,7 @@ def test_flow_raises_on_expired_token_with_empty_refresh(session, monkeypatch):
     _add_token(session, "scope-empty", refresh_token="", expire=datetime(2020, 1, 1))
 
     with pytest.raises(RuntimeError, match="需人工重新授权"):
-        rt.refresh_tokens_flow.fn()
+        rt.refresh_tokens_flow()
 
 
 def test_flow_clean_when_token_has_refresh_and_not_expiring(session, monkeypatch):
@@ -62,5 +62,5 @@ def test_flow_clean_when_token_has_refresh_and_not_expiring(session, monkeypatch
     _patch(session, monkeypatch)
     _add_token(session, "scope-ok", refresh_token="ref-1", expire=datetime(2099, 1, 1))
 
-    result = rt.refresh_tokens_flow.fn()
+    result = rt.refresh_tokens_flow()
     assert result["needs_reauth"] == []

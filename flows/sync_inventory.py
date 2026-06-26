@@ -9,7 +9,7 @@ SKU×仓库一行后幂等 upsert。
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from prefect import flow, task
+from core.retry import retry
 
 from core.db import SessionLocal
 from flows.network import log_egress_ip
@@ -26,7 +26,7 @@ PRODUCTS_PATH = "/product/202309/products/search"
 INVENTORY_PATH = "/product/202309/inventory/search"
 
 
-@task(name="fetch-tiktok-products", retries=3, retry_delay_seconds=60)
+@retry(retries=3, delay_seconds=60)
 def fetch_product_index(
     *,
     country: str = "GLOBAL",
@@ -50,7 +50,7 @@ def fetch_product_index(
     return product_ids, titles, products
 
 
-@task(name="fetch-product-prices", retries=3, retry_delay_seconds=60)
+@retry(retries=3, delay_seconds=60)
 def fetch_product_prices(
     product_ids: list[str],
     *,
@@ -82,7 +82,7 @@ def fetch_product_prices(
     return prices
 
 
-@task(name="save-products-to-db", retries=2, retry_delay_seconds=30)
+@retry(retries=2, delay_seconds=30)
 def save_products(
     products: list[dict[str, Any]],
     price_skus_by_id: Optional[dict[str, list[dict[str, Any]]]] = None,
@@ -147,7 +147,7 @@ def save_products(
         session.close()
 
 
-@task(name="fetch-tiktok-inventory", retries=3, retry_delay_seconds=60)
+@retry(retries=3, delay_seconds=60)
 def fetch_inventory(
     product_ids: list[str],
     *,
@@ -168,7 +168,6 @@ def fetch_inventory(
     return client.search_inventory(product_ids)
 
 
-@task(name="validate-inventory")
 def validate_inventory(
     inventory: list[dict[str, Any]],
     product_titles: dict[str, str],
@@ -177,7 +176,7 @@ def validate_inventory(
     return to_domain_inventory(inventory, product_titles)
 
 
-@task(name="save-inventory-to-db", retries=2, retry_delay_seconds=30)
+@retry(retries=2, delay_seconds=30)
 def save_to_db(
     inventory: list[dict[str, Any]],
     items: list[DomainInventoryItem],
@@ -248,7 +247,6 @@ def save_to_db(
         session.close()
 
 
-@flow(name="tiktok-inventory-sync", log_prints=True)
 def sync_inventory_flow(
     country: str = "GLOBAL",
     shop_id: Optional[str] = None,

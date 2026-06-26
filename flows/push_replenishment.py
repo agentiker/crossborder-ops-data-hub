@@ -10,8 +10,6 @@
 import logging
 from typing import Optional
 
-from prefect import flow
-
 logger = logging.getLogger(__name__)
 
 from core.tenancy import set_current_account
@@ -68,7 +66,6 @@ def _push_one(recipient: dict, *, dry_run: bool) -> str:
     return f"{account}/补货: 推送失败"
 
 
-@flow(name="push-replenishment", log_prints=True)
 def push_replenishment_flow(dry_run: bool = False):
     """补货采购单推送主流程：遍历收件人投递。"""
     recipients = load_recipients()

@@ -1,12 +1,11 @@
 """Token refresh flow for TikTok Shop.
 
-This module provides a Prefect flow to automatically refresh
+This module provides a flow to automatically refresh
 TikTok Shop access tokens before they expire.
 """
 
 from datetime import datetime, timedelta, timezone
 
-from prefect import flow, task
 from sqlalchemy import or_
 
 from core.db import SessionLocal, init_db
@@ -16,7 +15,6 @@ from models.base_models import PlatformToken
 from platforms.tiktok_shop.client import TikTokShopClient
 
 
-@task(name="refresh-single-token", log_prints=True)
 def refresh_single_token(token_record: PlatformToken) -> dict:
     """Refresh a single TikTok Shop token.
 
@@ -42,7 +40,6 @@ def refresh_single_token(token_record: PlatformToken) -> dict:
     return result
 
 
-@flow(name="refresh-tiktok-tokens", log_prints=True)
 def refresh_tokens_flow(hours_before_expiry: int = 24) -> dict:
     """Refresh all TikTok Shop tokens that are about to expire.
 
