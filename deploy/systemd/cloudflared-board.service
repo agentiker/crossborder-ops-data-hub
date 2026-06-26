@@ -1,5 +1,5 @@
 [Unit]
-Description=Cloudflare Tunnel for Ops Dashboard (board.agenticker.cc -> 127.0.0.1:8000)
+Description=Cloudflare Named Tunnel (data-hub 127.0.0.1:8000 → 公网看板/对话/报告)
 After=network.target
 # 隧道断 = 看板公网不可达；崩溃发飞书告警（与 data-hub 同一 OnFailure 机制）。
 OnFailure=data-onfailure@%n.service
@@ -8,8 +8,10 @@ OnFailure=data-onfailure@%n.service
 Type=simple
 # cloudflared 与 uv 同装在 %h/.local/bin；systemd 无 PATH，必须绝对路径。
 Environment="PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-# --no-autoupdate 是顶层 flag，必须放在 tunnel 之前（否则报 flag not defined）。
-ExecStart=%h/.local/bin/cloudflared --no-autoupdate tunnel --config %h/code/crossborder-ops-data-hub/deploy/cloudflared/config.yml run board
+# --no-autoupdate 是顶层 flag，须在 tunnel 之前。读 per-machine 配置 %h/.cloudflared/config.yml
+# （不在仓库——各环境自己的 tunnel 名/UUID/credentials/hostname）；`run` 无位置参数，从该配置
+# 的 tunnel: 取隧道名。仓库内 deploy/cloudflared/config.yml(hp)、config.prod.yml(生产) 仅作模板。
+ExecStart=%h/.local/bin/cloudflared --no-autoupdate tunnel --config %h/.cloudflared/config.yml run
 # SIGTERM(143) 是正常停止/重启退出码（同 data-hub.service），不加会被判 failed 误告警。
 SuccessExitStatus=143 SIGTERM
 Restart=on-failure

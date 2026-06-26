@@ -9,20 +9,18 @@
 #      勿复用 hp 的 board 隧道（隧道名在同一 Cloudflare 账号内唯一，board 已被 hp 占）。
 #
 # ── 生产机部署步骤（部署用户身份，非 sudo）──
-#   cloudflared tunnel login                              # 浏览器授权 agenticker.cc 这个 zone
+#   cloudflared tunnel login                              # 浏览器授权 agenticker.cc zone
 #   cloudflared tunnel create gtl-prod                    # 生成隧道 + 凭据 json，记下 UUID
+#   # 填好下面 tunnel 名 / credentials-file 的真实 UUID 后，把本文件作为【该机的活配置】放到约定路径：
+#   cp deploy/cloudflared/config.prod.yml ~/.cloudflared/config.yml
+#   ./deploy/deploy.sh --restart-tunnel                   # 装单元 + 启动隧道
 #   cloudflared tunnel route dns gtl-prod gtl.agenticker.cc
-#     ↑ 写/覆盖 gtl.agenticker.cc 的 CNAME 指向本隧道 = 把域名从 hp 的 board 隧道「搬」过来，
-#       一条命令完成切换（CNAME 同一时刻只指一条隧道）。切换后去 hp 的 config.yml 删掉
-#       gtl.agenticker.cc 那三条 ingress、重启 hp 隧道（hp 仅保留 board.agenticker.cc）。
-#   # 把下面 tunnel 名 / credentials-file 的 UUID / 部署用户名改成实际值，再启动隧道（见下「单元」）。
+#     ↑ 写/覆盖 gtl.agenticker.cc 的 CNAME 指向本隧道 = 把域名从 hp 的 board 隧道「搬」过来
+#       （CNAME 同一时刻只指一条）。切换后去 hp 删 gtl 三条 ingress、重启 hp 隧道（hp 仅留 board）。
 #
-# ⚠️ 单元改一处：deploy/systemd/cloudflared-board.service 的 ExecStart 末尾写死了 `run board`，
-#    会覆盖本文件的 tunnel:。生产上两选一：
-#    (A) 把该单元 ExecStart 的 `--config .../config.yml run board` 改成
-#        `--config .../config.prod.yml run gtl-prod`；或
-#    (B) 去掉位置参数只留 `run`（让 cloudflared 读本文件 tunnel:），并把 --config 指向 config.prod.yml。
-#    deploy.sh 每次会重装单元，所以这处改动要落到「生产机的仓库副本」里再 deploy（别只改运行态）。
+# 单元已去耦合（2026-06）：cloudflared-board.service 读【各机自己的】 ~/.cloudflared/config.yml、
+#   `run` 无位置参数从配置 tunnel: 取隧道名。故本文件是【模板】——填好后 cp 到 ~/.cloudflared/config.yml
+#   才是活配置；deploy.sh 重装单元不动它。hp 同理：其 config.yml 放到 hp 的 ~/.cloudflared/config.yml。
 #
 # Cloudflare SSL 模式设 Full（勿 Full strict，源站无证书）。
 
