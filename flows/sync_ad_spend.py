@@ -240,7 +240,18 @@ def save_ad_spend_to_db(
                 "statement_time_ge": statement_time_ge,
                 "statement_time_lt": statement_time_lt,
             },
-            response_payload={"pages": transaction_pages},
+            # 结算明细 30 天回看可达数千笔×51 fee 字段（实测 >70MB，超 MySQL max_allowed_packet
+            # 64MB 致连接断开）。交易明细已落 fact_finance_transaction，raw 审计仅存有界摘要避免膨胀。
+            response_payload={
+                "summary": {
+                    "page_count": len(transaction_pages),
+                    "transaction_count": sum(
+                        len(p.get("transactions") or []) for p in transaction_pages
+                    ),
+                    "statement_ids": [p.get("statement_id") for p in transaction_pages][:200],
+                },
+                "note": "交易明细见 fact_finance_transaction；原始 payload 过大不落 raw 审计",
+            },
             http_status=200,
             business_code="0",
         )
