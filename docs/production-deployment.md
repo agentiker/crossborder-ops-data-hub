@@ -2,7 +2,7 @@
 
 把 Crossborder Ops Data Hub 部署到**全新的生产服务器**。生产环境与 hp 测试环境**完全独立**：独立机器、独立 DB、独立密钥、独立飞书/TikTok 凭据。
 
-> 本文是当前权威生产指南，**取代** `docs/test-server-deployment.md` 中过时部分（旧文用 `uv pip install -e .`、系统级 systemd、cron、nginx；现状是 `uv sync` + `systemctl --user` 定时器 + cloudflared 命名隧道 + 全套上线合规）。旧文可作 TikTok OAuth/nginx 一节的参考。
+> 本文是当前权威生产指南。现状＝`uv sync` + `systemctl --user` 定时器 + cloudflared 命名隧道 + 全套上线合规（早期的 `uv pip install -e .`、系统级 systemd、cron、nginx 方案均已废弃）。
 >
 > 合规实现细节见记忆 `audit-compliance-token-encryption`；部署机制固化在 `deploy/deploy.sh` 与 `deploy/systemd/*`。
 

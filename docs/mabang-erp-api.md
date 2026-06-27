@@ -3,7 +3,7 @@
 > 用途：本中台对接马帮 ERP（拿**产品成本/SKU 映射/库存与在途/退货/汇率/利润**）的接口参考。
 > 字段为 2026-06-23 从马帮文档站实测抓取整理。**对接前以官方文档站最新版为准**。
 > 关联：`plan/17_webui_ops_requirements.md` §3.B、记忆 `plan17-webui-ops-requirements`。
-> **全量**：v2 全部 **205 个接口**的请求/返回完整字段已抓存 `docs/mabang-erp-api-full.json`（机器可读，`jq` 可查）；本 md 为人读精选。查某接口：`jq '.[]|select(.api=="<名>")' docs/mabang-erp-api-full.json`。
+> **全量**：v2 全部 **205 个接口**的请求/返回完整字段已抓存 `docs/mabang-erp-api-full.json`（机器可读，`jq` 可查）；本 md 为人读精选。查某接口：`jq '.[]|select(.api=="<名>")' docs/mabang-erp-api-full.json`。（该 json 体积大、**不入库**，仅本地保留，按下方「抓字段速记」可重抓。）
 >
 > ⚠️ **版本**：文档站有 v1（旧/精简，仅十余接口）与 **v2（当前完整版，14 分类上百接口）**。两版 **cid 编号互不相同**，本文以 **v2** 为准（链接 `https://gwapi.mabangerp.com/web/#/api/v2`）。v1 仅在文末留索引备查。
 > ⚠️ 另有一份「海外仓 API」（旧 `api.mabangerp.com/mabang3/api`，2015 版）**与本需求无关，已作废**。

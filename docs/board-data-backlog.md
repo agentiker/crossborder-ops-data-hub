@@ -46,5 +46,6 @@
 ---
 
 ## 备注
+- 文中引用的 `docs/tiktok-shop-openapi-index.json` 体积大、**不入库**，仅本地保留（可由 `scripts/generate_tiktok_api_docs.py` 从 `material/` 重新生成）。
 - 演示数据是**确定性常量**（不随「时段/范围」筛选变化），刻意不模拟真实联动，避免被误当真实数据。
 - 演示金额轴沿用 fork 的 `$` 符号与量级；真实化时统一改为印尼盾 `Rp`（与看板其余真实区块一致）。
