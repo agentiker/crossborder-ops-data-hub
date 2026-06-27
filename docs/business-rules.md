@@ -134,14 +134,64 @@
 
 ## 7. 告警规则
 
-详见 `docs/proactive-push-ops.md`。两条确定性规则同一 scan flow：
+详见 `docs/proactive-push-ops.md`。同一 scan flow（`flows/scan_fulfillment_alerts.py`）下 5 条确定性规则，每个收件人各自独立判定 / 去重 / 投递：
 1. **待发货超时**（按 `tts_sla_time`）。
 2. **低库存 / 断货**（按可售天数 = 销速模型）。
+3. **扣点率异常（结算口径）**（见 §7.1）。
+4. **及时费率异常（预估口径）**（见 §7.1，B1）。
+5. **爆单**（某商品当日已付款销量破阈值）。
 
 走 Data Hub 确定性判定 + `openclaw message send` 直投（0-LLM），与日报（过 LLM）分离。
 
 > 低库存告警用**告警口径**（`get_stock_risk` 默认 `include_all=False`，只推卖得动快断货的）；
 > 日报/周报里的断货预警卡用**展示口径**（`include_all=True`，全量按可售天数升序）。详见 §4.4。
+
+### 7.1 费率（扣点率）异常告警
+
+> 痛点：平台**悄悄调佣 / 新增费项**（"突然多收两三个点、月底结算才发现"）。代码：`services/fee_rate_metrics.py`（取数）、`services/fee_rate_alerts.py`（判定 + 文案）、`flows/scan_fulfillment_alerts.py`（巡检接入）。
+
+**费率怎么算**：接口**不返回"费率"字段，只返回金额**；费率是我们自己除出来的，但**分子的扣费金额是 TikTok 官方算好的**（不是自估）：
+
+```
+窗口费率 = Σ官方扣费金额 ÷ Σ订单 GMV    （分子分母必须同一批订单）
+```
+- **分子**＝官方扣费金额，**含税**（字段名即"fee_tax"）、负数=对卖家扣款（落库统一翻正，见 §2 / 财务符号约定）。**不含物流费**（`est_shipping_cost_amount` 是独立字段，不进费率）。
+- **分母**＝订单 `total_amount`（distinct，一单多笔交易不重复计 GMV）。
+- ⚠️ 分子分母**必须同一批订单**——曾因分子按创建日全部单、分母按付款日已送达单（COD 主导下两批差很大）算出 49% 幽灵佣金。
+
+**维度**＝时间窗口 × 币种 × scope（店/范围）。多订单**合并、GMV 加权**算一个总费率（不是单笔；单笔因类目/有无联盟广告剧烈波动，是噪声）。多币种取**评估窗口 GMV 最大的主币种**，其余忽略（不跨币种混算）。
+
+**两个口径（互补）**：
+
+| 口径 | 评估窗口（eval） | 基准（baseline） | 特点 |
+|------|------|------|------|
+| **结算（规则 3）** | `[今天−lag−eval_window+1, 今天−lag]` 已结算费率 | 其前 `baseline_days` 天 | 真实最终值，但**滞后**（结算后才有） |
+| **及时 / 预估（规则 4，B1）** | 最近 `realtime_eval_days` 天**未结算预估**费率（无滞后） | 已结算历史费率（稳基准） | 平台一调佣预估费率立即变，**结算前**即可报 |
+
+**告警条件**（只报上升，下降是好事不报）：评估费率 > 基准 且 **相对升幅 > `rel_pct`** 且 **绝对升幅 > `abs_pct`（百分点）**，双阈值同时满足。
+
+**护栏（防误报）**：评估 / 基准任一窗口 GMV < `min_gmv`，或基准费率 ≤ 0（冷启动 / 历史不足）→ 跳过并记 `skip_reason`，**不报**。
+
+**去重**：同一评估窗口结束日只报一次；结算口径与及时口径**独立去重状态**（`fee_rate_anomaly` vs `fee_rate_anomaly_realtime`），互不覆盖。及时口径 eval_end=今天 → 每业务日最多一次。
+
+**分项归因（B2，"是哪项费用涨"）**：告警触发后点名升幅最大的费项（如"动态佣金 +2.1pct（8%→11%）"）。
+- components 从 `fee_breakdown` JSON 聚合**完整费项**（主佣金 `dynamic_commission` 等只在 JSON、不在提升列）。
+- 仅对 eval/baseline **交集费项**归因；**跨口径命名不同**（结算 `platform_commission` vs 未结算 `dynamic_commission`，两套体系）→ 交集空 → **不误判暴涨、降级为"当前构成展示"**。
+- ⚠️ 官方"费税合计"明细只覆盖 **~80%**（约 20% 未明细化）→ **总费率准、分项归因只覆盖 80%**。
+
+**配置参数**（`core/config.py`，默认按 IDR）：
+
+| 参数 | 默认 | 含义 |
+|------|------|------|
+| `fee_rate_settle_lag_days` | 14 | 结算滞后回看天数（结算口径 eval/baseline 都从更早处取） |
+| `fee_rate_eval_window_days` | 7 | 结算口径评估窗口天数 |
+| `fee_rate_baseline_days` | 28 | 基准窗口天数 |
+| `fee_rate_realtime_eval_days` | 3 | 及时口径评估窗口（≤ `unsettled_lookback_days`，全量替换只留近几天） |
+| `fee_rate_alert_rel_pct` | 0.15 | 相对升幅阈值（比基准高 15%） |
+| `fee_rate_alert_abs_pct` | 0.03 | 绝对升幅阈值（高 3 个百分点） |
+| `fee_rate_min_gmv` | 10_000_000 | 窗口 GMV 护栏（低基数不报） |
+
+**触发 vs 诊断粒度分离**：触发判定保持**店×币种×窗口总费率**（GMV 加权、稳、不误报）；细化只用在**诊断展示**（费项轴 B2 已做；类目轴待接 `get_product` 补 category；商品/订单级噪声大不做）。
 
 ---
 
@@ -156,3 +206,4 @@
 | 2026-06-21 | 断货预警拆「两套口径」：告警仍销速模型；报告展示 `include_all=True` 全量按可售天数升序、无销量排末尾（见 §4.4） | `services/stock_metrics.py`、`web/routes/report.py` |
 | 2026-06-21 | 报告链接 TTL 默认延长到 7 天（纯链接推送场景），有效期文案按天/小时/分钟显示 | `.env`、`web/routes/data.py` |
 | 2026-06-22 | 商品/库存同步只入库 `ACTIVATE`（源头 status 过滤 + prune 清退非在售，防草稿/僵尸污染），见 §3 | `flows/sync_inventory.py`、`platforms/tiktok_shop/client.py`、`services/{product,inventory}_store.py` |
+| 2026-06-27 | 费率告警业务规则落档（§7.1）：费率定义=官方扣费额÷订单GMV同批订单/含税不含物流、结算+及时双口径、双阈值+护栏、B2分项归因(交集费项·跨口径降级·80%覆盖)、配置参数表、触发vs诊断粒度分离 | 本文 §7.1、`services/fee_rate_{metrics,alerts}.py`、`flows/scan_fulfillment_alerts.py` |
