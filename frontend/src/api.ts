@@ -249,12 +249,29 @@ export interface RoleUpsertBody {
   channel?: string;
 }
 
+// 看板筛选参数：start/end 显式日期（覆盖 period）；platform/country 平台/区域；scope 店铺。
+// 空值不拼进 querystring（让后端走默认/全部）。period 作无显式日期时的回退。
+export interface BoardQuery {
+  start?: string;
+  end?: string;
+  period?: string;
+  scope?: string;
+  platform?: string;
+  country?: string;
+}
+
 export const api = {
   me: () => getJSON<Me>("/api/me"),
-  boardData: (period: string, scope = "") =>
-    getJSON<BoardData>(
-      `/board/data?period=${encodeURIComponent(period)}&scope=${encodeURIComponent(scope)}`,
-    ),
+  boardData: (q: BoardQuery = {}) => {
+    const params = new URLSearchParams();
+    if (q.start) params.set("start_date", q.start);
+    if (q.end) params.set("end_date", q.end);
+    if (q.period) params.set("period", q.period);
+    if (q.scope) params.set("scope", q.scope);
+    if (q.platform) params.set("platform", q.platform);
+    if (q.country) params.set("country", q.country);
+    return getJSON<BoardData>(`/board/data?${params.toString()}`);
+  },
   adminRoles: () => getJSON<{ items: RoleRow[] }>("/api/admin/roles"),
   adminScopes: () => getJSON<{ items: AdminScopeOption[] }>("/api/admin/scopes"),
   adminUpsertRole: (body: RoleUpsertBody) => postJSON<RoleRow>("/api/admin/roles", body),

@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from core.tenancy import set_current_account
-from core.timezone import previous_window, resolve_period
+from core.timezone import previous_window
 from services.ad_metrics import get_ad_spend_summary, get_roas
 from services.channel_metrics import get_channel_gmv_breakdown
 from services.fee_rate_metrics import get_fee_rate_monitor
@@ -26,6 +26,7 @@ from services.profit_summary import get_profit_card
 from services.scope_resolution import ScopeError, list_scopes
 from services.user_authz import AuthzError, UserPermission, resolve_authorized_scope
 from web.routes.data import (
+    _resolve_window,
     get_fulfillments_pending,
     get_low_stock,
     get_orders_top_skus,
@@ -68,13 +69,28 @@ def _scope_options(perm: UserPermission) -> list[dict]:
     return [{"key": allowed, "label": label}]
 
 
-async def _collect(perm: UserPermission, period: str, requested_scope_key: str) -> dict:
-    """按权限闸夹紧范围后取看板各块数据。越界由 resolve_authorized_scope 抛 ScopeError。"""
+async def _collect(
+    perm: UserPermission,
+    period: str,
+    requested_scope_key: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    platform_q: str | None = None,
+    country_q: str | None = None,
+) -> dict:
+    """按权限闸夹紧范围后取看板各块数据。越界由 resolve_authorized_scope 抛 ScopeError。
+
+    start_date/end_date：显式起止日期（YYYY-MM-DD，日历筛选）；传了即覆盖 period。
+    platform_q/country_q：平台/区域筛选（正交附加维度，叠加在 scope 的 shop_ids 之上、不参与越界判断）。
+    """
     # /board 渲染链路不走 X-Account-Id 注入；复用 data.py 路由前先把当前老板的租户写进 context，
     # 让下游 _resolve_scope / ORM 自动过滤按同一 account_id 生效。
     set_current_account(perm.account_id)
     filters = resolve_authorized_scope(
-        perm, requested_scope_key=requested_scope_key or None
+        perm,
+        requested_scope_key=requested_scope_key or None,
+        platform=platform_q or None,
+        country=country_q or None,
     )
     # 夹紧后的具体店集合作为显式条件传入；open_id/scope_id 钉 None，绕开会话 binding。
     shop_ids = ",".join(filters.shop_ids) if filters.shop_ids else None
@@ -85,12 +101,12 @@ async def _collect(perm: UserPermission, period: str, requested_scope_key: str) 
         scope_id=None, shop_ids=shop_ids, open_id=None,
     )
     trend = await get_orders_trend(
-        start_date=None, end_date=None, period=period,
+        start_date=start_date, end_date=end_date, period=period,
         platform=platform, country=country, shop_id=None,
         scope_id=None, shop_ids=shop_ids, open_id=None,
     )
     top = await get_orders_top_skus(
-        start_date=None, end_date=None, period=period,
+        start_date=start_date, end_date=end_date, period=period,
         platform=platform, country=country, shop_id=None,
         scope_id=None, shop_ids=shop_ids, limit=10, open_id=None,
     )
@@ -106,12 +122,12 @@ async def _collect(perm: UserPermission, period: str, requested_scope_key: str) 
     )
 
     overview = _asdict(overview)
-    # 环比：按所选 period 取当期 + 紧邻等长上期，把 overview.orders 统一成跟随 period 的当期口径，
-    # 并注入 change。（get_overview 的 orders 段固定为近 7 天、不随 period 变；这里对齐到当期。）
-    try:
-        cur_start, cur_end = resolve_period(period)
-    except ValueError:
-        cur_start, cur_end = resolve_period("last_30d")
+    # 环比：取当期 + 紧邻等长上期，把 overview.orders 统一成跟随当期窗口的口径，并注入 change。
+    # 当期窗口复用 data._resolve_window：显式 start/end 优先（日历筛选），否则按 period 预设。
+    # previous_window 对任意等长窗口成立（纯算术），无需 period 对齐。
+    cur_start, cur_end = _resolve_window(
+        start_date, end_date, period, default_back_days=6
+    )
     prev_start, prev_end = previous_window(cur_start, cur_end)
     shop_id_list = filters.shop_ids or None
     # 渠道 GMV 拆分（直播/视频/商品卡，实时调 TikTok analytics + 进程缓存）。沙箱店无
@@ -208,11 +224,15 @@ async def _collect(perm: UserPermission, period: str, requested_scope_key: str) 
 @router.get("/board", response_class=HTMLResponse, include_in_schema=False)
 async def board(
     perm: UserPermission = Depends(require_web_user),
-    period: str = Query("last_30d", description="趋势/榜单时间窗口"),
+    period: str = Query("last_30d", description="趋势/榜单时间窗口（无显式 start/end 时回退）"),
     scope: str = Query("", description="范围切换 scope_key（boss 任意 / operator 限其授权）"),
+    start_date: str | None = Query(None, description="显式起始日 YYYY-MM-DD（覆盖 period）"),
+    end_date: str | None = Query(None, description="显式结束日 YYYY-MM-DD（覆盖 period）"),
+    platform: str | None = Query(None, description="平台筛选（如 tiktok_shop；空=全部）"),
+    country: str | None = Query(None, description="区域筛选 ISO alpha-2（如 ID；空=全部）"),
 ):
     try:
-        data = await _collect(perm, period, scope)
+        data = await _collect(perm, period, scope, start_date, end_date, platform, country)
     except (ScopeError, AuthzError) as exc:
         return HTMLResponse(_render_denied(str(exc)), status_code=403)
     return HTMLResponse(_PAGE.replace("__DATA__", json.dumps(data, ensure_ascii=False)))
@@ -223,10 +243,14 @@ async def board_data(
     perm: UserPermission = Depends(require_web_user),
     period: str = Query("last_30d"),
     scope: str = Query(""),
+    start_date: str | None = Query(None),
+    end_date: str | None = Query(None),
+    platform: str | None = Query(None),
+    country: str | None = Query(None),
 ):
-    """切换日期/范围用的 JSON 端点：前端 AJAX 局部重绘。越界 → 403 JSON。"""
+    """切换日期/范围/平台/区域用的 JSON 端点：前端 AJAX 局部重绘。越界 → 403 JSON。"""
     try:
-        data = await _collect(perm, period, scope)
+        data = await _collect(perm, period, scope, start_date, end_date, platform, country)
     except (ScopeError, AuthzError) as exc:
         return JSONResponse({"error": "forbidden", "detail": str(exc)}, status_code=403)
     return JSONResponse(data)

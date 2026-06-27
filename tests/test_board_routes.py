@@ -76,7 +76,7 @@ def test_logged_in_unregistered_403_generic(monkeypatch):
 def test_boss_renders_200(monkeypatch):
     app.dependency_overrides[require_web_user] = lambda: BOSS
 
-    async def fake_collect(perm, period, scope):
+    async def fake_collect(perm, period, scope, *args, **kwargs):
         return _FAKE_PAYLOAD
 
     monkeypatch.setattr("web.routes.board._collect", fake_collect)
@@ -88,7 +88,7 @@ def test_boss_renders_200(monkeypatch):
 def test_operator_out_of_scope_html_403(monkeypatch):
     app.dependency_overrides[require_web_user] = lambda: OPER
 
-    async def boom(perm, period, scope):
+    async def boom(perm, period, scope, *args, **kwargs):
         raise ScopeError("指定店铺不在 scope 范围内")
 
     monkeypatch.setattr("web.routes.board._collect", boom)
@@ -100,7 +100,7 @@ def test_operator_out_of_scope_html_403(monkeypatch):
 def test_operator_out_of_scope_data_403_json(monkeypatch):
     app.dependency_overrides[require_web_user] = lambda: OPER
 
-    async def boom(perm, period, scope):
+    async def boom(perm, period, scope, *args, **kwargs):
         raise ScopeError("越界")
 
     monkeypatch.setattr("web.routes.board._collect", boom)
@@ -112,7 +112,7 @@ def test_operator_out_of_scope_data_403_json(monkeypatch):
 def test_board_data_boss_ok_json(monkeypatch):
     app.dependency_overrides[require_web_user] = lambda: BOSS
 
-    async def fake_collect(perm, period, scope):
+    async def fake_collect(perm, period, scope, *args, **kwargs):
         return _FAKE_PAYLOAD
 
     monkeypatch.setattr("web.routes.board._collect", fake_collect)
@@ -134,7 +134,7 @@ def test_collect_sets_current_account_before_nested_data_calls(monkeypatch):
     monkeypatch.setattr(
         board_routes,
         "resolve_authorized_scope",
-        lambda perm, requested_scope_key=None: ScopeFilters(
+        lambda perm, requested_scope_key=None, platform=None, country=None: ScopeFilters(
             platform=None,
             country=None,
             shop_ids=["7494734967204644284"],

@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ArrowUpDown,
-  CalendarRange,
   ChevronDown,
   DollarSign,
   Gauge,
+  Globe,
   Megaphone,
   Search,
+  ShoppingBag,
   ShoppingCart,
   Store,
   TrendingUp,
   Wallet,
 } from "lucide-react";
 import { api, type BoardData, type LowStockItem, type TopSku } from "@/api";
+import { DateRangePicker, type DateRangeValue } from "@/components/board/DateRangePicker";
 import { EChart, useChartTokens } from "@/components/EChart";
 import {
   DEMO_ORDERS,
@@ -36,12 +38,26 @@ import {
 //   ③品牌：销售趋势线照搬 fork 的靛蓝 #6366f1（用户拍板 1:1 复刻彩色面积效果）；
 //          其余自创/降级区块（订单·销量、库存仪表盘/环图）走自有色系 token（绿 t.positive / 橙 t.warning）。
 
-const PERIODS: [string, string][] = [
-  ["today", "今天"],
-  ["last_7d", "近 7 天"],
-  ["last_30d", "近 30 天"],
-  ["this_month", "本月"],
+// 区域→后端 country（ISO alpha-2）；平台→后端 platform。当前单租户单平台，"全部"与具体值
+// 返回同一份数据（预期），选项为前向占位 + 真实透传。空串=全部（后端按 None 处理）。
+const REGIONS: { value: string; label: string }[] = [
+  { value: "", label: "全部" },
+  { value: "ID", label: "印尼" },
 ];
+const PLATFORMS: { value: string; label: string }[] = [
+  { value: "", label: "全部" },
+  { value: "tiktok_shop", label: "TikTok" },
+];
+
+// 默认日期窗口：近 7 天（今天往前 6 天 ~ 今天，与后端 last_7d 对齐）。
+function last7(): DateRangeValue {
+  const fmt = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const end = new Date();
+  const start = new Date();
+  start.setDate(start.getDate() - 6);
+  return { start: fmt(start), end: fmt(end) };
+}
 
 const fmtInt = (n: number | undefined) =>
   n == null ? "—" : Number(n).toLocaleString("en-US");
@@ -56,8 +72,10 @@ const fmtMoneyCny = (n: number | undefined | null) =>
     : "¥ " + Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
 
 export function BoardPage() {
-  const [period, setPeriod] = useState("last_30d");
-  const [scope, setScope] = useState("");
+  const [platform, setPlatform] = useState("tiktok_shop"); // 平台默认 TikTok
+  const [region, setRegion] = useState("ID"); // 区域默认 印尼（→country）
+  const [scope, setScope] = useState(""); // 店铺（范围 scope_key）
+  const [range, setRange] = useState<DateRangeValue>(last7); // 日期默认近 7 天
   const [data, setData] = useState<BoardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -67,14 +85,20 @@ export function BoardPage() {
     setLoading(true);
     setError(null);
     api
-      .boardData(period, scope)
+      .boardData({
+        start: range.start ?? undefined,
+        end: range.end ?? undefined,
+        scope,
+        platform: platform || undefined,
+        country: region || undefined,
+      })
       .then((d) => alive && setData(d))
       .catch((e) => alive && setError(String(e)))
       .finally(() => alive && setLoading(false));
     return () => {
       alive = false;
     };
-  }, [period, scope]);
+  }, [platform, region, scope, range.start, range.end]);
 
   const canSwitch = !!data?.can_switch && (data?.scopes.length ?? 0) > 1;
 
@@ -87,24 +111,32 @@ export function BoardPage() {
         </div>
       </header>
 
-      {/* Filter bar（照 fork DashboardFilter：带图标标签的 select；mock 维度→真实 时段/范围） */}
+      {/* Filter bar（照 fork DashboardFilter：区域 / 平台 / 店铺 / 日期，带图标标签的 select + 日历） */}
       <div className="flex flex-wrap items-end gap-4 border-b border-border-shallow bg-background px-4 py-3 sm:px-6">
         <FilterSelect
-          icon={<CalendarRange size={12} />}
-          label="时段"
-          value={period}
-          onChange={setPeriod}
-          options={PERIODS.map(([value, label]) => ({ value, label }))}
+          icon={<Globe size={12} />}
+          label="区域"
+          value={region}
+          onChange={setRegion}
+          options={REGIONS}
+        />
+        <FilterSelect
+          icon={<ShoppingBag size={12} />}
+          label="平台"
+          value={platform}
+          onChange={setPlatform}
+          options={PLATFORMS}
         />
         {canSwitch && (
           <FilterSelect
             icon={<Store size={12} />}
-            label="范围"
+            label="店铺"
             value={scope}
             onChange={setScope}
             options={data!.scopes.map((s) => ({ value: s.key || "", label: s.label }))}
           />
         )}
+        <DateRangePicker value={range} onChange={setRange} />
         {data?.scope && (
           <div className="ml-auto hidden self-center text-xs text-foreground-tertiary sm:block">
             范围 · {data.scope}
@@ -676,13 +708,15 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
   const ordersOption = useMemo(
     () => ({
       tooltip: { trigger: "axis" as const, ...tip },
+      // 图例置顶（原 bottom:0 会和 X 轴标签重叠压字）：与 X 轴彻底分离。
       legend: {
         data: ["订单数", "销量"],
-        bottom: 0,
+        top: 0,
+        left: "center",
         textStyle: { color: t.sub, fontSize: 11 },
         icon: "roundRect",
       },
-      grid: { top: 12, right: 16, bottom: 40, left: 50 },
+      grid: { top: 36, right: 16, bottom: 28, left: 50 },
       xAxis: axisX(true),
       yAxis: axisY,
       series: [
@@ -718,15 +752,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
 
   return (
     <Card>
-      <CardHead
-        title="经营概览"
-        right={
-          <div className="flex items-center gap-2">
-            {isDemo && <DemoBadge />}
-            <TabPills tabs={tabs} value={activeTab} onChange={setActiveTab} />
-          </div>
-        }
-      />
+      <CardHead title="经营概览" />
 
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-3">
         <MetricCard loading={loading} change={ch?.gmv} title="GMV（已付款）" value={fmtMoney(o?.gmv)} icon={<DollarSign size={14} />} />
@@ -749,6 +775,12 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           subtitle="结算口径"
           icon={<Gauge size={14} />}
         />
+      </div>
+
+      {/* Tab 紧贴图表右上（移动端不再隔着指标卡，便于触达） */}
+      <div className="mb-2 flex items-center justify-end gap-2">
+        {isDemo && <DemoBadge />}
+        <TabPills tabs={tabs} value={activeTab} onChange={setActiveTab} />
       </div>
 
       {/* 演示 tab（流量/转化）走前端内置 demo 数据，不依赖后端 pts；真实 tab 仍按 pts 空态降级。 */}
