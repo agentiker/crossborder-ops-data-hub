@@ -105,6 +105,22 @@ def test_monitor_alert_with_attribution(session):
     assert round(attr["from"], 4) == 0.12 and round(attr["to"], 4) == 0.18
 
 
+def test_monitor_baseline_pending_when_no_settled(session):
+    """有当前 unsettled（过护栏）但无已结算基准 → baseline_pending：展示当前费率/构成，不判异常。"""
+    _unsettled_order(session, "u1", gmv=6_000_000, fee=1_230_000,
+                     comp_key="dynamic_commission_amount", comp_amt=720_000)
+    _unsettled_order(session, "u2", gmv=6_000_000, fee=1_230_000,
+                     comp_key="dynamic_commission_amount", comp_amt=720_000)
+    session.commit()
+
+    res = get_fee_rate_monitor(session=session, trend_days=3, **_scope())
+    assert res["status"] == "baseline_pending"
+    assert res["currency"] == "IDR"
+    assert round(res["current_rate"], 4) == 0.205  # 当前预估费率有值
+    assert res["components"], "当前构成应展示"
+    assert res["attributions"] == []  # 无基准不归因
+
+
 def test_monitor_insufficient_when_no_unsettled(session):
     """无 unsettled 预估数据（仅 baseline）→ status=insufficient，不误报。"""
     _settled_order(session, "s1", gmv=6_000_000, fee=1_200_000)

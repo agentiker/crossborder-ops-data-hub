@@ -324,8 +324,12 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
       ? { label: "异常升高", cls: "bg-red-100 text-red-700" }
       : status === "normal"
         ? { label: "正常", cls: "bg-green-100 text-green-700" }
-        : { label: "数据积累中", cls: "bg-fill-shallow text-foreground-tertiary" };
+        : status === "baseline_pending"
+          ? { label: "监控中", cls: "bg-blue-100 text-blue-700" }
+          : { label: "数据积累中", cls: "bg-fill-shallow text-foreground-tertiary" };
   const lineColor = status === "alert" ? t.negative : t.primary;
+  // baseline_pending：有当前预估费率/构成/趋势，仅已结算基准不足→展示主体但不判异常、不显升幅。
+  const baselinePending = status === "baseline_pending";
   const points = (fr?.trend || []).filter((p) => p.rate != null);
   const option = useMemo(
     () => ({
@@ -391,7 +395,7 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
               <div className="tabnum text-2xl font-bold text-foreground">
                 {pct(fr?.current_rate)}
               </div>
-              {fr && fr.abs_delta !== 0 && (
+              {!baselinePending && fr && fr.abs_delta !== 0 && (
                 <div
                   className={`text-xs ${fr.abs_delta > 0 ? "text-red-600" : "text-green-600"}`}
                 >
@@ -404,12 +408,21 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
               <div className="text-xs text-foreground-tertiary">
                 已结算基准（{fr?.baseline_window}）
               </div>
-              <div className="tabnum text-2xl font-bold text-foreground">
-                {pct(fr?.baseline_rate)}
-              </div>
+              {baselinePending ? (
+                <div className="pt-1 text-sm text-foreground-tertiary">积累中（历史不足）</div>
+              ) : (
+                <div className="tabnum text-2xl font-bold text-foreground">
+                  {pct(fr?.baseline_rate)}
+                </div>
+              )}
               <div className="text-xs text-foreground-tertiary">{fr?.currency}</div>
             </div>
           </div>
+          {baselinePending && (
+            <div className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
+              ⏳ 已结算基准积累中（需 ~2 周结算历史），暂无法判定异常，先展示当前费率水平与构成。
+            </div>
+          )}
           {/* 趋势 */}
           <EChart option={option} height={150} />
           {/* 异常时点名分项归因 */}

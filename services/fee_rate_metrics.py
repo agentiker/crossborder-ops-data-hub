@@ -209,13 +209,23 @@ def get_fee_rate_monitor(
             realtime=True,
         )
 
+        # 三/四态（用数值判定，不靠 skip_reason 字符串）：
+        #   有"当前数据"= 主币种存在且评估窗口 GMV 过护栏（current_rate/构成/趋势可信）。
+        #   - alert            异常升高
+        #   - normal           有当前 + 基准充足 + 未达阈值
+        #   - baseline_pending 有当前但基准（已结算历史）不足→展示当前费率/构成/趋势，仅不判异常
+        #   - insufficient     连当前数据都没有（评估窗口空 / GMV 低于护栏）→ 灰态
         currency = decision.currency
+        has_current = currency is not None and decision.eval_gmv >= settings.fee_rate_min_gmv
+        baseline_ok = decision.baseline_gmv >= settings.fee_rate_min_gmv and decision.baseline_rate > 0
         if decision.should_alert:
             status = "alert"
-        elif decision.skip_reason == "未达异常阈值或费率未升":
-            status = "normal"
-        else:
+        elif not has_current:
             status = "insufficient"
+        elif not baseline_ok:
+            status = "baseline_pending"
+        else:
+            status = "normal"
 
         # 当前构成（主币种 eval 侧），结构化供前端
         ev = eval_by_ccy.get(currency, {}) if currency else {}

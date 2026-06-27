@@ -193,7 +193,8 @@ export interface FeeRateAttribution {
 }
 
 export interface FeeRateMonitor {
-  status: "normal" | "alert" | "insufficient";
+  // baseline_pending：有当前预估费率/构成/趋势，但已结算基准不足、暂无法判异常。
+  status: "normal" | "alert" | "baseline_pending" | "insufficient";
   currency: string | null;
   skip_reason: string | null;
   current_rate: number; // 当前预估费率（unsettled 口径）
