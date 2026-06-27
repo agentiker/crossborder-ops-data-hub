@@ -30,12 +30,13 @@ interface NavItem {
   icon: typeof Plus;
   end?: boolean;
   bossOnly?: boolean;
+  badge?: string; // 角标，如「待开发」
 }
 
 const NAV: NavItem[] = [
   { to: "/", label: "新建对话", icon: Plus, end: true },
-  { to: "/scheduled", label: "定时任务", icon: Calendar },
-  { to: "/skills", label: "技能", icon: Zap },
+  { to: "/scheduled", label: "定时任务", icon: Calendar, badge: "待开发" },
+  { to: "/skills", label: "技能", icon: Zap, badge: "待开发" },
   { to: "/board", label: "看板", icon: LayoutDashboard },
   { to: "/admin", label: "管理", icon: ShieldCheck, bossOnly: true },
 ];
@@ -80,10 +81,15 @@ export function SidebarContent({ me, conversations, onRefresh, onNavigate }: Pro
 
       {/* 导航 */}
       <nav className="flex flex-col gap-0.5 px-3">
-        {items.map(({ to, label, icon: Icon, end }) => (
+        {items.map(({ to, label, icon: Icon, end, badge }) => (
           <NavLink key={to} to={to} end={end} className={navCls} onClick={onNavigate}>
             <Icon className="size-[18px] shrink-0" />
             <span className="truncate">{label}</span>
+            {badge && (
+              <span className="ml-auto shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+                {badge}
+              </span>
+            )}
           </NavLink>
         ))}
       </nav>

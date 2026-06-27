@@ -360,6 +360,9 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
           lineStyle: { color: lineColor, width: 2 },
           itemStyle: { color: lineColor },
           areaStyle: { color: lineColor, opacity: 0.08 },
+          // hover 时禁用 emphasis：否则默认高亮态会覆盖 lineStyle/areaStyle 致折线"消失"。
+          // tooltip 由 axisPointer 独立驱动，不受影响。
+          emphasis: { disabled: true },
         },
       ],
     }),
@@ -392,8 +395,16 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
               <div className="text-xs text-foreground-tertiary">
                 当前预估费率（{fr?.eval_window}）
               </div>
-              <div className="tabnum text-2xl font-bold text-foreground">
-                {pct(fr?.current_rate)}
+              <div className="flex items-center gap-2">
+                {/* 实时监控呼吸灯（模仿对话欢迎页绿点）：alert 红、其余绿 */}
+                <span
+                  className={`inline-block size-2 shrink-0 rounded-full animate-pulse-slow ${
+                    status === "alert" ? "bg-red-500" : "bg-green-500"
+                  }`}
+                />
+                <div className="tabnum text-2xl font-bold text-foreground">
+                  {pct(fr?.current_rate)}
+                </div>
               </div>
               {!baselinePending && fr && fr.abs_delta !== 0 && (
                 <div
