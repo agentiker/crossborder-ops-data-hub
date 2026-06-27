@@ -20,15 +20,34 @@ ALERT_TYPE = "fee_rate_anomaly"
 # 及时费率告警（unsettled 预估口径）独立去重状态，与结算口径互不覆盖
 ALERT_TYPE_REALTIME = "fee_rate_anomaly_realtime"
 
-# 文案里列出的扣费组件（按金额降序取前几），列名 → 中文名
+# 文案里列出的扣费组件：fee_breakdown 子键(API 原始名) → 中文名。未列出的键回落原始名。
+# 结算单(202501)与未结算单(202507)命名体系不同(如 platform_commission vs dynamic_commission)，两套都列。
 _COMPONENT_LABELS = {
+    # 未结算单(202507)主费项
+    "dynamic_commission_amount": "动态佣金",
+    "bonus_cashback_service_fee_amount": "返现服务费",
+    "vn_fix_infrastructure_fee": "基建费",
+    "affiliate_ads_commission_amount": "联盟广告佣金",
+    "affiliate_commission_amount": "联盟佣金",
+    "affiliate_commission_before_pit_amount": "联盟佣金(税前)",
+    "affiliate_partner_commission_amount": "联盟伙伴佣金",
+    # 结算单(202501)主费项
     "platform_commission_amount": "平台佣金",
     "referral_fee_amount": "引荐费",
     "transaction_fee_amount": "交易手续费",
-    "gmv_max_fee": "GMV Max 广告",
-    "tap_commission": "达人佣金",
-    "affiliate_commission": "联盟佣金",
+    "gmv_max_ad_fee_amount": "GMV Max 广告",
+    "tap_shop_ads_commission": "达人佣金",
+    # 其它常见费项
+    "credit_card_handling_fee_amount": "信用卡手续费",
+    "sfp_service_fee_amount": "SFP 服务费",
+    "mall_service_fee_amount": "商城服务费",
+    "seller_growth_fee_amount": "卖家成长费",
+    "smart_promotion_fee_amount": "智能推广费",
+    "refund_administration_fee_amount": "退款管理费",
 }
+
+# 分项归因：某费项占 GMV 比例较基准升幅 ≥ 此阈值(百分点)才点名（过滤微小波动）
+_COMPONENT_ATTRIBUTION_MIN_PCT = 0.005
 
 
 @dataclass
@@ -115,6 +134,8 @@ def build_decision(
         abs_change=abs_change,
         eval_components=ev.get("components", {}),
         eval_gmv=eval_gmv,
+        baseline_components=base.get("components", {}),
+        baseline_gmv=baseline_gmv,
         eval_window_label=eval_window_label,
         baseline_window_label=baseline_window_label,
         realtime=realtime,
@@ -140,6 +161,31 @@ def _top_components(components: dict, gmv: float, limit: int = 3) -> list[str]:
     return out
 
 
+def _attributions(
+    eval_components: dict, eval_gmv: float, baseline_components: dict, baseline_gmv: float, limit: int = 3
+) -> list[str]:
+    """B2 分项归因：对**两侧都有**的同名费项，算各自占 GMV 比例的升幅，点名升幅最大的几项。
+
+    仅取交集键——避免跨口径(结算 platform_commission vs 未结算 dynamic_commission，命名不同)
+    时把"对方没有的键"误判成从 0 暴涨。交集为空(如及时口径多数费项名不同)则返回空、降级为纯构成展示。
+    """
+    if not eval_components or not baseline_components or eval_gmv <= 0 or baseline_gmv <= 0:
+        return []
+    rows = []
+    for key in set(eval_components) & set(baseline_components):
+        ev_share = eval_components[key] / eval_gmv
+        base_share = baseline_components[key] / baseline_gmv
+        diff = ev_share - base_share
+        if diff >= _COMPONENT_ATTRIBUTION_MIN_PCT:
+            rows.append((diff, key, base_share, ev_share))
+    rows.sort(reverse=True)
+    out = []
+    for diff, key, base_share, ev_share in rows[:limit]:
+        label = _COMPONENT_LABELS.get(key, key)
+        out.append(f"  • {label}：+{_pct(diff)}（{_pct(base_share)}→{_pct(ev_share)}）")
+    return out
+
+
 def _format_message(
     *,
     scope_display: str,
@@ -150,6 +196,8 @@ def _format_message(
     abs_change: float,
     eval_components: dict,
     eval_gmv: float,
+    baseline_components: dict,
+    baseline_gmv: float,
     eval_window_label: str,
     baseline_window_label: str,
     realtime: bool = False,
@@ -164,9 +212,14 @@ def _format_message(
         f"- 基准（{baseline_window_label}）：{_pct(baseline_rate)}",
         f"- 升幅：+{_pct(abs_change)}（相对 +{_pct(rel_change)}）",
     ]
+    # B2 分项归因：能对齐到基准的费项→点名升幅；对齐不上(跨口径)→降级为当前构成展示
+    attribs = _attributions(eval_components, eval_gmv, baseline_components, baseline_gmv)
+    if attribs:
+        lines.append("📍 主要涨幅来自：")
+        lines.extend(attribs)
     comps = _top_components(eval_components, eval_gmv)
     if comps:
-        lines.append("主要扣费构成：")
+        lines.append("当前主要扣费构成：")
         lines.extend(comps)
     lines.append("👉 请核对是否平台调佣 / 新增费项 / 活动费用，必要时复盘定价。")
     if realtime:

@@ -25,12 +25,17 @@ def _order(session, oid, *, gmv, currency="IDR", paid=datetime(2026, 6, 1, 12, 0
 
 
 def _ft(session, tid, oid, *, fee_tax, currency="IDR", commission="0", md=date(2026, 6, 1)):
+    # fee_breakdown 存原始 API 负数(扣款)；components 从此 JSON 聚合（取绝对值）
+    fb = {}
+    if Decimal(str(commission)) != 0:
+        fb["platform_commission_amount"] = str(-Decimal(str(commission)))
     session.add(FactFinanceTransaction(
         platform="tiktok_shop", country="ID", shop_id="shop-1",
         scope_key=f"sk-{tid}", transaction_id=tid, order_id=oid,
         metric_date=md, currency=currency,
         fee_tax_amount=Decimal(str(fee_tax)),
         platform_commission_amount=Decimal(str(commission)),
+        fee_breakdown=fb,
     ))
 
 

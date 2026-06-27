@@ -24,12 +24,16 @@ def _order(session, oid, *, gmv, currency="IDR", create=datetime(2026, 6, 24, 5,
 
 
 def _unsettled(session, tid, oid, *, fee, currency="IDR", affiliate="0", md=date(2026, 6, 24)):
+    # fee_breakdown 存原始 API 负数(扣款)；components 从此 JSON 聚合（取绝对值）
+    fb = {}
+    if Decimal(str(affiliate)) != 0:
+        fb["affiliate_ads_commission_amount"] = str(-Decimal(str(affiliate)))
     session.add(FactUnsettledFee(
         platform="tiktok_shop", country="ID", shop_id="shop-1",
         scope_key=f"u-{tid}", transaction_id=tid, order_id=oid,
         metric_date=md, currency=currency,
         estimated_fee_amount=Decimal(str(fee)),
-        affiliate_commission=Decimal(str(affiliate)),
+        fee_breakdown=fb,
     ))
 
 
@@ -53,7 +57,7 @@ def test_unsettled_rate_computes(session):
     assert idr["gmv"] == 2000.0
     assert idr["total_fee"] == 500.0
     assert idr["rate"] == 0.25  # 500/2000
-    assert idr["components"]["affiliate_commission"] == 50.0
+    assert idr["components"]["affiliate_ads_commission_amount"] == 50.0  # 从 fee_breakdown JSON 聚合
 
 
 def test_unsettled_rate_gmv_not_double_counted(session):
@@ -143,3 +147,36 @@ def test_settled_decision_keeps_lag_footnote():
     )
     assert "结算有滞后" in d.message
     assert "预估口径·实时" not in d.message
+
+
+# ── B2 分项归因 ───────────────────────────────────────────────────────────────
+
+def _ccy_comp(rate, gmv, components):
+    return {"IDR": {"currency": "IDR", "rate": rate, "gmv": gmv, "total_fee": rate * gmv,
+                    "order_count": 100, "components": components}}
+
+
+def test_b2_attributes_rising_component_same_keys():
+    """同口径(费项名一致)：点名升幅最大的费项 + 占比变化(8%→11%)。"""
+    # 总费率 20%→23%；动态佣金 8%→11%(涨3pct)，返现费 4%→4%(没涨)
+    eval_by = _ccy_comp(0.23, 50000, {"dynamic_commission_amount": 0.11 * 50000,
+                                      "bonus_cashback_service_fee_amount": 0.04 * 50000})
+    base_by = _ccy_comp(0.20, 50000, {"dynamic_commission_amount": 0.08 * 50000,
+                                      "bonus_cashback_service_fee_amount": 0.04 * 50000})
+    d = fee_rate_alerts.build_decision(eval_by_ccy=eval_by, baseline_by_ccy=base_by, **_KW)
+    assert d.should_alert is True
+    assert "📍 主要涨幅来自" in d.message
+    assert "动态佣金" in d.message and "8.00%→11.00%" in d.message
+    # 没涨的返现费不进归因
+    assert "返现服务费：+" not in d.message
+
+
+def test_b2_no_false_attribution_cross_naming():
+    """跨口径(及时告警:未结算 dynamic vs 结算 platform，费项名不同)：交集为空→不误判暴涨，降级为构成展示。"""
+    eval_by = _ccy_comp(0.23, 50000, {"dynamic_commission_amount": 0.11 * 50000})  # 未结算命名
+    base_by = _ccy_comp(0.20, 50000, {"platform_commission_amount": 0.08 * 50000})  # 结算命名
+    d = fee_rate_alerts.build_decision(eval_by_ccy=eval_by, baseline_by_ccy=base_by, realtime=True, **_KW)
+    assert d.should_alert is True
+    assert "📍 主要涨幅来自" not in d.message  # 无同名费项→不归因
+    assert "当前主要扣费构成" in d.message  # 降级为构成展示
+    assert "动态佣金" in d.message
