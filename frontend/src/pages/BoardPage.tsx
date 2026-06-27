@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode, type UIEvent } from "react";
 import {
   ArrowUpDown,
   ChevronDown,
@@ -6,12 +6,12 @@ import {
   Gauge,
   Globe,
   Megaphone,
+  Percent,
   Search,
   ShoppingBag,
   ShoppingCart,
   Store,
   TrendingUp,
-  Wallet,
 } from "lucide-react";
 import { api, type BoardData, type LowStockItem, type TopSku } from "@/api";
 import { DateRangePicker, type DateRangeValue } from "@/components/board/DateRangePicker";
@@ -102,6 +102,13 @@ export function BoardPage() {
 
   const canSwitch = !!data?.can_switch && (data?.scopes.length ?? 0) > 1;
 
+  // 上划收起筛选栏（移动端省纵向空间）：内容区滚动驱动；带迟滞阈值防边界抖动。
+  const [filtersCollapsed, setFiltersCollapsed] = useState(false);
+  const onContentScroll = (e: UIEvent<HTMLDivElement>) => {
+    const top = e.currentTarget.scrollTop;
+    setFiltersCollapsed((prev) => (top > 40 ? true : top < 10 ? false : prev));
+  };
+
   return (
     <section className="flex h-full flex-col">
       {/* Header（照 fork DashboardPage：h-[68px] + 底边） */}
@@ -111,41 +118,50 @@ export function BoardPage() {
         </div>
       </header>
 
-      {/* Filter bar（照 fork DashboardFilter：区域 / 平台 / 店铺 / 日期，带图标标签的 select + 日历） */}
-      <div className="flex flex-wrap items-end gap-4 border-b border-border-shallow bg-background px-4 py-3 sm:px-6">
-        <FilterSelect
-          icon={<Globe size={12} />}
-          label="区域"
-          value={region}
-          onChange={setRegion}
-          options={REGIONS}
-        />
-        <FilterSelect
-          icon={<ShoppingBag size={12} />}
-          label="平台"
-          value={platform}
-          onChange={setPlatform}
-          options={PLATFORMS}
-        />
-        {canSwitch && (
+      {/* Filter bar（区域 / 平台 / 店铺 / 日期）：上划时整条收起（max-h+opacity 过渡），回顶展开 */}
+      <div
+        className={
+          "overflow-visible border-b border-border-shallow bg-background transition-all duration-300 ease-out " +
+          (filtersCollapsed
+            ? "max-h-0 overflow-hidden border-b-0 py-0 opacity-0"
+            : "max-h-60 opacity-100")
+        }
+      >
+        <div className="flex flex-wrap items-end gap-4 px-4 py-3 sm:px-6">
           <FilterSelect
-            icon={<Store size={12} />}
-            label="店铺"
-            value={scope}
-            onChange={setScope}
-            options={data!.scopes.map((s) => ({ value: s.key || "", label: s.label }))}
+            icon={<Globe size={12} />}
+            label="区域"
+            value={region}
+            onChange={setRegion}
+            options={REGIONS}
           />
-        )}
-        <DateRangePicker value={range} onChange={setRange} />
-        {data?.scope && (
-          <div className="ml-auto hidden self-center text-xs text-foreground-tertiary sm:block">
-            范围 · {data.scope}
-          </div>
-        )}
+          <FilterSelect
+            icon={<ShoppingBag size={12} />}
+            label="平台"
+            value={platform}
+            onChange={setPlatform}
+            options={PLATFORMS}
+          />
+          {canSwitch && (
+            <FilterSelect
+              icon={<Store size={12} />}
+              label="店铺"
+              value={scope}
+              onChange={setScope}
+              options={data!.scopes.map((s) => ({ value: s.key || "", label: s.label }))}
+            />
+          )}
+          <DateRangePicker value={range} onChange={setRange} />
+          {data?.scope && (
+            <div className="ml-auto hidden self-center text-xs text-foreground-tertiary sm:block">
+              范围 · {data.scope}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Content（照 fork：max-w-[1400px] + 满宽概览 + 2 列 + 满宽底部段） */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6" onScroll={onContentScroll}>
         <div className="mx-auto max-w-[1400px] space-y-6">
           {error ? (
             <Card>
@@ -154,7 +170,6 @@ export function BoardPage() {
           ) : (
             <>
               <BusinessOverview data={data} loading={loading} />
-              <ProfitCard data={data} loading={loading} />
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                 <HotProducts data={data} loading={loading} />
                 <InventoryHealth data={data} loading={loading} />
@@ -510,7 +525,16 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
 // 数据走 /board/data 的 profit 字段。利润 = GMV − 扣点 − 广告 − 成本 − 退货（折 CNY）。
 // estimated=今早预估（主口径）；settled=结算后真实（3b 回填，本期 null → 显「待结算回填」）。
 // 无聚合数据 available=false → 显「暂无利润数据」。移动端：明细 grid-cols-2 sm:grid-cols-3 自适应。
-function ProfitCard({ data, loading }: { data: BoardData | null; loading: boolean }) {
+// bare=true：去掉外层卡片边框，作为「经营概览」KPI 之后的第四行内嵌渲染（避免卡中卡）。
+function ProfitCard({
+  data,
+  loading,
+  bare = false,
+}: {
+  data: BoardData | null;
+  loading: boolean;
+  bare?: boolean;
+}) {
   const p = data?.profit;
   const est = p?.estimated;
   const settled = p?.settled;
@@ -524,8 +548,8 @@ function ProfitCard({ data, loading }: { data: BoardData | null; loading: boolea
     { label: "产品成本", value: est?.product_cost },
     { label: "预估退货", value: est?.refund_amount },
   ];
-  return (
-    <Card>
+  const body = (
+    <>
       <CardHead
         title="预估利润（折 CNY）"
         right={
@@ -584,7 +608,13 @@ function ProfitCard({ data, loading }: { data: BoardData | null; loading: boolea
           </div>
         </div>
       )}
-    </Card>
+    </>
+  );
+  // bare：作「经营概览」第四行内嵌，顶部分隔线与 KPI 区分，不再套卡边框（避免卡中卡）。
+  return bare ? (
+    <div className="mt-4 border-t border-border-shallow pt-4">{body}</div>
+  ) : (
+    <Card>{body}</Card>
   );
 }
 
@@ -754,11 +784,9 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
     <Card>
       <CardHead title="经营概览" />
 
-      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-3">
+      {/* KPI 固定 2 列：第一行 GMV/广告消耗、第二行 订单/销量、第三行 ROI/ROAS（客单价暂去） */}
+      <div className="mb-4 grid grid-cols-2 gap-3">
         <MetricCard loading={loading} change={ch?.gmv} title="GMV（已付款）" value={fmtMoney(o?.gmv)} icon={<DollarSign size={14} />} />
-        <MetricCard loading={loading} change={ch?.order_count} title="订单数" value={fmtInt(o?.order_count)} icon={<ShoppingCart size={14} />} />
-        <MetricCard loading={loading} change={ch?.units_sold} title="销量" value={fmtInt(o?.units_sold)} icon={<TrendingUp size={14} />} />
-        <MetricCard loading={loading} change={ch?.avg_order_value} title="客单价" value={fmtMoney(o?.avg_order_value)} icon={<Wallet size={14} />} />
         <MetricCard
           loading={loading}
           change={hasAdSpend ? ch?.ad_cost : undefined}
@@ -767,6 +795,10 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           subtitle={hasAdSpend ? "结算口径" : "暂无结算数据"}
           icon={<Megaphone size={14} />}
         />
+        <MetricCard loading={loading} change={ch?.order_count} title="订单数" value={fmtInt(o?.order_count)} icon={<ShoppingCart size={14} />} />
+        <MetricCard loading={loading} change={ch?.units_sold} title="销量" value={fmtInt(o?.units_sold)} icon={<TrendingUp size={14} />} />
+        {/* ROI：口径待定，先占位（与 ROAS 并列第三行）。定口径后填值。 */}
+        <MetricCard loading={loading} title="ROI" value="—" subtitle="口径待定" icon={<Percent size={14} />} />
         <MetricCard
           loading={loading}
           change={ch?.roas}
@@ -776,6 +808,9 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           icon={<Gauge size={14} />}
         />
       </div>
+
+      {/* 第四行：预估利润大卡（bare 内嵌，紧随 KPI、趋势图之前） */}
+      <ProfitCard data={data} loading={loading} bare />
 
       {/* Tab 紧贴图表右上（移动端不再隔着指标卡，便于触达） */}
       <div className="mb-2 flex items-center justify-end gap-2">
