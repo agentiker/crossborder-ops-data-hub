@@ -169,6 +169,7 @@ export function BoardPage() {
             </Card>
           ) : (
             <>
+              <NoDataBanner data={data} loading={loading} />
               <BusinessOverview data={data} loading={loading} />
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                 <HotProducts data={data} loading={loading} />
@@ -184,6 +185,27 @@ export function BoardPage() {
         </div>
       </div>
     </section>
+  );
+}
+
+/* ── 无订单数据横幅 ──────────────────────────────────────────────
+   区分「该时间范围真没单」与「加载失败」（后者走上方红色 Card）。数据加载成功但
+   order_count=0 时给出友好提示 + 所选窗口，避免客户把全 0 页面误当系统坏掉。
+   常见诱因：选到了同步窗口之外的早期单日（prod 仅手动同步了最近一段时间的订单）。 */
+function NoDataBanner({ data, loading }: { data: BoardData | null; loading: boolean }) {
+  if (loading || !data) return null;
+  if ((data.overview.orders?.order_count ?? 0) > 0) return null;
+  const win = data.trend.window_label || `${data.trend.start_date ?? ""} ~ ${data.trend.end_date ?? ""}`;
+  return (
+    <div className="flex items-start gap-3 rounded-2xl border border-border-shallow bg-fill-shallow p-4 text-sm">
+      <span className="text-base leading-5">📅</span>
+      <div>
+        <div className="font-medium text-foreground">所选时间范围暂无订单数据</div>
+        <div className="mt-0.5 text-foreground-tertiary">
+          {win} 内没有已付款订单——并非加载失败。请尝试扩大日期范围或换一个日期再看。
+        </div>
+      </div>
+    </div>
   );
 }
 
