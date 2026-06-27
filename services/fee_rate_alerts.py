@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 ALERT_TYPE = "fee_rate_anomaly"
+# 及时费率告警（unsettled 预估口径）独立去重状态，与结算口径互不覆盖
+ALERT_TYPE_REALTIME = "fee_rate_anomaly_realtime"
 
 # 文案里列出的扣费组件（按金额降序取前几），列名 → 中文名
 _COMPONENT_LABELS = {
@@ -62,8 +64,12 @@ def build_decision(
     abs_pct: float,
     eval_window_label: str,
     baseline_window_label: str,
+    realtime: bool = False,
 ) -> FeeRateDecision:
-    """判定评估窗口费率是否异常升高。无主币种/护栏不过/无异常都返回 should_alert=False。"""
+    """判定评估窗口费率是否异常升高。无主币种/护栏不过/无异常都返回 should_alert=False。
+
+    realtime=True：评估期为 unsettled 预估口径（无结算滞后），文案标注"预估口径·实时"。
+    """
     currency = _dominant_currency(eval_by_ccy)
     if currency is None:
         return FeeRateDecision(should_alert=False, skip_reason="评估窗口无已结算订单")
@@ -111,6 +117,7 @@ def build_decision(
         eval_gmv=eval_gmv,
         eval_window_label=eval_window_label,
         baseline_window_label=baseline_window_label,
+        realtime=realtime,
     )
     return FeeRateDecision(should_alert=True, message=message, **common)
 
@@ -145,12 +152,15 @@ def _format_message(
     eval_gmv: float,
     eval_window_label: str,
     baseline_window_label: str,
+    realtime: bool = False,
 ) -> str:
     """组装飞书私聊告警文案（确定性，无 Markdown 表格）。"""
+    title = "⚠️ 扣点率异常升高（预估口径·实时）" if realtime else "⚠️ 扣点率异常升高"
+    eval_prefix = "预估扣费率" if realtime else "扣费率"
     lines = [
-        "⚠️ 扣点率异常升高",
+        title,
         f"🏪 范围：{scope_display}（{currency}）",
-        f"- 评估期（{eval_window_label}）扣费率：{_pct(eval_rate)}",
+        f"- 评估期（{eval_window_label}）{eval_prefix}：{_pct(eval_rate)}",
         f"- 基准（{baseline_window_label}）：{_pct(baseline_rate)}",
         f"- 升幅：+{_pct(abs_change)}（相对 +{_pct(rel_change)}）",
     ]
@@ -159,5 +169,8 @@ def _format_message(
         lines.append("主要扣费构成：")
         lines.extend(comps)
     lines.append("👉 请核对是否平台调佣 / 新增费项 / 活动费用，必要时复盘定价。")
-    lines.append("（注：结算有滞后，已剔除近期未结算完的订单）")
+    if realtime:
+        lines.append("（注：基于未结算订单 TikTok 官方预估费率，反映最新费率政策；结算前即可发现调佣）")
+    else:
+        lines.append("（注：结算有滞后，已剔除近期未结算完的订单）")
     return "\n".join(lines)

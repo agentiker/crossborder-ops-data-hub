@@ -25,7 +25,7 @@ from core.config import settings
 from core.db import SessionLocal
 from core.timezone import business_today
 from services import fee_rate_alerts, hotsell_alerts, stock_alerts
-from services.fee_rate_metrics import get_settled_fee_rate
+from services.fee_rate_metrics import get_settled_fee_rate, get_unsettled_fee_rate
 from services.fulfillment_alerts import ALERT_TYPE, build_decision
 from services.fulfillment_metrics import get_pending_fulfillments
 from services.order_metrics import get_units_by_product
@@ -321,6 +321,73 @@ def _scan_fee_rate(session, *, account, open_id, scope, scope_id, dry_run: bool)
     return f"{account}/扣点率: 推送失败（游标不更新，下轮重试）"
 
 
+def _scan_unsettled_fee_rate(session, *, account, open_id, scope, scope_id, dry_run: bool) -> str:
+    """及时费率告警（预估口径）：最近 N 天 unsettled 预估费率 vs 历史已结算费率基准。
+
+    与 _scan_fee_rate（结算口径，有滞后）互补：unsettled 反映平台**最新费率政策**，平台一调佣
+    预估费率立即变 → **结算前**即可告警（会议痛点'月底才发现突然多收两三个点'）。
+    去重：评估窗口结束日=今天，故每业务日最多报一次（独立 ALERT_TYPE_REALTIME 状态）。
+    """
+    today = business_today()
+    # 评估期：最近 N 天未结算预估（无结算滞后）
+    eval_end = today
+    eval_start = today - timedelta(days=settings.fee_rate_realtime_eval_days - 1)
+    # 基准：已结算历史费率（避开滞后段，作稳基准）
+    baseline_end = today - timedelta(days=settings.fee_rate_settle_lag_days)
+    baseline_start = baseline_end - timedelta(days=settings.fee_rate_baseline_days - 1)
+
+    common_scope = dict(
+        platform=scope.platform, country=scope.country, shop_ids=scope.shop_ids or None
+    )
+    eval_by_ccy = get_unsettled_fee_rate(
+        start_date=eval_start, end_date=eval_end, session=session, **common_scope
+    )
+    baseline_by_ccy = get_settled_fee_rate(
+        start_date=baseline_start, end_date=baseline_end, session=session, **common_scope
+    )
+
+    decision = fee_rate_alerts.build_decision(
+        eval_by_ccy=eval_by_ccy,
+        baseline_by_ccy=baseline_by_ccy,
+        scope_display=scope.display_text,
+        min_gmv=settings.fee_rate_min_gmv,
+        rel_pct=settings.fee_rate_alert_rel_pct,
+        abs_pct=settings.fee_rate_alert_abs_pct,
+        eval_window_label=_fmt_window(eval_start, eval_end),
+        baseline_window_label=_fmt_window(baseline_start, baseline_end),
+        realtime=True,
+    )
+
+    if not decision.should_alert:
+        return f"{account}/及时费率: 不推送（{decision.skip_reason or '无异常'}）"
+
+    # 去重：同一评估窗口（今天）已报过则不复读
+    prev = get_fee_rate_alert_state(
+        session, alert_type=fee_rate_alerts.ALERT_TYPE_REALTIME, account_id=account, scope_key=scope_id
+    )
+    if prev is not None and prev.last_window_end is not None and prev.last_window_end >= eval_end:
+        return f"{account}/及时费率: 不推送（窗口 {eval_end} 已报过）"
+
+    if dry_run:
+        print(f"[alert][dry-run] 及时费率 → {account}/{open_id}:\n{decision.message}")
+        return f"{account}/及时费率: 待推送 预估升至 {decision.eval_rate:.2%}（dry-run）"
+
+    sent = send_feishu_message(account=account, open_id=open_id, text=decision.message)
+    if sent:
+        upsert_fee_rate_alert_state(
+            session,
+            alert_type=fee_rate_alerts.ALERT_TYPE_REALTIME,
+            account_id=account,
+            scope_key=scope_id,
+            last_window_end=eval_end,
+            last_rate=decision.eval_rate,
+            mark_sent=True,
+        )
+        session.commit()
+        return f"{account}/及时费率: 已推送 预估升至 {decision.eval_rate:.2%}（基准 {decision.baseline_rate:.2%}）"
+    return f"{account}/及时费率: 推送失败（游标不更新，下轮重试）"
+
+
 def _scan_hotsell(session, *, account, open_id, scope, scope_id, dry_run: bool) -> str:
     """爆单规则：某商品当日已付款销量破阈值即提醒。当日去重。返回一行状态。"""
     today = business_today()
@@ -376,7 +443,7 @@ def _scan_hotsell(session, *, account, open_id, scope, scope_id, dry_run: bool) 
 
 
 def _scan_one(recipient: dict, *, dry_run: bool) -> list[str]:
-    """评估一个收件人的全部告警规则（待发货 + 库存 + 扣点率 + 爆单）。返回各规则状态行列表。"""
+    """评估一个收件人的全部告警规则（待发货 + 库存 + 扣点率 + 及时费率 + 爆单）。返回各规则状态行列表。"""
     from core.tenancy import set_current_account
 
     account = recipient["account"]
@@ -390,7 +457,9 @@ def _scan_one(recipient: dict, *, dry_run: bool) -> list[str]:
     session = SessionLocal()
     try:
         lines = []
-        for rule in (_scan_fulfillment, _scan_stock, _scan_fee_rate, _scan_hotsell):
+        for rule in (
+            _scan_fulfillment, _scan_stock, _scan_fee_rate, _scan_unsettled_fee_rate, _scan_hotsell
+        ):
             try:
                 lines.append(
                     rule(

@@ -175,6 +175,10 @@ class Settings(BaseSettings):
     fee_rate_alert_rel_pct: float = 0.15  # 相对升幅阈值（0.15 = 比基准高 15%）
     fee_rate_alert_abs_pct: float = 0.03  # 绝对升幅阈值（0.03 = 费率高 3 个百分点）
     fee_rate_min_gmv: float = 10_000_000.0  # 窗口 GMV 护栏（默认按 IDR；多币种各自比较）
+    # 及时费率告警（unsettled 预估口径，无结算滞后）：评估窗口 = 最近 N 天未结算预估费率，
+    #   基准 = 已结算历史费率（避开滞后段，作稳基准检测"政策刚变尚未结算"）；阈值/护栏复用上方。
+    #   N 不超过 unsettled_lookback_days（unsettled 全量替换只留近几天）。
+    fee_rate_realtime_eval_days: int = 3
 
     # 爆单提醒：某商品当日（印尼业务日，截至 now 的 intraday）已付款销量 ≥ 阈值即提醒。
     # 当日去重：同一商品同一天只报一次；跨天自动重置（见 services/hotsell_alerts）。
