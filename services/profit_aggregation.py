@@ -115,9 +115,12 @@ def compute_daily_profit(
     own = session is None
     session = session or SessionLocal()
     try:
+        # GMV 按下单口径（create_time 归日），与扣点 metric_date(创建日) 同队列：
+        # 本店 ~75% 是 COD，付款口径会漏算在途 COD 单 → fee(创建日)÷GMV(付款日) 佣金率虚高。
         gmv = order_metrics.get_gmv_summary(
             start_date=metric_date, end_date=metric_date,
             platform=platform, country=country, shop_id=shop_id,
+            by_create=True,
         )
         gmv_idr = _D(gmv.get("gmv"))
         order_count = int(gmv.get("order_count") or 0)
@@ -138,6 +141,7 @@ def compute_daily_profit(
         units_by_sku = order_metrics.get_units_by_seller_sku(
             start_date=metric_date, end_date=metric_date,
             platform=platform, country=country, shop_id=shop_id, session=session,
+            by_create=True,
         )
         cost_map = product_cost_store.get_cost_map(
             account_id=account_id, platform=platform, session=session,

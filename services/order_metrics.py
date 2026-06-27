@@ -46,6 +46,23 @@ def _scope_filters(query, model, platform, country, shop_id, shop_ids=None):
     return query
 
 
+def _time_filter(by_create: bool, start_dt: datetime, end_dt: datetime):
+    """归日时间过滤：默认按 paid_time（已付款口径，报表用）；by_create 按 create_time
+    （下单口径，含未付款 COD 在途单、排除 CANCELLED）——供预估利润与扣点同队列对齐。
+    create_time 与 paid_time 同为 naive UTC，归日窗口边界一致复用。"""
+    if by_create:
+        return [
+            OrderHeader.create_time >= start_dt,
+            OrderHeader.create_time <= end_dt,
+            OrderHeader.order_status != "CANCELLED",
+        ]
+    return [
+        OrderHeader.paid_time.isnot(None),
+        OrderHeader.paid_time >= start_dt,
+        OrderHeader.paid_time <= end_dt,
+    ]
+
+
 def _gmv_aggregates(
     start_dt: datetime,
     end_dt: datetime,
@@ -53,30 +70,24 @@ def _gmv_aggregates(
     country: Optional[str],
     shop_id: Optional[str],
     shop_ids: Optional[list[str]],
+    by_create: bool = False,
 ) -> dict:
-    """已付款订单 GMV/订单/销量/客单价聚合（给定 naive UTC 窗口边界）。"""
+    """订单 GMV/订单/销量/客单价聚合（给定 naive UTC 窗口边界）。by_create 见 _time_filter。"""
     session = SessionLocal()
     try:
+        tf = _time_filter(by_create, start_dt, end_dt)
         header_q = session.query(
             func.coalesce(func.sum(OrderHeader.total_amount), 0),
             func.count(OrderHeader.order_id),
-        ).filter(
-            OrderHeader.paid_time.isnot(None),
-            OrderHeader.paid_time >= start_dt,
-            OrderHeader.paid_time <= end_dt,
-        )
+        ).filter(*tf)
         header_q = _scope_filters(header_q, OrderHeader, platform, country, shop_id, shop_ids)
         gmv, order_count = header_q.one()
 
-        # 销量 = 已付款订单下的 line_item 条数
+        # 销量 = 窗口内订单下的 line_item 条数
         line_q = (
             session.query(func.count(OrderLineItem.line_item_id))
             .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
-            .filter(
-                OrderHeader.paid_time.isnot(None),
-                OrderHeader.paid_time >= start_dt,
-                OrderHeader.paid_time <= end_dt,
-            )
+            .filter(*tf)
         )
         line_q = _scope_filters(line_q, OrderHeader, platform, country, shop_id, shop_ids)
         units_sold = line_q.scalar() or 0
@@ -102,10 +113,14 @@ def get_gmv_summary(
     country: Optional[str] = None,
     shop_id: Optional[str] = None,
     shop_ids: Optional[list[str]] = None,
+    by_create: bool = False,
 ) -> dict:
-    """Return paid-order GMV aggregates for AI explanation（业务日闭区间，整天口径）。"""
+    """Return order GMV aggregates for AI explanation（业务日闭区间，整天口径）。
+
+    默认 by_create=False 为已付款口径（报表）；by_create=True 为下单口径（预估利润，
+    含未付款 COD 在途单、排除 CANCELLED），与扣点 metric_date(创建日) 同队列。"""
     start_dt, end_dt = _paid_window(start_date, end_date)
-    agg = _gmv_aggregates(start_dt, end_dt, platform, country, shop_id, shop_ids)
+    agg = _gmv_aggregates(start_dt, end_dt, platform, country, shop_id, shop_ids, by_create)
     return {"start_date": start_date.isoformat(), "end_date": end_date.isoformat(), **agg}
 
 
@@ -247,11 +262,13 @@ def get_units_by_seller_sku(
     shop_id: Optional[str] = None,
     shop_ids: Optional[list[str]] = None,
     session=None,
+    by_create: bool = False,
 ) -> dict[str, int]:
-    """窗口内各 seller_sku 的已付款销量（line_item 条数），返回 {seller_sku: units}。
+    """窗口内各 seller_sku 的销量（line_item 条数），返回 {seller_sku: units}。
 
     口径同 get_units_by_sku，但按 OrderLineItem.seller_sku 聚合——供利润聚合 join 产品成本
     （ProductCost 按 seller_sku 关联）。seller_sku 为空的行不计入（无法 join 成本→该部分成本计 0）。
+    by_create=True 为下单口径（与 GMV/扣点同队列），默认已付款口径。
     """
     start_dt, end_dt = _paid_window(start_date, end_date)
     own_session = session is None
@@ -263,11 +280,7 @@ def get_units_by_seller_sku(
                 func.count(OrderLineItem.line_item_id),
             )
             .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
-            .filter(
-                OrderHeader.paid_time.isnot(None),
-                OrderHeader.paid_time >= start_dt,
-                OrderHeader.paid_time <= end_dt,
-            )
+            .filter(*_time_filter(by_create, start_dt, end_dt))
         )
         query = _scope_filters(query, OrderHeader, platform, country, shop_id, shop_ids)
         query = query.group_by(OrderLineItem.seller_sku)

@@ -10,6 +10,7 @@ from analytics.profit_alerts import ProfitRecordInput, build_profit_scope_key
 from models.base_models import (
     FactFinanceTransaction,
     FactUnsettledFee,
+    OrderHeader,
     ProductCost,
     ReturnRateConfig,
 )
@@ -153,6 +154,37 @@ def test_compute_daily_profit(session, monkeypatch):
     assert rec.product_cost == Decimal("0")
     assert rec.currency == "CNY" and rec.profit_kind == "estimated"
     assert rec.order_count == 3 and rec.units_sold == 5
+
+
+# ── 6b. 下单口径 GMV（COD：扣点-GMV 同队列）──────────────────────────────────
+def test_gmv_summary_by_create_includes_cod_excludes_cancelled(session, monkeypatch):
+    """下单口径(by_create)含未付款 COD 在途单、排除 CANCELLED；付款口径仅计已付款。"""
+    import services.order_metrics as OM
+    from sqlalchemy.orm import sessionmaker
+    monkeypatch.setattr(OM, "SessionLocal",
+                        sessionmaker(bind=session.get_bind(), expire_on_commit=False))
+
+    # 业务日 D=2026-06-24 印尼(UTC+7)，UTC 06-24 05:00 落窗内
+    ct = datetime(2026, 6, 24, 5, 0)
+    common = dict(platform="tiktok_shop", country="ID", shop_id="shop-1", currency="IDR")
+    session.add_all([
+        # COD 在途：已下单未付款 → 下单口径计入、付款口径漏
+        OrderHeader(order_id="cod1", idempotency_key="ik-cod1", total_amount=Decimal("100"),
+                    order_status="IN_TRANSIT", is_cod=True, create_time=ct, paid_time=None, **common),
+        # 预付已付款 → 两口径都计
+        OrderHeader(order_id="pp1", idempotency_key="ik-pp1", total_amount=Decimal("50"),
+                    order_status="DELIVERED", is_cod=False, create_time=ct, paid_time=ct, **common),
+        # 取消单 → 下单口径排除
+        OrderHeader(order_id="cx1", idempotency_key="ik-cx1", total_amount=Decimal("999"),
+                    order_status="CANCELLED", create_time=ct, paid_time=None, **common),
+    ])
+    session.commit()
+
+    kw = dict(start_date=D, end_date=D, platform="tiktok_shop", country="ID", shop_id="shop-1")
+    by_create = OM.get_gmv_summary(**kw, by_create=True)
+    by_paid = OM.get_gmv_summary(**kw)
+    assert by_create["gmv"] == 150.0 and by_create["order_count"] == 2  # cod1+pp1，排除 cancelled
+    assert by_paid["gmv"] == 50.0 and by_paid["order_count"] == 1  # 仅 pp1 已付款
 
 
 # ── 7. 利润卡取数：available + estimated/settled 分套 ────────────────────────
