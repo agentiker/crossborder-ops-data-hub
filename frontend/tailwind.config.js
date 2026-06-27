@@ -34,7 +34,7 @@ export default {
           deep: "var(--fill-deep)",
         },
         primary: {
-          DEFAULT: "hsl(var(--primary))",
+          DEFAULT: "hsl(var(--primary) / <alpha-value>)",
           foreground: "hsl(var(--primary-foreground))",
         },
         secondary: {
@@ -42,7 +42,7 @@ export default {
           foreground: "hsl(var(--secondary-foreground))",
         },
         destructive: {
-          DEFAULT: "hsl(var(--destructive))",
+          DEFAULT: "hsl(var(--destructive) / <alpha-value>)",
           foreground: "hsl(var(--destructive-foreground))",
         },
         muted: {
@@ -61,11 +61,13 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
-        // 业务语义色：涨/跌 + 告警分级（看板与告警卡复用）
-        positive: "hsl(var(--positive))",
-        negative: "hsl(var(--negative))",
-        success: "hsl(var(--success))",
-        warning: "hsl(var(--warning))",
+        // 业务语义色：涨/跌 + 告警分级（看板与告警卡复用）。alpha slot 支持 /15 浅底叠加徽章。
+        positive: "hsl(var(--positive) / <alpha-value>)",
+        negative: "hsl(var(--negative) / <alpha-value>)",
+        success: "hsl(var(--success) / <alpha-value>)",
+        warning: "hsl(var(--warning) / <alpha-value>)",
+        caution: "hsl(var(--caution) / <alpha-value>)", // 黄：偏低/提示
+        info: "hsl(var(--info) / <alpha-value>)",       // 蓝：监控中/信息
       },
       borderRadius: {
         lg: "var(--radius)",

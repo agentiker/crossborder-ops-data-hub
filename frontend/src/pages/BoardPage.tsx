@@ -79,6 +79,7 @@ export function BoardPage() {
   const [data, setData] = useState<BoardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0); // 错误态「重试」手动重触发 fetch
 
   useEffect(() => {
     let alive = true;
@@ -98,7 +99,7 @@ export function BoardPage() {
     return () => {
       alive = false;
     };
-  }, [platform, region, scope, range.start, range.end]);
+  }, [platform, region, scope, range.start, range.end, reloadKey]);
 
   const canSwitch = !!data?.can_switch && (data?.scopes.length ?? 0) > 1;
 
@@ -153,7 +154,7 @@ export function BoardPage() {
           )}
           <DateRangePicker value={range} onChange={setRange} />
           {data?.scope && (
-            <div className="ml-auto hidden self-center text-xs text-foreground-tertiary sm:block">
+            <div className="ml-auto hidden self-center text-xs text-foreground-secondary sm:block">
               范围 · {data.scope}
             </div>
           )}
@@ -164,9 +165,18 @@ export function BoardPage() {
       <div className="flex-1 overflow-y-auto p-4 sm:p-6" onScroll={onContentScroll}>
         <div className="mx-auto max-w-[1400px] space-y-6">
           {error ? (
-            <Card>
-              <div className="py-10 text-center text-sm text-destructive">加载失败：{error}</div>
-            </Card>
+            <BoardCard>
+              <div className="flex flex-col items-center gap-3 py-10 text-center">
+                <div className="text-sm text-destructive">加载失败：{error}</div>
+                <button
+                  type="button"
+                  onClick={() => setReloadKey((k) => k + 1)}
+                  className="rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-fill-shallow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-h-[44px]"
+                >
+                  重试
+                </button>
+              </div>
+            </BoardCard>
           ) : (
             <>
               <NoDataBanner data={data} loading={loading} />
@@ -201,7 +211,7 @@ function NoDataBanner({ data, loading }: { data: BoardData | null; loading: bool
       <span className="text-base leading-5">📅</span>
       <div>
         <div className="font-medium text-foreground">所选时间范围暂无订单数据</div>
-        <div className="mt-0.5 text-foreground-tertiary">
+        <div className="mt-0.5 text-foreground-secondary">
           {win} 内没有已付款订单——并非加载失败。请尝试扩大日期范围或换一个日期再看。
         </div>
       </div>
@@ -211,8 +221,9 @@ function NoDataBanner({ data, loading }: { data: BoardData | null; loading: bool
 
 /* ── 通用壳件（照 fork Dashboard 卡片/分段 tab）────────────────── */
 
-// fork 卡片：p-5 rounded-2xl bg-white border border-border-shallow（无阴影）。
-function Card({ children }: { children: ReactNode }) {
+// 看板专用容器 BoardCard（区别于 ui/card.tsx 的通用 Card）：fork StoreClaw 观感——
+// p-5 rounded-2xl bg-card border border-border-shallow、无阴影、靠色调分层浮起。
+function BoardCard({ children }: { children: ReactNode }) {
   return (
     <div className="rounded-2xl border border-border-shallow bg-card p-5">{children}</div>
   );
@@ -221,7 +232,7 @@ function Card({ children }: { children: ReactNode }) {
 function CardHead({ title, right }: { title: string; right?: ReactNode }) {
   return (
     <div className="mb-4 flex items-center justify-between">
-      <h3 className="text-base font-semibold text-foreground">{title}</h3>
+      <h2 className="text-base font-semibold text-foreground">{title}</h2>
       {right}
     </div>
   );
@@ -230,7 +241,7 @@ function CardHead({ title, right }: { title: string; right?: ReactNode }) {
 // 演示数据徽章（琥珀 pill）：后端暂无数据源的演示模块在标题/Tab 旁标注，避免被误当真实数据。
 function DemoBadge() {
   return (
-    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+    <span className="rounded bg-caution/15 px-1.5 py-0.5 text-[11px] font-medium text-caution">
       演示数据
     </span>
   );
@@ -251,12 +262,14 @@ function TabPills<T extends string>({
       {tabs.map((tab) => (
         <button
           key={tab.id}
+          type="button"
           onClick={() => onChange(tab.id)}
+          aria-pressed={value === tab.id}
           className={
-            "rounded-md px-3 py-1.5 text-xs font-medium transition-colors " +
+            "inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-h-[44px] " +
             (value === tab.id
               ? "bg-card text-foreground shadow-sm"
-              : "text-foreground-tertiary hover:text-foreground")
+              : "text-foreground-secondary hover:text-foreground")
           }
         >
           {tab.label}
@@ -282,7 +295,7 @@ function FilterSelect({
 }) {
   return (
     <div className="relative">
-      <div className="mb-1 flex items-center gap-1.5 text-xs text-foreground-tertiary">
+      <div className="mb-1 flex items-center gap-1.5 text-xs text-foreground-secondary">
         {icon}
         <span>{label}</span>
       </div>
@@ -290,7 +303,8 @@ function FilterSelect({
         <select
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="h-8 cursor-pointer appearance-none rounded-lg border border-border bg-card pl-3 pr-8 text-sm text-foreground transition-colors hover:border-border-deep focus:border-primary focus:outline-none"
+          aria-label={label}
+          className="h-8 cursor-pointer appearance-none rounded-lg border border-border bg-card pl-3 pr-8 text-sm text-foreground transition-colors hover:border-border-deep focus:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11"
         >
           {options.map((o) => (
             <option key={o.value || "__all__"} value={o.value}>
@@ -300,7 +314,8 @@ function FilterSelect({
         </select>
         <ChevronDown
           size={14}
-          className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-foreground-tertiary"
+          aria-hidden
+          className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-foreground-secondary"
         />
       </div>
     </div>
@@ -318,7 +333,7 @@ function ChartEmpty({
 }) {
   return (
     <div
-      className="flex items-center justify-center text-sm text-foreground-tertiary"
+      className="flex items-center justify-center text-sm text-foreground-secondary"
       style={{ height }}
     >
       {loading ? "加载中…" : empty}
@@ -352,7 +367,7 @@ function ChannelPie({ data, loading }: { data: BoardData | null; loading: boolea
           type: "pie",
           radius: ["45%", "70%"],
           center: ["50%", "44%"],
-          itemStyle: { borderRadius: 6, borderColor: "#fff", borderWidth: 2 },
+          itemStyle: { borderRadius: 6, borderColor: t.card, borderWidth: 2 },
           label: { show: false },
           data: (cb?.channels || []).map((c) => ({
             name: c.label,
@@ -366,14 +381,14 @@ function ChannelPie({ data, loading }: { data: BoardData | null; loading: boolea
   );
   const empty = !cb?.available ? "暂无渠道数据（需接生产店）" : "";
   return (
-    <Card>
+    <BoardCard>
       <CardHead title="渠道分布（GMV 占比）" />
       {loading || empty ? (
         <ChartEmpty loading={loading} empty={empty} height={280} />
       ) : (
         <EChart option={option} height={280} />
       )}
-    </Card>
+    </BoardCard>
   );
 }
 
@@ -390,12 +405,12 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
   const status = fr?.status ?? "insufficient";
   const badge =
     status === "alert"
-      ? { label: "异常升高", cls: "bg-red-100 text-red-700" }
+      ? { label: "异常升高", cls: "bg-negative/15 text-negative" }
       : status === "normal"
-        ? { label: "正常", cls: "bg-green-100 text-green-700" }
+        ? { label: "正常", cls: "bg-positive/15 text-positive" }
         : status === "baseline_pending"
-          ? { label: "监控中", cls: "bg-blue-100 text-blue-700" }
-          : { label: "数据积累中", cls: "bg-fill-shallow text-foreground-tertiary" };
+          ? { label: "监控中", cls: "bg-info/15 text-info" }
+          : { label: "数据积累中", cls: "bg-fill-shallow text-foreground-secondary" };
   const lineColor = status === "alert" ? t.negative : t.primary;
   // baseline_pending：有当前预估费率/构成/趋势，仅已结算基准不足→展示主体但不判异常、不显升幅。
   const baselinePending = status === "baseline_pending";
@@ -439,7 +454,7 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
   );
   const insufficient = status === "insufficient";
   return (
-    <Card>
+    <BoardCard>
       <CardHead
         title="费率监控（平台扣点率）"
         right={
@@ -450,7 +465,7 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
             {status !== "insufficient" && (
               <span
                 className={`inline-block size-1.5 rounded-full animate-pulse-slow ${
-                  status === "alert" ? "bg-red-500" : "bg-green-500"
+                  status === "alert" ? "bg-negative" : "bg-positive"
                 }`}
               />
             )}
@@ -471,7 +486,7 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
           {/* 当前预估费率 / 已结算基准 */}
           <div className="grid grid-cols-2 gap-4">
             <div className="rounded-xl bg-fill-shallow p-4">
-              <div className="text-xs text-foreground-tertiary">
+              <div className="text-xs text-foreground-secondary">
                 当前预估费率（{fr?.eval_window}）
               </div>
               <div className="tabnum text-2xl font-bold text-foreground">
@@ -479,7 +494,7 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
               </div>
               {!baselinePending && fr && fr.abs_delta !== 0 && (
                 <div
-                  className={`text-xs ${fr.abs_delta > 0 ? "text-red-600" : "text-green-600"}`}
+                  className={`text-xs ${fr.abs_delta > 0 ? "text-negative" : "text-positive"}`}
                 >
                   {fr.abs_delta > 0 ? "↑" : "↓"} {pct(Math.abs(fr.abs_delta))}
                   （相对 {pct(Math.abs(fr.rel_delta))}）vs 基准
@@ -487,21 +502,21 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
               )}
             </div>
             <div className="rounded-xl bg-fill-shallow p-4">
-              <div className="text-xs text-foreground-tertiary">
+              <div className="text-xs text-foreground-secondary">
                 已结算基准（{fr?.baseline_window}）
               </div>
               {baselinePending ? (
-                <div className="pt-1 text-sm text-foreground-tertiary">积累中（历史不足）</div>
+                <div className="pt-1 text-sm text-foreground-secondary">积累中（历史不足）</div>
               ) : (
                 <div className="tabnum text-2xl font-bold text-foreground">
                   {pct(fr?.baseline_rate)}
                 </div>
               )}
-              <div className="text-xs text-foreground-tertiary">{fr?.currency}</div>
+              <div className="text-xs text-foreground-secondary">{fr?.currency}</div>
             </div>
           </div>
           {baselinePending && (
-            <div className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
+            <div className="rounded-lg bg-info/10 px-3 py-2 text-xs text-info">
               ⏳ 已结算基准积累中（需 ~2 周结算历史），暂无法判定异常，先展示当前费率水平与构成。
             </div>
           )}
@@ -509,12 +524,12 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
           <EChart option={option} height={150} />
           {/* 异常时点名分项归因 */}
           {status === "alert" && fr?.attributions?.length ? (
-            <div className="rounded-xl bg-red-50 p-3 text-sm">
-              <div className="mb-1 font-medium text-red-700">📍 主要涨幅来自</div>
+            <div className="rounded-xl bg-negative/10 p-3 text-sm">
+              <div className="mb-1 font-medium text-negative">📍 主要涨幅来自</div>
               {fr.attributions.map((a) => (
                 <div key={a.key} className="flex justify-between text-foreground">
                   <span>{a.name}</span>
-                  <span className="tabnum text-red-600">
+                  <span className="tabnum text-negative">
                     +{pct(a.delta)}（{pct(a.from)}→{pct(a.to)}）
                   </span>
                 </div>
@@ -524,21 +539,21 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
           {/* 当前主要扣费构成 */}
           {fr?.components?.length ? (
             <div className="space-y-1">
-              <div className="text-xs text-foreground-tertiary">当前主要扣费构成（占 GMV）</div>
+              <div className="text-xs text-foreground-secondary">当前主要扣费构成（占 GMV）</div>
               {fr.components.slice(0, 4).map((c) => (
                 <div key={c.key} className="flex justify-between text-sm">
-                  <span className="text-foreground-tertiary">{c.name}</span>
+                  <span className="text-foreground-secondary">{c.name}</span>
                   <span className="tabnum text-foreground">{pct(c.share)}</span>
                 </div>
               ))}
             </div>
           ) : null}
-          <div className="text-xs text-foreground-tertiary">
+          <div className="text-xs text-foreground-secondary">
             预估口径：基于未结算订单 TikTok 官方预估费率，反映最新费率政策，结算前即可发现调佣
           </div>
         </div>
       )}
-    </Card>
+    </BoardCard>
   );
 }
 
@@ -575,7 +590,7 @@ function ProfitCard({
       <CardHead
         title="预估利润（折 CNY）"
         right={
-          <span className="text-xs text-foreground-tertiary">
+          <span className="text-xs text-foreground-secondary">
             GMV − 扣点 − 广告 − 成本 − 退货
           </span>
         }
@@ -587,7 +602,7 @@ function ProfitCard({
           {/* 两大数：预估利润 / 结算后真实利润 */}
           <div className="grid grid-cols-2 gap-4">
             <div className="rounded-xl bg-fill-shallow p-4">
-              <div className="text-xs text-foreground-tertiary">
+              <div className="text-xs text-foreground-secondary">
                 预估利润（今早）{costMissing && "· 未扣商品成本"}
               </div>
               <div className="tabnum text-2xl font-bold text-foreground">
@@ -595,19 +610,19 @@ function ProfitCard({
               </div>
               {/* 成本未录入时利润率虚高，隐藏；录入后再显真实利润率 */}
               {!costMissing && est?.profit_margin != null && (
-                <div className="text-xs text-foreground-tertiary">
+                <div className="text-xs text-foreground-secondary">
                   利润率 {est.profit_margin.toFixed(1)}%
                 </div>
               )}
             </div>
             <div className="rounded-xl bg-fill-shallow p-4">
-              <div className="text-xs text-foreground-tertiary">结算后真实利润</div>
+              <div className="text-xs text-foreground-secondary">结算后真实利润</div>
               {settled ? (
                 <div className="tabnum text-2xl font-bold text-foreground">
                   {fmtMoneyCny(settled.gross_profit)}
                 </div>
               ) : (
-                <div className="pt-1 text-sm text-foreground-tertiary">待结算回填</div>
+                <div className="pt-1 text-sm text-foreground-secondary">待结算回填</div>
               )}
             </div>
           </div>
@@ -615,17 +630,17 @@ function ProfitCard({
           <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
             {detail.map((d) => (
               <div key={d.label} className="flex items-center justify-between text-sm">
-                <span className="text-foreground-tertiary">{d.label}</span>
+                <span className="text-foreground-secondary">{d.label}</span>
                 <span className="tabnum text-foreground">{fmtMoneyCny(d.value)}</span>
               </div>
             ))}
           </div>
           {costMissing && (
-            <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            <div className="rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning">
               ⚠️ 商品成本未录入，利润为「未扣商品成本」口径、偏高；录入成本后方为真实毛利。
             </div>
           )}
-          <div className="text-xs text-foreground-tertiary">
+          <div className="text-xs text-foreground-secondary">
             预估口径：扣点/广告含未结算订单 TikTok 官方预估 + 已结算真实；退货按配置率预估
           </div>
         </div>
@@ -636,7 +651,7 @@ function ProfitCard({
   return bare ? (
     <div className="mt-4 border-t border-border-shallow pt-4">{body}</div>
   ) : (
-    <Card>{body}</Card>
+    <BoardCard>{body}</BoardCard>
   );
 }
 
@@ -663,23 +678,23 @@ function MetricCard({
   const dir = change == null ? null : change > 0 ? "up" : change < 0 ? "down" : "flat";
   return (
     <div className="flex flex-col gap-1 rounded-xl bg-fill-shallow p-4">
-      <div className="flex items-center gap-2 text-foreground-tertiary">
+      <div className="flex items-center gap-2 text-foreground-secondary">
         {icon}
         <span className="text-xs">{title}</span>
       </div>
       <div className="tabnum text-2xl font-bold text-foreground">{loading ? "…" : value}</div>
       {!loading && subtitle && (
-        <div className="text-xs text-foreground-tertiary">{subtitle}</div>
+        <div className="text-xs text-foreground-secondary">{subtitle}</div>
       )}
       {!loading && dir && (
         <div
           className={`flex items-center gap-1 text-xs ${
-            dir === "up" ? "text-green-600" : dir === "down" ? "text-red-600" : "text-foreground-tertiary"
+            dir === "up" ? "text-positive" : dir === "down" ? "text-negative" : "text-foreground-secondary"
           }`}
         >
           <span>{dir === "up" ? "↑" : dir === "down" ? "↓" : "−"}</span>
           <span className="tabnum">{Math.abs(change as number).toFixed(1)}%</span>
-          <span className="text-foreground-tertiary">vs 上期</span>
+          <span className="text-foreground-secondary">vs 上期</span>
         </div>
       )}
     </div>
@@ -715,7 +730,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
     axisLabel: { color: t.sub },
   };
   const tip = {
-    backgroundColor: "#fff",
+    backgroundColor: t.card,
     borderColor: t.grid,
     textStyle: { color: t.text },
   };
@@ -803,7 +818,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
   const isDemo = activeTab === "traffic" || activeTab === "funnel";
 
   return (
-    <Card>
+    <BoardCard>
       <CardHead title="经营概览" />
 
       {/* KPI 固定 2 列：第一行 GMV/广告消耗、第二行 订单/销量、第三行 ROI/ROAS（客单价暂去） */}
@@ -856,7 +871,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           <EChart option={activeTab === "sales" ? salesOption : ordersOption} height={220} />
         </div>
       )}
-    </Card>
+    </BoardCard>
   );
 }
 
@@ -890,7 +905,7 @@ function HotProducts({ data, loading }: { data: BoardData | null; loading: boole
   ];
 
   return (
-    <Card>
+    <BoardCard>
       <CardHead
         title="爆款商品 TOP 10"
         right={<TabPills tabs={rankOptions} value={rankBy} onChange={setRankBy} />}
@@ -901,25 +916,27 @@ function HotProducts({ data, loading }: { data: BoardData | null; loading: boole
       ) : !items.length ? (
         <ChartEmpty loading={false} empty="该时段暂无销量数据" height={320} />
       ) : (
-        <div className="flex gap-4">
+        <div className="flex flex-col gap-4 lg:flex-row">
           {/* 排行列表（照 fork：序号徽章 + 名称 + 数值；前 3 名 bg-foreground 实心） */}
           <div className="max-h-[320px] flex-1 space-y-1.5 overflow-y-auto">
             {items.map((p, index) => {
               const val = rankBy === "gmv" ? p.gmv ?? 0 : p.units_sold;
               return (
-                <div
+                <button
+                  type="button"
                   key={(p.sku_id || "") + index}
                   onClick={() => setSelected(index)}
+                  aria-pressed={selected === index}
                   className={
-                    "flex cursor-pointer items-center gap-3 rounded-lg p-2 transition-colors " +
+                    "flex w-full cursor-pointer items-center gap-3 rounded-lg p-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:p-3 " +
                     (selected === index ? "bg-fill-default" : "hover:bg-fill-shallow")
                   }
                 >
                   <span
                     className={
-                      "flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold " +
+                      "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold " +
                       (index < 3
-                        ? "bg-foreground text-white"
+                        ? "bg-foreground text-primary-foreground"
                         : "bg-fill-default text-foreground-secondary")
                     }
                   >
@@ -927,17 +944,18 @@ function HotProducts({ data, loading }: { data: BoardData | null; loading: boole
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium text-foreground">{skuName(p)}</div>
-                    <div className="text-xs text-foreground-tertiary">
+                    <div className="text-xs text-foreground-secondary">
                       {rankBy === "gmv" ? fmtMoney(val) : `${fmtInt(val)} 件`}
                     </div>
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
 
-          {/* 右侧明细面板：fork 是单品 7 天趋势图；我方无单品时序 → 换成选中品的真实占比/数值（不造假） */}
-          <div className="w-[240px] shrink-0">
+          {/* 右侧明细面板：fork 是单品 7 天趋势图；我方无单品时序 → 换成选中品的真实占比/数值（不造假）。
+              移动端：窄屏堆到列表下方满宽，lg 起回到右侧固定宽。 */}
+          <div className="w-full shrink-0 lg:w-[240px]">
             {sel ? (
               <div className="space-y-3">
                 <div className="truncate text-sm font-medium text-foreground">{skuName(sel)}</div>
@@ -948,25 +966,25 @@ function HotProducts({ data, loading }: { data: BoardData | null; loading: boole
                   value={totalUnits ? `${Math.round((sel.units_sold / totalUnits) * 100)}%` : "—"}
                 />
                 {sel.sku_id && (
-                  <div className="pt-1 text-xs text-foreground-tertiary">SKU · {sel.sku_id}</div>
+                  <div className="pt-1 text-xs text-foreground-secondary">SKU · {sel.sku_id}</div>
                 )}
               </div>
             ) : (
-              <div className="flex h-full items-center justify-center text-center text-sm text-foreground-tertiary">
+              <div className="flex h-full items-center justify-center py-6 text-center text-sm text-foreground-secondary lg:py-0">
                 点击商品查看明细
               </div>
             )}
           </div>
         </div>
       )}
-    </Card>
+    </BoardCard>
   );
 }
 
 function DetailStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl bg-fill-shallow p-3">
-      <div className="text-xs text-foreground-tertiary">{label}</div>
+      <div className="text-xs text-foreground-secondary">{label}</div>
       <div className="tabnum mt-0.5 text-lg font-bold text-foreground">{value}</div>
     </div>
   );
@@ -977,9 +995,9 @@ function DetailStat({ label, value }: { label: string; value: string }) {
 type InventoryView = "summary" | "details";
 
 const LOW_BADGE: Record<string, { label: string; cls: string }> = {
-  stockout: { label: "缺货", cls: "bg-red-100 text-red-700" },
-  critical: { label: "告急", cls: "bg-orange-100 text-orange-700" },
-  warning: { label: "偏低", cls: "bg-yellow-100 text-yellow-700" },
+  stockout: { label: "缺货", cls: "bg-negative/15 text-negative" },
+  critical: { label: "告急", cls: "bg-warning/15 text-warning" },
+  warning: { label: "偏低", cls: "bg-caution/15 text-caution" },
 };
 
 type SortField = "days_of_cover" | "available_stock" | "name";
@@ -1041,7 +1059,7 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
   // fork 的右侧是「按品类分布」堆叠条；我方无品类维度 → 换成真实的三档风险分布环图。
   const donutOption = useMemo(
     () => ({
-      tooltip: { trigger: "item" as const, backgroundColor: "#fff", borderColor: t.grid, textStyle: { color: t.text } },
+      tooltip: { trigger: "item" as const, backgroundColor: t.card, borderColor: t.grid, textStyle: { color: t.text } },
       legend: { bottom: 0, textStyle: { color: t.sub, fontSize: 11 }, icon: "roundRect" },
       series: [
         {
@@ -1049,7 +1067,7 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
           radius: ["45%", "70%"],
           center: ["50%", "44%"],
           avoidLabelOverlap: false,
-          itemStyle: { borderRadius: 6, borderColor: "#fff", borderWidth: 2 },
+          itemStyle: { borderRadius: 6, borderColor: t.card, borderWidth: 2 },
           label: { show: false },
           data: [
             { name: "缺货", value: stockout, itemStyle: { color: t.negative } },
@@ -1089,7 +1107,7 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
   }, [items, query, status, sortField, sortDir]);
 
   return (
-    <Card>
+    <BoardCard>
       <CardHead
         title="库存健康"
         right={
@@ -1132,20 +1150,23 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
             <div className="relative flex-1">
               <Search
                 size={14}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-foreground-tertiary"
+                aria-hidden
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-foreground-secondary"
               />
               <input
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="搜索商品名或 SKU…"
-                className="h-8 w-full rounded-lg border border-border bg-card pl-8 pr-3 text-sm text-foreground placeholder:text-foreground-tertiary focus:border-primary focus:outline-none"
+                aria-label="搜索商品名或 SKU"
+                className="h-8 w-full rounded-lg border border-border bg-card pl-8 pr-3 text-sm text-foreground placeholder:text-foreground-secondary focus:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11"
               />
             </div>
             <select
               value={status}
               onChange={(e) => setStatus(e.target.value)}
-              className="h-8 appearance-none rounded-lg border border-border bg-card px-3 text-sm text-foreground"
+              aria-label="按库存状态筛选"
+              className="h-8 appearance-none rounded-lg border border-border bg-card px-3 text-sm text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11"
             >
               <option value="all">全部状态</option>
               <option value="stockout">缺货</option>
@@ -1154,23 +1175,23 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
             </select>
           </div>
 
-          {/* 可排序表（照 fork：表头点击排序 + ArrowUpDown） */}
-          <div className="overflow-hidden rounded-lg border border-border-shallow">
-            <table className="w-full text-sm">
+          {/* 可排序表（照 fork：表头点击排序 + ArrowUpDown）。窄屏横滚防 6 列压扁/裁切。 */}
+          <div className="overflow-x-auto rounded-lg border border-border-shallow">
+            <table className="w-full min-w-[640px] text-sm">
               <thead>
                 <tr className="bg-fill-shallow">
-                  <SortableTh label="商品" onClick={() => handleSort("name")} />
+                  <SortableTh label="商品" active={sortField === "name"} dir={sortDir} onClick={() => handleSort("name")} />
                   <th className="px-3 py-2 text-left font-medium text-foreground-secondary">SKU</th>
-                  <SortableTh label="库存" numeric onClick={() => handleSort("available_stock")} />
+                  <SortableTh label="库存" numeric active={sortField === "available_stock"} dir={sortDir} onClick={() => handleSort("available_stock")} />
                   <th className="px-3 py-2 text-right font-medium text-foreground-secondary">日均销量</th>
-                  <SortableTh label="可售天数" numeric onClick={() => handleSort("days_of_cover")} />
+                  <SortableTh label="可售天数" numeric active={sortField === "days_of_cover"} dir={sortDir} onClick={() => handleSort("days_of_cover")} />
                   <th className="px-3 py-2 text-center font-medium text-foreground-secondary">状态</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-3 py-8 text-center text-foreground-tertiary">
+                    <td colSpan={6} className="px-3 py-8 text-center text-foreground-secondary">
                       暂无断货风险 SKU
                     </td>
                   </tr>
@@ -1185,7 +1206,7 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
                         <td className="px-3 py-2 font-medium text-foreground">
                           {it.product_name || it.sku_id}
                         </td>
-                        <td className="px-3 py-2 text-foreground-tertiary">{it.sku_id}</td>
+                        <td className="px-3 py-2 text-foreground-secondary">{it.sku_id}</td>
                         <td className="px-3 py-2 text-right text-foreground">
                           {fmtInt(it.available_stock)}
                         </td>
@@ -1213,7 +1234,7 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
           </div>
         </div>
       )}
-    </Card>
+    </BoardCard>
   );
 
   function skuLabel(i: LowStockItem) {
@@ -1224,24 +1245,33 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
 function SortableTh({
   label,
   numeric,
+  active,
+  dir,
   onClick,
 }: {
   label: string;
   numeric?: boolean;
+  active?: boolean;
+  dir?: "asc" | "desc";
   onClick: () => void;
 }) {
   return (
     <th
-      onClick={onClick}
-      className={
-        "cursor-pointer px-3 py-2 font-medium text-foreground-secondary hover:text-foreground " +
-        (numeric ? "text-right" : "text-left")
-      }
+      scope="col"
+      aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
+      className={"px-3 py-2 font-medium text-foreground-secondary " + (numeric ? "text-right" : "text-left")}
     >
-      <div className={"flex items-center gap-1 " + (numeric ? "justify-end" : "")}>
+      <button
+        type="button"
+        onClick={onClick}
+        className={
+          "flex items-center gap-1 rounded font-medium hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-h-[44px] " +
+          (numeric ? "ml-auto justify-end" : "")
+        }
+      >
         {label}
-        <ArrowUpDown size={12} />
-      </div>
+        <ArrowUpDown size={12} aria-hidden className={active ? "text-foreground" : ""} />
+      </button>
     </th>
   );
 }
@@ -1250,9 +1280,9 @@ function SortableTh({
       （后端暂无源，见 docs/board-data-backlog.md，演示 tab 标「演示数据」徽章）─────── */
 
 const PEND_BADGE: Record<string, { label: string; cls: string }> = {
-  overdue: { label: "超时", cls: "bg-red-100 text-red-700" },
-  critical: { label: "临界", cls: "bg-orange-100 text-orange-700" },
-  normal: { label: "正常", cls: "bg-green-100 text-green-700" },
+  overdue: { label: "超时", cls: "bg-negative/15 text-negative" },
+  critical: { label: "临界", cls: "bg-warning/15 text-warning" },
+  normal: { label: "正常", cls: "bg-positive/15 text-positive" },
   unknown: { label: "未知", cls: "bg-fill-default text-foreground-secondary" },
 };
 
@@ -1276,7 +1306,7 @@ function OrderSection({ data, loading }: { data: BoardData | null; loading: bool
   const returnRate = (sum(DEMO_RETURNS.rate) / DEMO_RETURNS.rate.length).toFixed(1);
 
   return (
-    <Card>
+    <BoardCard>
       <CardHead
         title="订单与履约"
         right={
@@ -1291,7 +1321,7 @@ function OrderSection({ data, loading }: { data: BoardData | null; loading: bool
       {tab === "fulfillment" && (
         <>
           {data?.fulfillment.snapshot_at && (
-            <div className="mb-3 text-xs text-foreground-tertiary">
+            <div className="mb-3 text-xs text-foreground-secondary">
               快照 {data.fulfillment.snapshot_at}
             </div>
           )}
@@ -1301,8 +1331,8 @@ function OrderSection({ data, loading }: { data: BoardData | null; loading: bool
             <Stat label="临界" value={fmtInt(b?.critical)} tone="warning" loading={loading} />
             <Stat label="正常" value={fmtInt(b?.normal)} loading={loading} />
           </div>
-          <div className="overflow-hidden rounded-lg border border-border-shallow">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-lg border border-border-shallow">
+            <table className="w-full min-w-[640px] text-sm">
               <thead>
                 <tr className="bg-fill-shallow">
                   <th className="px-3 py-2 text-left font-medium text-foreground-secondary">订单</th>
@@ -1316,13 +1346,13 @@ function OrderSection({ data, loading }: { data: BoardData | null; loading: bool
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={6} className="px-3 py-8 text-center text-foreground-tertiary">
+                    <td colSpan={6} className="px-3 py-8 text-center text-foreground-secondary">
                       加载中…
                     </td>
                   </tr>
                 ) : items.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-3 py-8 text-center text-foreground-tertiary">
+                    <td colSpan={6} className="px-3 py-8 text-center text-foreground-secondary">
                       暂无待发货订单
                     </td>
                   </tr>
@@ -1412,7 +1442,7 @@ function OrderSection({ data, loading }: { data: BoardData | null; loading: bool
           </div>
         </>
       )}
-    </Card>
+    </BoardCard>
   );
 }
 
@@ -1429,7 +1459,7 @@ function Stat({
 }) {
   return (
     <div>
-      <div className="mb-1 text-xs text-foreground-tertiary">{label}</div>
+      <div className="mb-1 text-xs text-foreground-secondary">{label}</div>
       <div
         className={
           "tabnum text-xl font-bold text-foreground " +

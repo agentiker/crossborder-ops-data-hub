@@ -21,6 +21,7 @@ export interface ChartTokens {
   text: string;
   sub: string;
   grid: string;
+  card: string;
   primary: string;
   positive: string;
   negative: string;
@@ -40,6 +41,7 @@ function readTokens(): ChartTokens {
     text: raw("--foreground"),
     sub: hsl("--muted-foreground"),
     grid: raw("--border"),
+    card: hsl("--card"),
     primary: hsl("--primary"),
     positive: hsl("--positive"),
     negative: hsl("--negative"),

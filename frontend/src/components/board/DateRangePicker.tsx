@@ -131,26 +131,27 @@ export function DateRangePicker({
     draft.start && draft.end ? `${fmt(draft.start)} ~ ${fmt(draft.end)}` : "选择日期范围";
 
   return (
-    <div className="relative" ref={ref}>
-      <div className="mb-1 flex items-center gap-1.5 text-xs text-foreground-tertiary">
-        <Calendar size={12} />
+    <div className="relative w-full sm:w-auto" ref={ref}>
+      <div className="mb-1 flex items-center gap-1.5 text-xs text-foreground-secondary">
+        <Calendar size={12} aria-hidden />
         <span>日期</span>
       </div>
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex h-8 min-w-[210px] items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm text-foreground transition-colors hover:border-border-deep focus:border-primary focus:outline-none"
+        aria-label="选择日期范围"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        className="flex h-8 w-full items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm text-foreground transition-colors hover:border-border-deep focus:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-auto sm:min-w-[210px] [@media(pointer:coarse)]:h-11"
       >
-        <span className={draft.start && draft.end ? "" : "text-foreground-tertiary"}>{label}</span>
+        <span className={draft.start && draft.end ? "" : "text-foreground-secondary"}>{label}</span>
       </button>
 
       {open && (
-        <div
-          className="absolute left-0 top-full z-50 mt-2 animate-fade-up rounded-xl border border-border bg-card p-5 shadow-lg"
-          style={{ minWidth: 480 }}
-        >
-          <div className="flex gap-5">
-            {/* 快捷项 */}
-            <div className="flex min-w-[110px] flex-col gap-1 border-r border-border-shallow pr-5">
+        <div className="absolute left-0 top-full z-50 mt-2 w-[min(480px,calc(100vw-2rem))] animate-fade-up rounded-xl border border-border bg-card p-4 shadow-lg sm:p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:gap-5">
+            {/* 快捷项（窄屏顶部横排 wrap，sm 起左侧竖列） */}
+            <div className="flex flex-wrap gap-1 border-b border-border-shallow pb-3 sm:min-w-[110px] sm:flex-col sm:flex-nowrap sm:border-b-0 sm:border-r sm:pb-0 sm:pr-5">
               {QUICK.map((q) => (
                 <button
                   key={q.label}
@@ -164,21 +165,31 @@ export function DateRangePicker({
             {/* 日历 */}
             <div className="flex-1">
               <div className="mb-4 flex items-center justify-between">
-                <button onClick={prev} className="rounded-lg p-1.5 hover:bg-fill-default">
-                  <ChevronLeft size={18} />
+                <button
+                  type="button"
+                  onClick={prev}
+                  aria-label="上一月"
+                  className="rounded-lg p-1.5 hover:bg-fill-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <ChevronLeft size={18} aria-hidden />
                 </button>
                 <span className="text-sm font-semibold text-foreground">
                   {cy}年{MONTHS[cm]}
                 </span>
-                <button onClick={next} className="rounded-lg p-1.5 hover:bg-fill-default">
-                  <ChevronRight size={18} />
+                <button
+                  type="button"
+                  onClick={next}
+                  aria-label="下一月"
+                  className="rounded-lg p-1.5 hover:bg-fill-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <ChevronRight size={18} aria-hidden />
                 </button>
               </div>
               <div className="mb-1 grid grid-cols-7 gap-0">
                 {DOW.map((d) => (
                   <div
                     key={d}
-                    className="flex h-8 w-10 items-center justify-center text-xs font-medium text-foreground-tertiary"
+                    className="flex h-8 w-10 items-center justify-center text-xs font-medium text-foreground-secondary"
                   >
                     {d}
                   </div>
@@ -198,11 +209,14 @@ export function DateRangePicker({
                   const sel = isStart || isEnd;
                   return (
                     <button
+                      type="button"
                       key={day}
                       onClick={() => clickDay(date)}
                       onMouseEnter={() => setHover(date)}
+                      aria-label={fmt(date)}
+                      aria-pressed={!!sel}
                       className={
-                        "flex h-10 w-10 items-center justify-center rounded-lg text-sm text-foreground transition-colors " +
+                        "flex h-10 w-10 items-center justify-center rounded-lg text-sm text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring " +
                         (sel
                           ? "bg-foreground font-medium text-background "
                           : within

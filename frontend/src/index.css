@@ -46,11 +46,14 @@
     --ring: 158 14% 25%;
     --radius: 0.75rem;             /* StoreClaw 大圆角 */
 
-    /* 业务语义色（delta/告警/时段绿点用，克制不装饰） */
+    /* 业务语义色（delta/告警/时段绿点用，克制不装饰）。
+       channel 形式（无 hsl 包裹）配 tailwind 的 hsl(var(--x) / <alpha-value>)，支持 /15 浅底叠加。 */
     --positive: 152 52% 36%;
     --negative: 0 72% 50%;
     --success: 152 52% 36%;
     --warning: 32 84% 44%;
+    --caution: 45 90% 36%;        /* 黄：库存偏低/演示提示（最轻一档提醒，压暗到 L36% 保证浅底上文字达标） */
+    --info: 212 76% 45%;          /* 蓝：监控中/信息提示（非告警，区别于红橙黄三档告警） */
 
     /* —— StoreClaw 前景/填充/描边三级（半透明真值，tailwind 直接 var()）—— */
     --foreground: rgba(25, 36, 32, 0.88);
@@ -68,6 +71,17 @@
 @layer base {
   * {
     border-color: var(--border);
+  }
+  /* 全局减弱动效兜底：尊重系统「减少动态效果」，覆盖呼吸灯/入场上浮/摆动等所有动画与过渡。 */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
   html, body, #root {
     height: 100%;
