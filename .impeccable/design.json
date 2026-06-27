@@ -1,0 +1,184 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-28T00:00:00Z",
+  "title": "Design System: 跨境运营数据中枢",
+  "extensions": {
+    "colorMeta": {
+      "pine-ink": {
+        "role": "primary",
+        "displayName": "深松墨绿 Deep Pine Ink",
+        "canonical": "hsl(158 18% 12%)",
+        "tonalRamp": ["#0d130f", "#192420", "#26352e", "#36473e", "#4d615655", "#7b8a82", "#aab4af", "#d7dcd9"]
+      },
+      "olive-paper": {
+        "role": "neutral",
+        "displayName": "橄榄暖白 Olive Paper",
+        "canonical": "hsl(58 20% 96%)",
+        "tonalRamp": ["#26271c", "#4a4b39", "#6f7059", "#969781", "#bcbda8", "#dadbc9", "#ecece0", "#f7f7f3"]
+      },
+      "muted-ink": {
+        "role": "neutral",
+        "displayName": "暖灰墨 Muted Ink",
+        "canonical": "hsl(156 8% 40%)",
+        "tonalRamp": ["#1c211f", "#2f3733", "#434e49", "#5e6e67", "#7e8c86", "#a3aea9", "#c8cfcc", "#e7eae9"]
+      },
+      "positive-pine": {
+        "role": "tertiary",
+        "displayName": "盈绿 Positive Pine",
+        "canonical": "hsl(152 52% 36%)",
+        "tonalRamp": ["#0c2418", "#123a26", "#185036", "#1f6645", "#2c8c5f", "#4fae80", "#8acbab", "#c6e6d7"]
+      },
+      "warning-amber": {
+        "role": "tertiary",
+        "displayName": "警橙 Warning Amber",
+        "canonical": "hsl(32 84% 44%)",
+        "tonalRamp": ["#2e1a04", "#4d2b06", "#6e3d09", "#90500c", "#ce7612", "#e2974a", "#eebd8b", "#f7ddc6"]
+      },
+      "negative-red": {
+        "role": "tertiary",
+        "displayName": "亏红 Negative Red",
+        "canonical": "hsl(0 72% 50%)",
+        "tonalRamp": ["#2e0808", "#4d0d0d", "#6e1313", "#901a1a", "#db2424", "#e85b5b", "#f29494", "#f9c9c9"]
+      },
+      "caution-gold": {
+        "role": "tertiary",
+        "displayName": "提示金黄 Caution Gold",
+        "canonical": "hsl(45 90% 36%)",
+        "tonalRamp": ["#241c04", "#3d2f06", "#574409", "#71580b", "#af8509", "#d2a838", "#e6cb83", "#f4e6c6"]
+      },
+      "info-blue": {
+        "role": "tertiary",
+        "displayName": "信息蓝 Info Blue",
+        "canonical": "hsl(212 76% 45%)",
+        "tonalRamp": ["#08182e", "#0d2a4d", "#133d6e", "#1a5090", "#1c6dca", "#4f93e8", "#94bdf2", "#c9def9"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "KPI 大值与招牌指标数字,搭配等宽数字。" },
+      "headline": { "displayName": "Headline", "purpose": "页面/区块主标题。" },
+      "title": { "displayName": "Title", "purpose": "卡片标题。" },
+      "body": { "displayName": "Body", "purpose": "正文、表格、对话气泡。行宽 65–75ch。" },
+      "label": { "displayName": "Label", "purpose": "指标标签、徽标、次级说明。" }
+    },
+    "shadows": [
+      { "name": "soft-sm", "value": "0 1px 2px rgba(0,0,0,0.05)", "purpose": "卡片/输入框静息态的唯一阴影;温润浮起。" }
+    ],
+    "motion": [
+      { "name": "ease-out", "value": "ease-out", "purpose": "状态切换默认缓动。" },
+      { "name": "fade-in", "value": "fade-in 0.18s ease-out", "purpose": "元素淡入上浮 4px。" },
+      { "name": "fade-up", "value": "fade-up 0.5s ease both", "purpose": "入场上浮 10px。" },
+      { "name": "pulse-dot", "value": "pulse-dot 2s ease-in-out infinite", "purpose": "时段在线绿点呼吸;须 prefers-reduced-motion 降级。" }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "签名墨绿暗按钮,用于主操作。",
+      "html": "<button class=\"ds-btn-primary\">查看经营概览</button>",
+      "css": ".ds-btn-primary { display:inline-flex; align-items:center; justify-content:center; gap:8px; height:36px; padding:0 16px; border:none; border-radius:10px; background:#192420; color:#f7f7f3; font-family:'GoogleSansFlex',ui-sans-serif,system-ui,sans-serif; font-size:14px; font-weight:500; cursor:pointer; transition:background .15s ease; } .ds-btn-primary:hover { background:#26352e; } .ds-btn-primary:focus-visible { outline:none; box-shadow:0 0 0 2px #fdfdfb, 0 0 0 4px hsl(158 14% 25%); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "柔和暖灰面次级按钮。",
+      "html": "<button class=\"ds-btn-secondary\">导出</button>",
+      "css": ".ds-btn-secondary { display:inline-flex; align-items:center; justify-content:center; gap:8px; height:36px; padding:0 16px; border:none; border-radius:10px; background:#f0eedd; color:#192420; font-family:'GoogleSansFlex',ui-sans-serif,system-ui,sans-serif; font-size:14px; font-weight:500; cursor:pointer; transition:background .15s ease; } .ds-btn-secondary:hover { background:#e7e4cf; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "低强度操作,hover 才显填充。",
+      "html": "<button class=\"ds-btn-ghost\">取消</button>",
+      "css": ".ds-btn-ghost { display:inline-flex; align-items:center; justify-content:center; gap:8px; height:36px; padding:0 16px; border:none; border-radius:10px; background:transparent; color:#192420; font-family:'GoogleSansFlex',ui-sans-serif,system-ui,sans-serif; font-size:14px; font-weight:500; cursor:pointer; transition:background .15s ease; } .ds-btn-ghost:hover { background:rgba(0,0,0,0.04); }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "微暖白卡片,浮于橄榄纸面之上。",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-title\">今日经营</div><div class=\"ds-card-desc\">截至 14:30</div></div>",
+      "css": ".ds-card { background:#fdfdfb; color:rgba(25,36,32,0.88); border:1px solid rgba(0,0,0,0.1); border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,0.05); padding:20px; font-family:'GoogleSansFlex',ui-sans-serif,system-ui,sans-serif; } .ds-card-title { font-size:16px; font-weight:600; line-height:1; letter-spacing:-0.01em; } .ds-card-desc { margin-top:6px; font-size:14px; color:#5e6e67; }"
+    },
+    {
+      "name": "Metric Card",
+      "kind": "custom",
+      "refersTo": "card",
+      "description": "签名 KPI 卡:标签 + 等宽大值 + 涨跌环比。数据中枢的身份靠它立住。",
+      "html": "<div class=\"ds-metric\"><div class=\"ds-metric-head\"><span class=\"ds-metric-label\">GMV</span><span class=\"ds-metric-hint\">近 7 天</span></div><div class=\"ds-metric-value\">Rp 482.6M</div><div class=\"ds-metric-delta\">▲ 12.4%<span class=\"ds-metric-cmp\">环比</span></div></div>",
+      "css": ".ds-metric { background:#fdfdfb; border:1px solid rgba(0,0,0,0.1); border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,0.05); padding:20px; font-family:'GoogleSansFlex',ui-sans-serif,system-ui,sans-serif; min-width:220px; } .ds-metric-head { display:flex; align-items:center; justify-content:space-between; } .ds-metric-label { font-size:12px; font-weight:500; text-transform:uppercase; letter-spacing:0.04em; color:#5e6e67; } .ds-metric-hint { font-size:12px; color:#5e6e67; } .ds-metric-value { margin-top:8px; font-size:24px; font-weight:600; line-height:1.25; color:rgba(25,36,32,0.88); font-variant-numeric:tabular-nums; } .ds-metric-delta { margin-top:8px; font-size:12px; font-weight:500; color:#2c8c5f; font-variant-numeric:tabular-nums; } .ds-metric-cmp { margin-left:4px; font-weight:400; color:#5e6e67; }"
+    },
+    {
+      "name": "Search Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "透明底 + 暖描边输入框,焦点靠墨绿环。",
+      "html": "<input class=\"ds-input\" placeholder=\"搜索店铺 / 商品…\" />",
+      "css": ".ds-input { width:100%; height:36px; padding:0 12px; border:1px solid #dbdac7; border-radius:10px; background:transparent; box-shadow:0 1px 2px rgba(0,0,0,0.05); color:rgba(25,36,32,0.88); font-family:'GoogleSansFlex',ui-sans-serif,system-ui,sans-serif; font-size:14px; transition:box-shadow .15s ease; } .ds-input::placeholder { color:#5e6e67; } .ds-input:focus-visible { outline:none; box-shadow:0 0 0 2px hsl(158 14% 25%); }"
+    },
+    {
+      "name": "Success Badge",
+      "kind": "chip",
+      "refersTo": "badge-success",
+      "description": "语义徽标,透明叠加底而非实色块。",
+      "html": "<span class=\"ds-badge-success\">达成</span>",
+      "css": ".ds-badge-success { display:inline-flex; align-items:center; border-radius:9999px; padding:2px 10px; background:rgba(44,140,95,0.15); color:#2c8c5f; font-family:'GoogleSansFlex',ui-sans-serif,system-ui,sans-serif; font-size:12px; font-weight:500; }"
+    },
+    {
+      "name": "Warning Badge",
+      "kind": "chip",
+      "refersTo": "badge-default",
+      "description": "待处理/临期/库存预警徽标。",
+      "html": "<span class=\"ds-badge-warning\">库存预警</span>",
+      "css": ".ds-badge-warning { display:inline-flex; align-items:center; border-radius:9999px; padding:2px 10px; background:rgba(206,118,18,0.15); color:#ce7612; font-family:'GoogleSansFlex',ui-sans-serif,system-ui,sans-serif; font-size:12px; font-weight:500; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Olive Study / 橄榄书房",
+    "overview": "这是一间安静、有质感的书房,不是一块冷峻的仪表盘。墨绿近黑的家具落在橄榄暖白的纸面上,数字像账本上的笔迹一样整齐对齐。老板一眼读懂今天生意的健康;运营久坐处理告警、补货、查数也不被刺眼色彩和密集表格压垮。温润、可信、克制——书房的气质来自留白与材质,而非装饰。全程单一 GoogleSansFlex 以字重分层,前景/填充/描边走半透明叠加复合出暖意,一切数字走 tabular-nums 成账册。",
+    "keyCharacteristics": [
+      "单一浅色主题:橄榄暖白纸面 + 墨绿近黑家具,无暗色模式",
+      "半透明叠加的前景/填充/描边三级,复合出暖意",
+      "等宽数字账册感(tabular-nums)是招牌",
+      "克制的语义色:涨跌/告警分级用色克制,不装饰",
+      "温润质感:大圆角(12px)、极淡阴影、柔和浮起"
+    ],
+    "rules": [
+      { "name": "The One Voice Rule", "body": "深松墨绿是唯一的强声音,只落在主按钮、wordmark、关键数字上,任意屏幕占比 ≤10%。它的稀有就是它的力量;不要把墨绿铺成大色块。", "section": "colors" },
+      { "name": "The Readable Ink Rule", "body": "暖白底上的浅灰文字最容易 washed-out。正文对比度必须 ≥4.5:1,大字 ≥3:1,占位文字同样 4.5:1。若接近临界,把文字推向墨绿 ink 端,绝不为优雅牺牲可读。", "section": "colors" },
+      { "name": "The Quiet Semantics Rule", "body": "涨跌与告警用色克制,且尽量辅以图标/箭头/形状,不只靠红绿——色盲也要分得清。", "section": "colors" },
+      { "name": "The Ledger Numerals Rule", "body": "一切指标、金额、百分比、环比必须走 tabular-nums(.tabnum)。数字纵向对齐成账本,是这套系统的招牌;非等宽的金额视为缺陷。", "section": "typography" },
+      { "name": "The Single Family Rule", "body": "永远只用 GoogleSansFlex 一个家族,靠字重分层。禁止为设计感引入第二种字体或装饰性标题字。", "section": "typography" },
+      { "name": "The Soft-Lift Rule", "body": "阴影上限是 shadow-sm(blur ≤ 2px)。任何卡片/按钮的阴影 blur ≥ 16px 都过头;深度优先靠色调分层与描边。", "section": "elevation" },
+      { "name": "The No Ghost-Card Rule", "body": "禁止 1px 描边 + 宽柔阴影同时出现在同一元素上。二选一:单道发丝描边,或单层 shadow-sm,不并用作装饰。", "section": "elevation" }
+    ],
+    "dos": [
+      "Do 一切数字走 tabular-nums(.tabnum),对齐成账册。",
+      "Do 主色深松墨绿稀有使用(≤10%/屏),只给主按钮、wordmark、关键数字。",
+      "Do 正文对比度 ≥4.5:1;接近临界时把文字推向墨绿 ink 端。",
+      "Do 卡片用单道发丝描边 + 至多 shadow-sm,圆角 12px。",
+      "Do 涨跌/告警辅以箭头或图标,不只靠红绿(色盲友好)。",
+      "Do 移动端逐断点验收:筛选栏收起、图例不压字、触控目标足够、窄屏不溢出。",
+      "Do 用半透明叠加表达前景/填充/描边,让暖意复合到橄榄底上。"
+    ],
+    "donts": [
+      "Don't 做成老派后台管理:蓝灰配色 + 密集表格堆砌。",
+      "Don't 套花哨 SaaS 落地页:大渐变、英雄大数字模板、无意义卡片网格、每段顶 eyebrow、01/02/03 编号小节。",
+      "Don't 做成过度活泼消费 app:强色彩、卡通/手绘 SVG 插画、弹跳/橡皮筋动效。",
+      "Don't 用 border-left/right 大于 1px 的彩色侧条做卡片/列表/告警强调(blockquote 3px 左条属唯一例外)。",
+      "Don't 用渐变文字、默认玻璃拟态。",
+      "Don't 把卡片圆角调到 24/28/32px+;卡片上限 12–16px,pill 仅给徽标/按钮。",
+      "Don't 同一元素并用 1px 描边 + ≥16px 柔阴影(ghost-card)。",
+      "Don't 引入第二种字体家族;层级只用 GoogleSansFlex 的字重分。",
+      "Don't 为优雅用浅灰正文压在暖白底上造成 washed-out。"
+    ]
+  }
+}
