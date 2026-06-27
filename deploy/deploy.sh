@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Data Hub 生产部署（systemd user timer）。在目标机仓库根或任意处跑：
-#   ./deploy/deploy.sh [--pull] [--sync-skill] [--restart-web] [--restart-gateway] [--restart-tunnel] [--dry-run]
+#   ./deploy/deploy.sh [--pull] [--sync-skill] [--restart-web] [--restart-gateway] [--restart-tunnel] [--no-business-timers] [--dry-run]
+#
+# --no-business-timers：过审前用。只 enable 基建 timer（审计锚定/备份/校验链）+ data-hub，
+#   不 enable 业务同步/聚合/告警 timer——避免部署顺手把业务任务全拉起（含 scan-alerts 误发告警）。
+#   不会 disable 已启用的业务 timer（只是"不新启"）；要停回过审前用 docs/ops-runbook.md 的 disable 循环。
 #
 # 做什么（幂等）：
 #   1) （--pull）git pull
@@ -23,16 +27,20 @@ UNIT_DST="$HOME/.config/systemd/user"
 ENV_FILE="$REPO_DIR/.env"
 UV="$(command -v uv 2>/dev/null || echo "$HOME/.local/bin/uv")"
 
-PULL=0; SYNC_SKILL=0; RESTART_WEB=0; RESTART_GW=0; RESTART_TUNNEL=0; DRY=0
+PULL=0; SYNC_SKILL=0; RESTART_WEB=0; RESTART_GW=0; RESTART_TUNNEL=0; NO_BIZ_TIMERS=0; DRY=0
 for a in "$@"; do case "$a" in
   --pull) PULL=1 ;;
   --sync-skill) SYNC_SKILL=1 ;;
   --restart-web) RESTART_WEB=1 ;;
   --restart-gateway) RESTART_GW=1 ;;
   --restart-tunnel) RESTART_TUNNEL=1 ;;
+  --no-business-timers) NO_BIZ_TIMERS=1 ;;
   --dry-run) DRY=1 ;;
   *) echo "未知参数：$a" >&2; exit 2 ;;
 esac; done
+
+# 过审前只起这些基建 timer（审计锚定/备份/校验链）；其余 data-* 视为业务 timer。
+INFRA_TIMERS="data-anchor-audit.timer data-backup-db.timer data-verify-audit-chain.timer"
 
 run() { echo "+ $*"; [ "$DRY" -eq 1 ] || "$@"; }
 
@@ -84,9 +92,21 @@ for f in "$UNIT_SRC"/*.service "$UNIT_SRC"/*.timer; do
 done
 run systemctl --user daemon-reload
 
-echo "-- enable timers + data-hub --"
+if [ "$NO_BIZ_TIMERS" -eq 1 ]; then
+  echo "-- enable timers + data-hub（过审前模式：仅基建 timer，跳过业务 timer）--"
+else
+  echo "-- enable timers + data-hub --"
+fi
 for t in "$UNIT_SRC"/*.timer; do
-  run systemctl --user enable --now "$(basename "$t")"
+  name="$(basename "$t")"
+  # 过审前模式：业务 timer 不 enable（不在 INFRA 白名单内的一律跳过）。两端补空格做整词匹配。
+  if [ "$NO_BIZ_TIMERS" -eq 1 ]; then
+    case " $INFRA_TIMERS " in
+      *" $name "*) : ;;  # 基建 timer，照常 enable
+      *) echo "  跳过业务 timer：${name}（--no-business-timers）"; continue ;;
+    esac
+  fi
+  run systemctl --user enable --now "$name"
 done
 run systemctl --user enable data-hub.service
 # 看板公网入口隧道（plan/14）：enable 开机自启；首次/更新靠 --restart-tunnel 拉起，

@@ -64,8 +64,13 @@ systemctl --user restart openclaw-gateway.service     # 改 openclaw.json 后，
 ~/.local/bin/uv run python -m flows.sync_orders        # 同理 sync_sku_variants / sync_fulfillments / sync_ad_spend
 
 # 部署 / 更新（含 uv sync + init_db + 装 timer；改了 web 代码加 --restart-web）
-./deploy/deploy.sh --restart-web
-# ⚠️ deploy.sh 会 enable --now 所有 timer；过审前跑完要把业务 timer 手动停回去：
+# ⚠️ 过审前部署务必加 --no-business-timers：只起基建 timer（anchor/backup/verify），
+#    不 enable 业务同步/聚合/告警 timer，避免顺手把 scan-alerts 拉起误发告警。
+./deploy/deploy.sh --restart-web --no-business-timers
+
+# 仅前端改动可绕开 deploy.sh（不触发 timer enable）：git pull + 直接构建 frontend/dist（见 §2.5 / deploy-hp skill）
+
+# 若忘了加 --no-business-timers（或老脚本），跑完手动把业务 timer 停回过审前：
 for t in orders inventory fulfillments sku-variants ad-spend unsettled-fees; do \
   systemctl --user disable --now data-sync-$t.timer; done
 for t in aggregate-profit scan-alerts push-replenishment refresh-tokens; do \
