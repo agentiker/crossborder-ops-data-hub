@@ -374,7 +374,17 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
       <CardHead
         title="费率监控（平台扣点率）"
         right={
-          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${badge.cls}`}>
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${badge.cls}`}
+          >
+            {/* 实时监控呼吸灯（模仿对话欢迎页绿点）：alert 红、其余绿；数据积累中不显 */}
+            {status !== "insufficient" && (
+              <span
+                className={`inline-block size-1.5 rounded-full animate-pulse-slow ${
+                  status === "alert" ? "bg-red-500" : "bg-green-500"
+                }`}
+              />
+            )}
             {badge.label}
           </span>
         }
@@ -395,16 +405,8 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
               <div className="text-xs text-foreground-tertiary">
                 当前预估费率（{fr?.eval_window}）
               </div>
-              <div className="flex items-center gap-2">
-                {/* 实时监控呼吸灯（模仿对话欢迎页绿点）：alert 红、其余绿 */}
-                <span
-                  className={`inline-block size-2 shrink-0 rounded-full animate-pulse-slow ${
-                    status === "alert" ? "bg-red-500" : "bg-green-500"
-                  }`}
-                />
-                <div className="tabnum text-2xl font-bold text-foreground">
-                  {pct(fr?.current_rate)}
-                </div>
+              <div className="tabnum text-2xl font-bold text-foreground">
+                {pct(fr?.current_rate)}
               </div>
               {!baselinePending && fr && fr.abs_delta !== 0 && (
                 <div
