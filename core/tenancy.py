@@ -21,8 +21,10 @@ from typing import Optional
 from core.config import settings
 
 # 向后兼容锚点：裸域 board.agenticker.cc、未知 host、未传 X-Account-Id 头一律回落到它。
-# 所有存量数据（cookie/token/binding/user_roles）都是 ecom-app，回落语义完全正确。
-DEFAULT_ACCOUNT = "ecom-app"
+# hp 存量数据（cookie/token/binding/user_roles）都是 ecom-app，默认回落语义完全正确；
+# prod 等单客户独立部署用 .env 的 TENANCY__DEFAULT_ACCOUNT 覆盖成本机租户（如 ecom-app-gtl），
+# 让 board 冷登录 / token 授权 / MCP 查询回落都对齐到飞书 agent 的同一租户。
+DEFAULT_ACCOUNT = settings.tenancy.default_account
 
 # 跨租户操作哨兵：set_current_account(TENANT_BYPASS) 让 ORM 自动过滤跳过，
 # 用于 refresh_tokens（扫描全租户）、迁移脚本（截断全量）等场景。

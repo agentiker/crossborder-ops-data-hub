@@ -103,6 +103,9 @@ class TenancyConfig(BaseModel):
     """
     host_to_account: dict[str, str] = {}   # 子域名 host → account_id
     public_base_url: dict[str, str] = {}   # account_id → 该租户公网根
+    # 回落锚点。默认 ecom-app（hp 存量主租户，零行为变更）；单客户独立部署（如 prod）
+    # 用 TENANCY__DEFAULT_ACCOUNT 覆盖成本机租户，让 board/token/数据/飞书 agent 全对齐。
+    default_account: str = "ecom-app"
 
 
 class LLMConfig(BaseModel):
