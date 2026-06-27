@@ -15,17 +15,18 @@
 3. **数据服务**：本程序通过 **HTTP 接口（FastAPI，仅监听 `127.0.0.1`）** 对外暴露只读指标。
 4. **AI 分析**：openclaw 经飞书渠道与客户对话，调用自研 skill，通过上述 HTTP 接口读取数据，给出运营分析与建议。
 
-### 公网暴露：仅 OAuth 回调
+### 公网暴露：按 path 白名单
 
-接口分两类，暴露需求相反，由 nginx 反向代理隔离（配置见 `deploy/nginx.conf`）：
+接口分两类，暴露需求相反，由 **cloudflared 命名隧道**按 path 白名单隔离（隧道出站连 Cloudflare、源站不开任何入站端口；配置见 `deploy/cloudflared/config.prod.yml`）：
 
 | 接口 | 调用方 | 暴露 |
 |------|--------|------|
-| `/auth/callback/tiktok` | TTS 服务器（公网） | nginx 经 https 只转发这一条路径到本机 |
-| `/api/data/*` | 本机 openclaw skill | 仅 `127.0.0.1`，nginx 不转发，外网不可达 |
+| `/auth/callback/tiktok` | TTS 服务器（公网） | 隧道按 path 白名单放行到本机 |
+| `/board`、`/app`、`/report` | 操作者/客户浏览器 | 隧道放行（各自带签名/登录鉴权） |
+| `/api/data/*`、`/mcp` | 本机 openclaw skill | 仅 `127.0.0.1`，隧道不放行，外网不可达 |
 
 - TTS 采用**平台发起授权**（商家在 TTS 后台点授权按钮），授权后 TTS 回调登记在平台的地址，因此回调端点必须公网可达，而 redirect_uri 以 **TTS 后台登记值**为准；本地无需配置 `TIKTOK__REDIRECT_URI`，也不使用 `/auth/url` 生成授权链接。
-- app 始终绑 `127.0.0.1`，公网入口只有 nginx；nginx 白名单只放行回调路径，其余（含 `/api/data`）一律 404。
+- app 始终绑 `127.0.0.1`，公网入口只有 cloudflared 隧道；隧道 ingress 只放行白名单 path，其余（含 `/api/data`）不可达。详见 `docs/production-deployment.md` §6.3。
 
 ### 接口选型：为什么用 HTTP
 
@@ -79,9 +80,10 @@
 - 复杂任务使用git worktree功能，交给子agent去处理，避免主agent撑满上下文
 
 ## 开发材料
-- 接口原始文档在./material/目录下，分别是：
-    - postman文档，包含请求参数，不包含响应字段。
+- 接口原始文档在 `./material/` 目录下（**不入库**，本地保留）：
+    - postman 文档，包含请求参数，不包含响应字段。
     - sdk(go)，包含请求参数、响应字段、错误码等。
-- 根据原始文档整理好的接口文档在./docs/目录下, 接口开发优先根据这里的文档，必要时再查原始文档或者官方在线文档。
+- 根据原始文档整理好的接口文档在 `./docs/` 下，接口开发优先据此，必要时再查原始文档或官方在线文档。
+- 大型 API dump（`docs/tiktok-shop-openapi-index.json`、`docs/tiktok-shop-openapi-reference.md`、`docs/mabang-erp-api-full.json`）体积大、**不入库**，仅本地保留；tiktok 两份可由 `scripts/generate_tiktok_api_docs.py` 从 `material/` 重新生成。
 
 

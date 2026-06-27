@@ -18,3 +18,8 @@ frontend/dist/
 # 自托管字体二进制（许可合规，不入库）
 frontend/public/fonts/*.woff2
 
+# 大型 API dump（本地保留；tiktok 两份可由 scripts/generate_tiktok_api_docs.py 从 material/ 重生成）
+docs/tiktok-shop-openapi-index.json
+docs/tiktok-shop-openapi-reference.md
+docs/mabang-erp-api-full.json
+
