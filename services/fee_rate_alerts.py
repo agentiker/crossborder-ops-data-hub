@@ -72,7 +72,7 @@ def build_decision(
     """
     currency = _dominant_currency(eval_by_ccy)
     if currency is None:
-        return FeeRateDecision(should_alert=False, skip_reason="评估窗口无已结算订单")
+        return FeeRateDecision(should_alert=False, skip_reason="评估窗口无数据")
 
     ev = eval_by_ccy.get(currency, {})
     base = baseline_by_ccy.get(currency, {})
