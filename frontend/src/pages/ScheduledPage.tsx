@@ -70,6 +70,9 @@ export function ScheduledPage() {
       <header className="sticky top-0 z-50 flex h-[68px] shrink-0 items-center justify-between gap-2 border-b border-border-shallow bg-background px-4 sm:px-6">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <h1 className="truncate text-lg font-semibold tracking-tight text-foreground">定时任务</h1>
+          <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+            待开发
+          </span>
           {tasks.length > 0 && (
             <span className="ml-1 text-sm text-foreground-tertiary">
               {tasks.length} 个任务 · {activeCount} 个运行中

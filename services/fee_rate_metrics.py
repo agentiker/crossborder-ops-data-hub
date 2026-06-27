@@ -13,14 +13,15 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import func
 
+from core.config import settings
 from core.db import SessionLocal
-from core.timezone import paid_window_utc
+from core.timezone import business_today, paid_window_utc
 from models.base_models import FactFinanceTransaction, FactUnsettledFee, OrderHeader
 
 
@@ -144,6 +145,148 @@ def get_settled_fee_rate(
                 "components": comp_by_ccy.get(ccy, {}),
             }
         return out
+    finally:
+        if own_session:
+            session.close()
+
+
+def _fmt_window(start: date, end: date) -> str:
+    """date 区间 → 'MM/DD~MM/DD'（看板/前端展示用）。"""
+    return f"{start.strftime('%m/%d')}~{end.strftime('%m/%d')}"
+
+
+def get_fee_rate_monitor(
+    *,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_id: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
+    scope_display: str = "全部范围",
+    trend_days: int = 14,
+    session=None,
+) -> dict:
+    """看板「费率监控」卡数据：实时算、不落库。严格复用 B1 及时口径与 build_decision，与告警同源。
+
+    口径（与 flows/scan_fulfillment_alerts._scan_unsettled_fee_rate 一致）：
+    - eval = 最近 fee_rate_realtime_eval_days 天 **unsettled 预估**费率（无结算滞后、反映最新政策）。
+    - baseline = 避开滞后段的 **settled 已结算**历史费率（稳基准）。
+    - status：build_decision(realtime=True) 判定——
+        'alert'        should_alert=True（费率异常升高）
+        'normal'       已评估、未达阈值（有数据、费率正常）
+        'insufficient' 无主币种/GMV不过护栏/基准不足（数据积累中，不误报）
+    - trend：近 trend_days 个业务日逐日 unsettled 预估费率（主币种），无数据的日点 rate=None。
+
+    返回结构供 /dashboard/summary 注入，前端 FeeRateMonitor.tsx 渲染（前端自行格式化百分比）。
+    """
+    from services import fee_rate_alerts  # 避免与 alerts 模块循环导入
+
+    own_session = session is None
+    session = session or SessionLocal()
+    try:
+        today = business_today()
+        eval_end = today
+        eval_start = today - timedelta(days=settings.fee_rate_realtime_eval_days - 1)
+        baseline_end = today - timedelta(days=settings.fee_rate_settle_lag_days)
+        baseline_start = baseline_end - timedelta(days=settings.fee_rate_baseline_days - 1)
+
+        common_scope = dict(platform=platform, country=country, shop_id=shop_id, shop_ids=shop_ids)
+        eval_by_ccy = get_unsettled_fee_rate(
+            start_date=eval_start, end_date=eval_end, session=session, **common_scope
+        )
+        baseline_by_ccy = get_settled_fee_rate(
+            start_date=baseline_start, end_date=baseline_end, session=session, **common_scope
+        )
+
+        decision = fee_rate_alerts.build_decision(
+            eval_by_ccy=eval_by_ccy,
+            baseline_by_ccy=baseline_by_ccy,
+            scope_display=scope_display,
+            min_gmv=settings.fee_rate_min_gmv,
+            rel_pct=settings.fee_rate_alert_rel_pct,
+            abs_pct=settings.fee_rate_alert_abs_pct,
+            eval_window_label=_fmt_window(eval_start, eval_end),
+            baseline_window_label=_fmt_window(baseline_start, baseline_end),
+            realtime=True,
+        )
+
+        currency = decision.currency
+        if decision.should_alert:
+            status = "alert"
+        elif decision.skip_reason == "未达异常阈值或费率未升":
+            status = "normal"
+        else:
+            status = "insufficient"
+
+        # 当前构成（主币种 eval 侧），结构化供前端
+        ev = eval_by_ccy.get(currency, {}) if currency else {}
+        eval_components = ev.get("components", {})
+        eval_gmv = float(ev.get("gmv", 0.0))
+        components = []
+        for key, amt in sorted(eval_components.items(), key=lambda kv: kv[1], reverse=True)[:5]:
+            if amt <= 0:
+                continue
+            components.append({
+                "key": key,
+                "name": fee_rate_alerts.component_label(key),
+                "share": (amt / eval_gmv) if eval_gmv > 0 else 0.0,
+            })
+
+        # 分项归因（仅 alert 时有意义；交集为空→空列表，前端降级为纯构成展示）
+        attributions = []
+        if status == "alert":
+            base = baseline_by_ccy.get(currency, {})
+            base_components = base.get("components", {})
+            base_gmv = float(base.get("gmv", 0.0))
+            if eval_gmv > 0 and base_gmv > 0:
+                rows = []
+                for key in set(eval_components) & set(base_components):
+                    ev_share = eval_components[key] / eval_gmv
+                    base_share = base_components[key] / base_gmv
+                    diff = ev_share - base_share
+                    if diff >= fee_rate_alerts._COMPONENT_ATTRIBUTION_MIN_PCT:
+                        rows.append((diff, key, base_share, ev_share))
+                rows.sort(reverse=True)
+                for diff, key, base_share, ev_share in rows[:3]:
+                    attributions.append({
+                        "key": key,
+                        "name": fee_rate_alerts.component_label(key),
+                        "from": base_share,
+                        "to": ev_share,
+                        "delta": diff,
+                    })
+
+        # 趋势：近 trend_days 个业务日逐日 unsettled 预估费率（主币种）
+        trend = []
+        for i in range(trend_days - 1, -1, -1):
+            d = today - timedelta(days=i)
+            day_by_ccy = get_unsettled_fee_rate(
+                start_date=d, end_date=d, session=session, **common_scope
+            )
+            rate = None
+            if currency and currency in day_by_ccy:
+                rate = day_by_ccy[currency].get("rate")
+            elif day_by_ccy:  # 无主币种时（如 currency=None）取该日 GMV 最大币种
+                top = max(day_by_ccy.items(), key=lambda kv: kv[1].get("gmv", 0.0))
+                rate = top[1].get("rate")
+            trend.append({"date": d.isoformat(), "rate": rate})
+
+        return {
+            "currency": currency,
+            "status": status,
+            "skip_reason": decision.skip_reason,
+            "current_rate": decision.eval_rate,
+            "baseline_rate": decision.baseline_rate,
+            "abs_delta": decision.abs_change,
+            "rel_delta": decision.rel_change,
+            "eval_gmv": decision.eval_gmv,
+            "baseline_gmv": decision.baseline_gmv,
+            "order_count": int(ev.get("order_count", 0)),
+            "eval_window": _fmt_window(eval_start, eval_end),
+            "baseline_window": _fmt_window(baseline_start, baseline_end),
+            "components": components,
+            "attributions": attributions,
+            "trend": trend,
+        }
     finally:
         if own_session:
             session.close()

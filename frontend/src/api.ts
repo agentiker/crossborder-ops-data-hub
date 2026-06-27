@@ -174,6 +174,40 @@ export interface BoardData {
     estimated: ProfitBreakdown | null;
     settled: ProfitBreakdown | null;
   };
+  // 费率监控（实时算、复用 B1 及时口径）。status：normal 正常 / alert 异常升高 / insufficient 数据积累中。
+  fee_rate?: FeeRateMonitor;
+}
+
+export interface FeeRateComponent {
+  key: string;
+  name: string;
+  share: number; // 占 GMV 比例（0-1）
+}
+
+export interface FeeRateAttribution {
+  key: string;
+  name: string;
+  from: number; // 基准占比
+  to: number; // 当前占比
+  delta: number; // 升幅（占 GMV 百分点，小数）
+}
+
+export interface FeeRateMonitor {
+  status: "normal" | "alert" | "insufficient";
+  currency: string | null;
+  skip_reason: string | null;
+  current_rate: number; // 当前预估费率（unsettled 口径）
+  baseline_rate: number; // 已结算历史基准
+  abs_delta: number; // 绝对升幅（小数，0.03=3pct）
+  rel_delta: number; // 相对升幅
+  eval_gmv: number;
+  baseline_gmv: number;
+  order_count: number;
+  eval_window: string; // MM/DD~MM/DD
+  baseline_window: string;
+  components: FeeRateComponent[];
+  attributions: FeeRateAttribution[];
+  trend: { date: string; rate: number | null }[];
 }
 
 export interface ProfitBreakdown {

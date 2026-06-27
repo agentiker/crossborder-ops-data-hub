@@ -40,9 +40,14 @@ export function SkillsPage() {
             已启用（{enabled.size}）
           </TabButton>
         </div>
-        <p className="hidden text-xs text-foreground-tertiary sm:block">
-          启用的技能会开放给对话 AI 调用
-        </p>
+        <div className="flex items-center gap-2">
+          <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+            待开发
+          </span>
+          <p className="hidden text-xs text-foreground-tertiary sm:block">
+            按需启用待开发；当前对话 AI 默认可调用全部技能
+          </p>
+        </div>
       </header>
 
       {/* 内容 */}

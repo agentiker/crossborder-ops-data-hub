@@ -500,4 +500,7 @@ def scan_fulfillment_alerts_flow(dry_run: bool = False):
 
 
 if __name__ == "__main__":
-    scan_fulfillment_alerts_flow()
+    import sys
+
+    # --dry-run：只打印判定文案、不实发、不写游标（上线前手动验证用，见 docs/ops-runbook.md）
+    scan_fulfillment_alerts_flow(dry_run="--dry-run" in sys.argv)

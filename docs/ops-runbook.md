@@ -75,6 +75,21 @@ for t in aggregate-profit scan-alerts push-replenishment refresh-tokens; do \
 systemctl --user enable --now data-sync-orders.timer
 systemctl --user daemon-reload                          # ⚠️ enable 后必跑，否则 list-timers 的 NEXT 为空
 
+# ── plan/19 交付版「上线」启用顺序（手动验一轮后逐个起；本计划只备脚本、不代执行）──
+# 依赖：报告/看板/费率监控都吃同步数据，先起同步、再起聚合、最后起扫告警。
+# 1) 同步（无依赖，可全起）
+for t in orders inventory fulfillments sku-variants ad-spend unsettled-fees; do \
+  systemctl --user enable --now data-sync-$t.timer; done
+# 2) 聚合利润（依赖订单+unsettled+ad-spend）
+systemctl --user enable --now data-aggregate-profit.timer
+# 3) 扫告警（费率/待发货/断货/爆单；依赖上面已落库）
+systemctl --user enable --now data-scan-alerts.timer
+systemctl --user daemon-reload
+# 验证：先 dry-run 看判定不误报
+~/.local/bin/uv run python -m flows.scan_fulfillment_alerts --dry-run
+# ⚠️ 费率「告警」需 ~2 周已结算历史填满 baseline 才会真正触发（冷启动期 build_decision 走护栏跳过、不误报）。
+#    看板「费率监控卡」走 unsettled 实时口径、无此限制——同步一起就有当前费率/趋势可看。
+
 # 预检（改 .env 后、部署前）
 ~/.local/bin/uv run python -m scripts.preflight
 ```

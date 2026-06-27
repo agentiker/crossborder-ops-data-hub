@@ -172,6 +172,30 @@ openclaw cron add --name "<客户> 每日经营日报" \
   --message "$PROMPT"
 ```
 
+### B3b. 给客户加【定时周报】（plan/19 W2，模板 — 按"准备不开"原则，命令备好待手动执行）
+
+与日报对称，周报走同一套 openclaw cron + LLM，调 `ops_report_link` 的 `weekly_review` 模板看上周整周（`period=last_week`）。**周一晨推**（cron `0 9 * * 1`，避开与日报 8:30 撞点）。
+
+```bash
+read -r -d '' WPROMPT <<'EOF'
+请生成【上周（完整一周，周一至周日）】印尼 TikTok Shop 经营周报。依次查询并整理：
+1. 周度概览：上周 GMV/订单/销量/客单价，与上上周环比
+2. 趋势与动销：按天 GMV/订单走势、动销率、连续区间表现
+3. 商品健康度：爆款集中度、新品表现、断货风险
+4. 待发货与履约概况
+末尾给 3 条以内运营复盘建议。数据口径以接口 caliber 字段为准如实复述。利润/ROI 本期未上线不要编。
+【重要】直接输出完整周报全文作为回复，系统会自动投递，不要用 message 工具，不要只回确认语。
+EOF
+
+openclaw cron add --name "<客户> 每周经营周报" \
+  --agent <agentId> --account <accountId> \
+  --cron "0 9 * * 1" --tz Asia/Shanghai \
+  --announce --channel feishu --to user:<open_id> \
+  --message "$WPROMPT"
+```
+
+> 现状：定时日报已在跑（B1）；**定时周报 cron 尚未在服务器添加**——本计划只备命令、不执行，由用户确认后手动 `cron add`。问答周报（飞书发"看周报"/webUI `ops_report` template=weekly_review）已可用，不依赖本 cron。
+
 ### B4. 运维命令
 
 ```bash

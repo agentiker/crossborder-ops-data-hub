@@ -127,7 +127,10 @@ export function BoardPage() {
                 <HotProducts data={data} loading={loading} />
                 <InventoryHealth data={data} loading={loading} />
               </div>
-              <ChannelPie data={data} loading={loading} />
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                <ChannelPie data={data} loading={loading} />
+                <FeeRateMonitor data={data} loading={loading} />
+              </div>
               <OrderSection data={data} loading={loading} />
             </>
           )}
@@ -305,6 +308,145 @@ function ChannelPie({ data, loading }: { data: BoardData | null; loading: boolea
   );
 }
 
+/* ── 费率监控卡（plan/19 W1：实时算、复用 B1 及时口径，三态徽章 + 趋势 + 分项归因）── */
+
+// 数据走 /board/data 的 fee_rate 字段。当前预估费率(unsettled 口径) vs 已结算历史基准。
+// 三态：normal 正常(绿) / alert 异常升高(红，挂分项归因) / insufficient 数据积累中(灰)。
+// 与告警同源（services/fee_rate_metrics.get_fee_rate_monitor），有无告警都能展示。
+function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: boolean }) {
+  const t = useChartTokens();
+  const fr = data?.fee_rate;
+  const pct = (n: number | undefined | null) =>
+    n == null ? "—" : `${(n * 100).toFixed(2)}%`;
+  const status = fr?.status ?? "insufficient";
+  const badge =
+    status === "alert"
+      ? { label: "异常升高", cls: "bg-red-100 text-red-700" }
+      : status === "normal"
+        ? { label: "正常", cls: "bg-green-100 text-green-700" }
+        : { label: "数据积累中", cls: "bg-fill-shallow text-foreground-tertiary" };
+  const lineColor = status === "alert" ? t.negative : t.primary;
+  const points = (fr?.trend || []).filter((p) => p.rate != null);
+  const option = useMemo(
+    () => ({
+      grid: { left: 8, right: 12, top: 12, bottom: 4, containLabel: true },
+      tooltip: {
+        trigger: "axis",
+        formatter: (ps: { axisValue: string; data: number }[]) =>
+          `${ps[0]?.axisValue}<br/>预估费率 ${ps[0]?.data?.toFixed(2)}%`,
+      },
+      xAxis: {
+        type: "category",
+        data: points.map((p) => p.date.slice(5)),
+        axisLine: { lineStyle: { color: t.grid } },
+        axisLabel: { color: t.sub, fontSize: 10 },
+      },
+      yAxis: {
+        type: "value",
+        axisLabel: { color: t.sub, fontSize: 10, formatter: "{value}%" },
+        splitLine: { lineStyle: { color: t.grid } },
+      },
+      series: [
+        {
+          type: "line",
+          smooth: true,
+          symbol: "circle",
+          symbolSize: 5,
+          data: points.map((p) => Number(((p.rate as number) * 100).toFixed(3))),
+          lineStyle: { color: lineColor, width: 2 },
+          itemStyle: { color: lineColor },
+          areaStyle: { color: lineColor, opacity: 0.08 },
+        },
+      ],
+    }),
+    [points, lineColor, t],
+  );
+  const insufficient = status === "insufficient";
+  return (
+    <Card>
+      <CardHead
+        title="费率监控（平台扣点率）"
+        right={
+          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${badge.cls}`}>
+            {badge.label}
+          </span>
+        }
+      />
+      {loading ? (
+        <ChartEmpty loading={loading} empty="" height={260} />
+      ) : insufficient ? (
+        <ChartEmpty
+          loading={false}
+          empty={fr?.skip_reason ? `数据积累中：${fr.skip_reason}` : "数据积累中（待未结算费用同步）"}
+          height={260}
+        />
+      ) : (
+        <div className="space-y-4">
+          {/* 当前预估费率 / 已结算基准 */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="rounded-xl bg-fill-shallow p-4">
+              <div className="text-xs text-foreground-tertiary">
+                当前预估费率（{fr?.eval_window}）
+              </div>
+              <div className="tabnum text-2xl font-bold text-foreground">
+                {pct(fr?.current_rate)}
+              </div>
+              {fr && fr.abs_delta !== 0 && (
+                <div
+                  className={`text-xs ${fr.abs_delta > 0 ? "text-red-600" : "text-green-600"}`}
+                >
+                  {fr.abs_delta > 0 ? "↑" : "↓"} {pct(Math.abs(fr.abs_delta))}
+                  （相对 {pct(Math.abs(fr.rel_delta))}）vs 基准
+                </div>
+              )}
+            </div>
+            <div className="rounded-xl bg-fill-shallow p-4">
+              <div className="text-xs text-foreground-tertiary">
+                已结算基准（{fr?.baseline_window}）
+              </div>
+              <div className="tabnum text-2xl font-bold text-foreground">
+                {pct(fr?.baseline_rate)}
+              </div>
+              <div className="text-xs text-foreground-tertiary">{fr?.currency}</div>
+            </div>
+          </div>
+          {/* 趋势 */}
+          <EChart option={option} height={150} />
+          {/* 异常时点名分项归因 */}
+          {status === "alert" && fr?.attributions?.length ? (
+            <div className="rounded-xl bg-red-50 p-3 text-sm">
+              <div className="mb-1 font-medium text-red-700">📍 主要涨幅来自</div>
+              {fr.attributions.map((a) => (
+                <div key={a.key} className="flex justify-between text-foreground">
+                  <span>{a.name}</span>
+                  <span className="tabnum text-red-600">
+                    +{pct(a.delta)}（{pct(a.from)}→{pct(a.to)}）
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {/* 当前主要扣费构成 */}
+          {fr?.components?.length ? (
+            <div className="space-y-1">
+              <div className="text-xs text-foreground-tertiary">当前主要扣费构成（占 GMV）</div>
+              {fr.components.slice(0, 4).map((c) => (
+                <div key={c.key} className="flex justify-between text-sm">
+                  <span className="text-foreground-tertiary">{c.name}</span>
+                  <span className="tabnum text-foreground">{pct(c.share)}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <div className="text-xs text-foreground-tertiary">
+            预估口径：基于未结算订单 TikTok 官方预估费率，反映最新费率政策，结算前即可发现调佣
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 /* ── 预估利润卡（plan/17 阶段3a：预估利润 + 结算后真实利润双展示，折 CNY）──────── */
 
 // 数据走 /board/data 的 profit 字段。利润 = GMV − 扣点 − 广告 − 成本 − 退货（折 CNY）。
@@ -315,6 +457,8 @@ function ProfitCard({ data, loading }: { data: BoardData | null; loading: boolea
   const est = p?.estimated;
   const settled = p?.settled;
   const empty = !p?.available ? "暂无利润数据（需接生产店并跑聚合）" : "";
+  // 商品成本未录入（product_cost≈0）→ 利润/利润率虚高，明确标注「未扣商品成本」，不展示误导性利润率。
+  const costMissing = !!est && (!est.product_cost || est.product_cost === 0);
   const detail: { label: string; value: number | undefined }[] = [
     { label: "GMV", value: est?.gmv },
     { label: "扣点", value: est?.commission_fee },
@@ -339,11 +483,14 @@ function ProfitCard({ data, loading }: { data: BoardData | null; loading: boolea
           {/* 两大数：预估利润 / 结算后真实利润 */}
           <div className="grid grid-cols-2 gap-4">
             <div className="rounded-xl bg-fill-shallow p-4">
-              <div className="text-xs text-foreground-tertiary">预估利润（今早）</div>
+              <div className="text-xs text-foreground-tertiary">
+                预估利润（今早）{costMissing && "· 未扣商品成本"}
+              </div>
               <div className="tabnum text-2xl font-bold text-foreground">
                 {fmtMoneyCny(est?.gross_profit)}
               </div>
-              {est?.profit_margin != null && (
+              {/* 成本未录入时利润率虚高，隐藏；录入后再显真实利润率 */}
+              {!costMissing && est?.profit_margin != null && (
                 <div className="text-xs text-foreground-tertiary">
                   利润率 {est.profit_margin.toFixed(1)}%
                 </div>
@@ -369,6 +516,11 @@ function ProfitCard({ data, loading }: { data: BoardData | null; loading: boolea
               </div>
             ))}
           </div>
+          {costMissing && (
+            <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              ⚠️ 商品成本未录入，利润为「未扣商品成本」口径、偏高；录入成本后方为真实毛利。
+            </div>
+          )}
           <div className="text-xs text-foreground-tertiary">
             预估口径：扣点/广告含未结算订单 TikTok 官方预估 + 已结算真实；退货按配置率预估
           </div>

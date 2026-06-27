@@ -50,6 +50,11 @@ _COMPONENT_LABELS = {
 _COMPONENT_ATTRIBUTION_MIN_PCT = 0.005
 
 
+def component_label(key: str) -> str:
+    """fee_breakdown 子键(API 原始名) → 中文名；未收录则回落原始名。供看板/文案共用。"""
+    return _COMPONENT_LABELS.get(key, key)
+
+
 @dataclass
 class FeeRateDecision:
     """一次评估结论。should_alert 决定是否投递；skip_reason 解释为何不报（护栏/无异常）。"""

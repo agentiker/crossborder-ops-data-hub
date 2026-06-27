@@ -20,6 +20,7 @@ from core.tenancy import set_current_account
 from core.timezone import previous_window, resolve_period
 from services.ad_metrics import get_ad_spend_summary, get_roas
 from services.channel_metrics import get_channel_gmv_breakdown
+from services.fee_rate_metrics import get_fee_rate_monitor
 from services.order_metrics import get_gmv_summary
 from services.profit_summary import get_profit_card
 from services.scope_resolution import ScopeError, list_scopes
@@ -124,6 +125,16 @@ async def _collect(perm: UserPermission, period: str, requested_scope_key: str) 
         start_date=cur_start, end_date=cur_end,
         platform=platform, country=country, shop_ids=shop_id_list,
     )
+    # 费率监控卡（实时算、复用 B1 及时口径）：当前预估费率 vs 已结算基准 + 趋势 + 三态徽章。
+    # 不随 period 变（固定近 N 天 unsettled vs 历史 settled）。出错不阻断看板其它块。
+    try:
+        fee_rate = get_fee_rate_monitor(
+            platform=platform, country=country, shop_ids=shop_id_list,
+            scope_display=filters.display_text,
+        )
+    except Exception:  # noqa: BLE001 — 单卡兜底，费率取数失败不整页挂
+        logger.warning("fee_rate monitor card failed", exc_info=True)
+        fee_rate = {"status": "insufficient", "skip_reason": "取数失败", "trend": []}
     cur = get_gmv_summary(
         start_date=cur_start, end_date=cur_end,
         platform=platform, country=country, shop_ids=shop_id_list,
@@ -190,6 +201,7 @@ async def _collect(perm: UserPermission, period: str, requested_scope_key: str) 
         "fulfillment": _asdict(fulfillment),
         "channels": channels,
         "profit": profit,
+        "fee_rate": fee_rate,
     }
 
 
