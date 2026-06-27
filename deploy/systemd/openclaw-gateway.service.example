@@ -1,0 +1,36 @@
+# OpenClaw 飞书网关 —— systemd user 单元【参考模板】
+#
+# 为何是 .example：node 路径含具体版本号（机器相关），不能像 data-*.service 那样被
+# deploy.sh 的 *.service glob 自动 cp 到任意新机。实际单元通常由 openclaw CLI 自动生成于
+# ~/.config/systemd/user/openclaw-gateway.service（prod 实测 openclaw v2026.6.10 即如此）。
+#
+# 手动安装：把 NODE_VER 替换成本机 node 版本目录名（`command -v node` 反推，如 v22.23.1），
+# 存到 ~/.config/systemd/user/openclaw-gateway.service，然后：
+#   systemctl --user daemon-reload && systemctl --user enable --now openclaw-gateway.service
+# 网关配置（openclaw.json / lark.secrets / agents / MCP / 人格）见 docs/openclaw-setup.md。
+
+[Unit]
+Description=OpenClaw Gateway
+After=network-online.target
+Wants=network-online.target
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+# %h = 部署用户家目录；NODE_VER 占位须替换成本机 node 版本目录名（如 v22.23.1）
+ExecStart=%h/.nvm/versions/node/NODE_VER/bin/node %h/.nvm/versions/node/NODE_VER/lib/node_modules/openclaw/dist/index.js gateway --port 18789
+Restart=always
+RestartSec=5
+RestartPreventExitStatus=78
+TimeoutStopSec=30
+TimeoutStartSec=30
+SuccessExitStatus=0 143
+KillMode=control-group
+Environment=HOME=%h
+Environment=TMPDIR=/tmp
+Environment=NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
+Environment=PATH=%h/.nvm/versions/node/NODE_VER/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=OPENCLAW_GATEWAY_PORT=18789
+
+[Install]
+WantedBy=default.target
