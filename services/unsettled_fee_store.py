@@ -18,18 +18,27 @@ from services.scoping import build_scope_key
 
 # 三项广告费（fee_tax_breakdown.fee 下，命名同结算单）：fee 子键 → 模型列名。
 # 利润里广告费单列，故这三项从 estimated_fee_amount 里减掉避免与广告费双算（见 profit_aggregation）。
+# 真打口径：API 子项为负数(=对卖家扣款)，落库统一翻成正数(成本量级)。
+# 注：生产真打本店 fee 下无 gmv_max_ad_fee_amount / tap_shop_ads_commission 键（无该类广告）→ 取 0；
+#     仅 affiliate_ads_commission_amount 有值。键保留，后续若出现该类广告自动入库。
 PROMOTED_AD_FEE_COLUMNS = {
     "gmv_max_ad_fee_amount": "gmv_max_fee",
     "tap_shop_ads_commission": "tap_commission",
     "affiliate_ads_commission_amount": "affiliate_commission",
 }
 
-# 交易级预估汇总：交易顶层键 → 模型列名
-PROMOTED_ESTIMATED_COLUMNS = {
-    "estimated_fee_amount": "estimated_fee_amount",
-    "estimated_revenue_amount": "estimated_revenue_amount",
-    "estimated_settlement_amount": "estimated_settlement_amount",
-    "estimated_adjustment_amount": "estimated_adjustment_amount",
+# 交易顶层"收入/结算"键（API 即正数，原样落库）→ 模型列名。
+# ⚠️ 键名以 GET /finance/202507/orders/unsettled 生产真打为准：est_* 前缀，非 estimated_*_amount。
+PROMOTED_REVENUE_COLUMNS = {
+    "est_revenue_amount": "estimated_revenue_amount",
+    "est_settlement_amount": "estimated_settlement_amount",
+}
+
+# 交易顶层"扣费"键：API est_fee_tax_amount 为负数(=对卖家扣款)，落库翻成正数(成本量级)，
+# 与 order_fee_store / profit_aggregation / fee_rate_metrics 的"为正=扣款"口径一致。
+# 接口无独立 adjustment 源键（est_revenue + est_fee_tax = est_settlement，无调整项）→ 落 0。
+PROMOTED_FEE_COLUMNS = {
+    "est_fee_tax_amount": "estimated_fee_amount",
 }
 
 
@@ -84,10 +93,13 @@ def parse_unsettled_fees(pages: list[dict[str, Any]]) -> list[dict]:
                 "currency": txn.get("currency"),
                 "fee_breakdown": _nonzero_map(fee),
             }
-            for src, col in PROMOTED_ESTIMATED_COLUMNS.items():
+            for src, col in PROMOTED_REVENUE_COLUMNS.items():
                 row[col] = _to_decimal(txn.get(src))
+            for src, col in PROMOTED_FEE_COLUMNS.items():
+                row[col] = -_to_decimal(txn.get(src))  # API 负数(扣款) → 正数(成本)
+            row["estimated_adjustment_amount"] = Decimal("0")  # 接口无调整项源键
             for src, col in PROMOTED_AD_FEE_COLUMNS.items():
-                row[col] = _to_decimal(fee.get(src))
+                row[col] = -_to_decimal(fee.get(src))  # 广告费同为负 → 翻正
             rows.append(row)
     return rows
 
@@ -118,7 +130,10 @@ _REFRESH_COLUMNS = (
     "metric_date",
     "currency",
     "fee_breakdown",
-    *PROMOTED_ESTIMATED_COLUMNS.values(),
+    "estimated_fee_amount",
+    "estimated_revenue_amount",
+    "estimated_settlement_amount",
+    "estimated_adjustment_amount",
     *PROMOTED_AD_FEE_COLUMNS.values(),
 )
 

@@ -41,20 +41,25 @@ def test_scope_key_includes_kind():
 def test_parse_unsettled_fees():
     from services.unsettled_fee_store import parse_unsettled_fees
 
+    # 真打口径：est_* 顶层键、扣费为负数(落库翻正)、est_revenue + est_fee_tax = est_settlement
     ts = int(datetime(2026, 6, 24, 5, 0, tzinfo=timezone.utc).timestamp())
     pages = [{"transactions": [
         {"id": "T1", "order_id": "O1", "currency": "IDR", "order_create_time": ts,
-         "estimated_fee_amount": "1000", "estimated_revenue_amount": "9000",
-         "fee_tax_breakdown": {"fee": {"platform_commission_amount": "800",
-                                       "gmv_max_ad_fee_amount": "200", "zero_item": "0"}}},
+         "est_fee_tax_amount": "-1000", "est_revenue_amount": "9000",
+         "est_settlement_amount": "8000",
+         "fee_tax_breakdown": {"fee": {"dynamic_commission_amount": "-800",
+                                       "gmv_max_ad_fee_amount": "-200", "zero_item": "0"}}},
         {"no_id": "skip"},
     ]}]
     rows = parse_unsettled_fees(pages)
     assert len(rows) == 1
     r = rows[0]
     assert r["transaction_id"] == "T1" and r["order_id"] == "O1"
-    assert r["estimated_fee_amount"] == Decimal("1000")
-    assert r["gmv_max_fee"] == Decimal("200")
+    assert r["estimated_fee_amount"] == Decimal("1000")  # 负→正
+    assert r["estimated_revenue_amount"] == Decimal("9000")
+    assert r["estimated_settlement_amount"] == Decimal("8000")
+    assert r["estimated_adjustment_amount"] == Decimal("0")  # 接口无调整项
+    assert r["gmv_max_fee"] == Decimal("200")  # 广告费负→正
     assert "zero_item" not in r["fee_breakdown"]  # 零项剔除
     assert parse_unsettled_fees([{"transactions": []}]) == []
 

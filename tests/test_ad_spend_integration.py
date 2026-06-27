@@ -26,11 +26,12 @@ def _txn(txn_id, create_dt, gmv_max, tap, affiliate):
         "order_id": "o",
         "order_create_time": _ts(create_dt),
         "settlement_amount": "200.00",
+        # API fee 子项为负数(=对卖家扣款)，store/聚合落库翻正
         "fee_tax_breakdown": {"fee": {
             "gmv_max_ad_fee_amount": gmv_max,
             "tap_shop_ads_commission": tap,
             "affiliate_ads_commission_amount": affiliate,
-            "platform_commission_amount": "15.00",  # 非广告费 → 验证费用表全字段
+            "platform_commission_amount": "-15.00",  # 非广告费 → 验证费用表全字段
         }},
     }
 
@@ -49,13 +50,13 @@ class FakeClient:
         # currency 在 statement 级 `data.currency`（真 client 直接 yield data）。
         if statement_id == "S1":
             yield {"currency": "IDR", "transactions": [
-                _txn("t1", datetime(2026, 6, 8, 10, 0), "100.00", "20.00", "5.00"),
+                _txn("t1", datetime(2026, 6, 8, 10, 0), "-100.00", "-20.00", "-5.00"),
             ]}
         else:  # S2
             yield {"currency": "IDR", "transactions": [
-                _txn("t2", datetime(2026, 6, 8, 11, 0), "10.00", "2.00", "1.00"),
+                _txn("t2", datetime(2026, 6, 8, 11, 0), "-10.00", "-2.00", "-1.00"),
                 # 跨日：UTC 6/8 17:30 → 印尼 6/9
-                _txn("t3", datetime(2026, 6, 8, 17, 30), "50.00", "0.00", "0.00"),
+                _txn("t3", datetime(2026, 6, 8, 17, 30), "-50.00", "0.00", "0.00"),
             ]}
 
 

@@ -1,8 +1,8 @@
 """广告消耗 aggregate + upsert 单测。
 
-aggregate_ad_spend：解析三项广告费 string → Decimal、缺字段补 0、负值保留原负值（warning 监控）、
-order_create_time 按印尼业务日（UTC+7）归集（含跨 UTC 日界样本）、三项与 total 累加、
-currency 取 statement 级（page 级 `currency`，非交易级）。
+aggregate_ad_spend：解析三项广告费 string → Decimal、缺字段补 0、API 负数(扣款)翻成正数(花费)、
+翻后仍为负(退款冲回/credit)触发 warning、order_create_time 按印尼业务日（UTC+7）归集（含跨 UTC
+日界样本）、三项与 total 累加、currency 取 statement 级（page 级 `currency`，非交易级）。
 upsert_ad_spend_daily：同 scope_key 写两次仅一行、字段被刷新（含 raw_response_id）。
 """
 from __future__ import annotations
@@ -45,11 +45,11 @@ def _page(transactions, *, currency="IDR", statement_id="s1"):
 
 
 def test_aggregate_parses_sums_and_total():
-    """三项 string→Decimal 累加，total=三项之和，transaction_count 计数。"""
+    """三项 string→Decimal 累加(API 负数翻正)，total=三项之和，transaction_count 计数。"""
     pages = [
         _page([
-            _txn(datetime(2026, 6, 8, 10, 0), gmv_max="100.50", tap="20.00", affiliate="5.25"),
-            _txn(datetime(2026, 6, 8, 11, 0), gmv_max="10.00", tap="2.00", affiliate="1.00"),
+            _txn(datetime(2026, 6, 8, 10, 0), gmv_max="-100.50", tap="-20.00", affiliate="-5.25"),
+            _txn(datetime(2026, 6, 8, 11, 0), gmv_max="-10.00", tap="-2.00", affiliate="-1.00"),
         ]),
     ]
     rows = aggregate_ad_spend(pages)
@@ -68,7 +68,7 @@ def test_aggregate_missing_fields_default_zero():
     """三项任意缺失补 0；fee 整段缺失也补 0，不报错。"""
     pages = [
         _page([
-            _txn(datetime(2026, 6, 8, 9, 0), gmv_max="50.00"),  # 缺 tap / affiliate
+            _txn(datetime(2026, 6, 8, 9, 0), gmv_max="-50.00"),  # 缺 tap / affiliate
             {"order_create_time": _ts(datetime(2026, 6, 8, 9, 30))},  # 完全无 fee
         ]),
     ]
@@ -82,15 +82,15 @@ def test_aggregate_missing_fields_default_zero():
     assert r["transaction_count"] == 2
 
 
-def test_aggregate_negative_preserved_and_warns(caplog):
-    """广告费记为负（如退款冲回）时保留原负值（不取绝对值），并对每项 < 0 触发 warning。"""
+def test_aggregate_credit_negative_after_flip_warns(caplog):
+    """API 正值（退款冲回/credit）翻符号后为负成本，保留负值并对每项 < 0 触发 warning。"""
     pages = [_page([
-        _txn(datetime(2026, 6, 8, 9, 0), gmv_max="-30.00", tap="-5.00", affiliate="-2.50"),
+        _txn(datetime(2026, 6, 8, 9, 0), gmv_max="30.00", tap="5.00", affiliate="2.50"),
     ])]
     with caplog.at_level(logging.WARNING, logger="flows.sync_ad_spend"):
         rows = aggregate_ad_spend(pages)
     r = rows[0]
-    # 负值原样保留，不再 abs
+    # 翻符号后为负成本，原样保留（不再 abs）
     assert r["gmv_max_fee"] == Decimal("-30.00")
     assert r["tap_commission"] == Decimal("-5.00")
     assert r["affiliate_commission"] == Decimal("-2.50")
@@ -104,13 +104,14 @@ def test_aggregate_negative_preserved_and_warns(caplog):
     assert "affiliate_ads_commission_amount" in msgs
 
 
-def test_aggregate_positive_no_warning(caplog):
-    """正常正值（卖家扣款）不触发任何 warning。"""
+def test_aggregate_normal_spend_no_warning(caplog):
+    """正常广告花费（API 负数=扣款，翻正后正成本）不触发任何 warning。"""
     pages = [_page([
-        _txn(datetime(2026, 6, 8, 9, 0), gmv_max="30.00", tap="5.00", affiliate="2.50"),
+        _txn(datetime(2026, 6, 8, 9, 0), gmv_max="-30.00", tap="-5.00", affiliate="-2.50"),
     ])]
     with caplog.at_level(logging.WARNING, logger="flows.sync_ad_spend"):
-        aggregate_ad_spend(pages)
+        rows = aggregate_ad_spend(pages)
+    assert rows[0]["total_ad_spend"] == Decimal("37.50")
     assert not [rec for rec in caplog.records if rec.levelno == logging.WARNING]
 
 
@@ -118,11 +119,11 @@ def test_aggregate_business_day_boundary_utc7():
     """跨 UTC 日界：UTC 6/8 17:00（印尼 6/9 00:00）应归到印尼 6/9，而非 UTC 当日 6/8。"""
     pages = [_page([
         # UTC 6/8 16:00 → 印尼 6/8 23:00 → 6/8
-        _txn(datetime(2026, 6, 8, 16, 0), gmv_max="11.00"),
+        _txn(datetime(2026, 6, 8, 16, 0), gmv_max="-11.00"),
         # UTC 6/8 17:00 → 印尼 6/9 00:00 → 6/9（关键跨日样本）
-        _txn(datetime(2026, 6, 8, 17, 0), gmv_max="22.00"),
+        _txn(datetime(2026, 6, 8, 17, 0), gmv_max="-22.00"),
         # UTC 6/8 23:59 → 印尼 6/9 06:59 → 6/9
-        _txn(datetime(2026, 6, 8, 23, 59), gmv_max="33.00"),
+        _txn(datetime(2026, 6, 8, 23, 59), gmv_max="-33.00"),
     ])]
     rows = {r["metric_date"]: r for r in aggregate_ad_spend(pages)}
     assert set(rows) == {date(2026, 6, 8), date(2026, 6, 9)}
@@ -134,8 +135,8 @@ def test_aggregate_business_day_boundary_utc7():
 def test_aggregate_skips_txn_without_create_time():
     """缺 order_create_time 的交易无法归日，跳过（不崩、不算入任何桶）。"""
     pages = [_page([
-        {"fee_tax_breakdown": {"fee": {"gmv_max_ad_fee_amount": "99.00"}}},
-        _txn(datetime(2026, 6, 8, 9, 0), gmv_max="1.00"),
+        {"fee_tax_breakdown": {"fee": {"gmv_max_ad_fee_amount": "-99.00"}}},
+        _txn(datetime(2026, 6, 8, 9, 0), gmv_max="-1.00"),
     ])]
     rows = aggregate_ad_spend(pages)
     assert len(rows) == 1
@@ -145,9 +146,9 @@ def test_aggregate_skips_txn_without_create_time():
 def test_aggregate_splits_by_currency():
     """同业务日不同币种（来自不同 statement 的 statement 级 currency）分开成两行（不混算）。"""
     pages = [
-        _page([_txn(datetime(2026, 6, 8, 9, 0), gmv_max="100.00")],
+        _page([_txn(datetime(2026, 6, 8, 9, 0), gmv_max="-100.00")],
               currency="IDR", statement_id="s-idr"),
-        _page([_txn(datetime(2026, 6, 8, 9, 0), gmv_max="7.00")],
+        _page([_txn(datetime(2026, 6, 8, 9, 0), gmv_max="-7.00")],
               currency="USD", statement_id="s-usd"),
     ]
     rows = {r["currency"]: r for r in aggregate_ad_spend(pages)}

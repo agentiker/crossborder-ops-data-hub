@@ -48,23 +48,24 @@ def _page(transactions, *, currency="IDR", statement_id="s1"):
 
 def test_parse_promotes_columns_and_json_fallback():
     """提升列取 Decimal；非提升 fee/tax 子项进 JSON 兜底（保留原 string）。"""
+    # 真打口径：API fee 子项 + fee_tax_amount 为负数(=对卖家扣款)，落库翻正(成本量级)。
     fee = {
-        "platform_commission_amount": "100.00",
-        "referral_fee_amount": "30.00",
-        "transaction_fee_amount": "12.50",
-        "gmv_max_ad_fee_amount": "8.00",
-        "tap_shop_ads_commission": "3.00",
-        "affiliate_ads_commission_amount": "1.00",
-        # 非提升 → 仅进 JSON
-        "seller_growth_fee_amount": "2.20",
-        "credit_card_handling_fee_amount": "0.50",
+        "platform_commission_amount": "-100.00",
+        "referral_fee_amount": "-30.00",
+        "transaction_fee_amount": "-12.50",
+        "gmv_max_ad_fee_amount": "-8.00",
+        "tap_shop_ads_commission": "-3.00",
+        "affiliate_ads_commission_amount": "-1.00",
+        # 非提升 → 仅进 JSON（原样负数）
+        "seller_growth_fee_amount": "-2.20",
+        "credit_card_handling_fee_amount": "-0.50",
         "insurance_fee": "0",  # 零值剔除
     }
-    tax = {"vat_amount": "5.00", "gst_amount": "0"}
+    tax = {"vat_amount": "-5.00", "gst_amount": "0"}
     pages = [_page([
         _txn("t1", datetime(2026, 6, 8, 10, 0), fee=fee, tax=tax,
              settlement_amount="500.00", revenue_amount="650.00",
-             fee_tax_amount="155.00", shipping_cost_amount="20.00",
+             fee_tax_amount="-155.00", shipping_cost_amount="20.00",
              adjustment_amount="0"),
     ])]
     rows = parse_order_fees(pages)
@@ -74,23 +75,24 @@ def test_parse_promotes_columns_and_json_fallback():
     assert r["order_id"] == "o1"
     assert r["metric_date"] == date(2026, 6, 8)
     assert r["currency"] == "IDR"
-    # 提升列
+    # 提升列：fee 子项与 fee_tax_amount 翻正
     assert r["platform_commission_amount"] == Decimal("100.00")
     assert r["referral_fee_amount"] == Decimal("30.00")
     assert r["transaction_fee_amount"] == Decimal("12.50")
     assert r["gmv_max_fee"] == Decimal("8.00")
     assert r["tap_commission"] == Decimal("3.00")
     assert r["affiliate_commission"] == Decimal("1.00")
+    assert r["fee_tax_amount"] == Decimal("155.00")
+    # revenue/settlement/shipping/adjustment 保持原始符号
     assert r["settlement_amount"] == Decimal("500.00")
     assert r["revenue_amount"] == Decimal("650.00")
-    assert r["fee_tax_amount"] == Decimal("155.00")
     assert r["shipping_cost_amount"] == Decimal("20.00")
     assert r["adjustment_amount"] == Decimal("0")
-    # JSON 兜底：含全部非零 fee 子项（含已提升的，原样保真），剔除零值
-    assert r["fee_breakdown"]["seller_growth_fee_amount"] == "2.20"
-    assert r["fee_breakdown"]["credit_card_handling_fee_amount"] == "0.50"
+    # JSON 兜底：含全部非零 fee 子项（原样保真负号），剔除零值
+    assert r["fee_breakdown"]["seller_growth_fee_amount"] == "-2.20"
+    assert r["fee_breakdown"]["credit_card_handling_fee_amount"] == "-0.50"
     assert "insurance_fee" not in r["fee_breakdown"]
-    assert r["tax_breakdown"] == {"vat_amount": "5.00"}
+    assert r["tax_breakdown"] == {"vat_amount": "-5.00"}
 
 
 def test_parse_missing_fields_default_zero():
@@ -113,16 +115,18 @@ def test_parse_skips_txn_without_id():
     assert [r["transaction_id"] for r in rows] == ["t2"]
 
 
-def test_parse_preserves_negative():
-    """负值（退款冲回）原样保留，不取绝对值。"""
+def test_parse_flips_fee_sign():
+    """fee 翻符号：API 负数(扣款)→正成本；正值(退款冲回 credit)→负成本。adjustment 不翻、JSON 原样。"""
     pages = [_page([
         _txn("t1", datetime(2026, 6, 8, 10, 0),
-             fee={"platform_commission_amount": "-30.00"}, adjustment_amount="-5.00"),
+             fee={"platform_commission_amount": "30.00"},  # 正=credit/退款冲回
+             fee_tax_amount="-100.00", adjustment_amount="-5.00"),
     ])]
     r = parse_order_fees(pages)[0]
-    assert r["platform_commission_amount"] == Decimal("-30.00")
-    assert r["adjustment_amount"] == Decimal("-5.00")
-    assert r["fee_breakdown"]["platform_commission_amount"] == "-30.00"
+    assert r["platform_commission_amount"] == Decimal("-30.00")  # credit → 负成本
+    assert r["fee_tax_amount"] == Decimal("100.00")  # 负 → 正
+    assert r["adjustment_amount"] == Decimal("-5.00")  # adjustment 保持原符号
+    assert r["fee_breakdown"]["platform_commission_amount"] == "30.00"  # JSON 原样
 
 
 def test_parse_business_day_utc7():

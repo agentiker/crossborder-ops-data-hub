@@ -93,9 +93,12 @@ def parse_order_fees(transaction_pages: list[dict[str, Any]]) -> list[dict]:
                 "tax_breakdown": _nonzero_map(tax),
             }
             for src, col in PROMOTED_TXN_COLUMNS.items():
-                row[col] = _to_decimal(txn.get(src))
+                val = _to_decimal(txn.get(src))
+                # fee_tax_amount API 为负数(=对卖家扣款) → 翻正(成本量级)，与 profit/fee_rate 口径一致；
+                # revenue/settlement/shipping/adjustment 保持原始符号。
+                row[col] = -val if src == "fee_tax_amount" else val
             for src, col in PROMOTED_FEE_COLUMNS.items():
-                row[col] = _to_decimal(fee.get(src))
+                row[col] = -_to_decimal(fee.get(src))  # fee 子项同为负 → 翻正
             rows.append(row)
     return rows
 

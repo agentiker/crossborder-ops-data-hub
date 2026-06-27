@@ -155,15 +155,13 @@ def aggregate_ad_spend(transaction_pages: list[dict[str, Any]]) -> list[dict]:
                 datetime.fromtimestamp(int(create_ts), tz=timezone.utc).replace(tzinfo=None)
             )
             fee = (txn.get("fee_tax_breakdown") or {}).get("fee") or {}
-            gmv_max = _parse_fee(fee.get("gmv_max_ad_fee_amount"))
-            tap = _parse_fee(fee.get("tap_shop_ads_commission"))
-            affiliate = _parse_fee(fee.get("affiliate_ads_commission_amount"))
+            # 符号：生产真打确认 API fee 子项为负数(=对卖家扣款)，翻成正数(广告花费量级)，
+            # 与 order_fee_store / profit / fee_rate 的"为正=扣款"口径一致。
+            # 翻后仍为负的场景（退款冲回/credit）由下方 warning 监控。
+            gmv_max = -_parse_fee(fee.get("gmv_max_ad_fee_amount"))
+            tap = -_parse_fee(fee.get("tap_shop_ads_commission"))
+            affiliate = -_parse_fee(fee.get("affiliate_ads_commission_amount"))
 
-            # 符号：直接用解析原值累加，不取绝对值。
-            # 依据 202501 结算公式 settlement = revenue − shipping_cost − fee_tax_amount
-            # − adjustment_amount，且 fee_tax_amount = fee_tax_breakdown 各项之和，故 fee 子项
-            # 为正 = 对卖家扣款（即广告花费）。负值场景（如退款冲回）已用下方 warning 监控，
-            # 待真实数据确认。
             order_id = txn.get("order_id")
             for field, val in (
                 ("gmv_max_ad_fee_amount", gmv_max),
