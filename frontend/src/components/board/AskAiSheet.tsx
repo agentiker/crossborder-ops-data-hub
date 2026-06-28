@@ -49,9 +49,11 @@ export function AskAiSheet({
   const [liveSteps, setLiveSteps] = useState<ThinkingStep[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // 移动端 sheet 高度（vh）。两个吸附档：75（默认）/ 95（铺满）。拖拽时跟手设连续值，松手吸附。
+  // 移动端 sheet 高度（vh）。吸附档：75（默认）/ 95（铺满）；从 75 继续下拖到 CLOSE_AT 以下松手则关闭。
   const COLLAPSED = 75;
   const EXPANDED = 95;
+  const CLOSE_AT = 55; // 下拖低于此高度松手 → 关闭抽屉
+  const MIN_DRAG = 40; // 拖拽时允许的最低高度（给“下滑关闭”留出可视行程）
   const [sheetVh, setSheetVh] = useState(COLLAPSED);
   const dragRef = useRef<{ startY: number; startVh: number } | null>(null);
 
@@ -60,8 +62,8 @@ export function AskAiSheet({
   const abortRef = useRef<AbortController | null>(null);
   const sentFirstRef = useRef(false); // 防 StrictMode/重渲染重复发首问
 
-  // 顶部 handle 区的拖拽：往上拖 → 高度增大（铺满方向），松手吸附到最近档位。
-  // 用 vh 计算（拖拽位移 / 视口高 * 100），夹紧在 [COLLAPSED, EXPANDED]。
+  // 顶部 handle 区的拖拽：上拖 → 增高（铺满）；从默认档继续下拖 → 降低，松手低于 CLOSE_AT 则关闭。
+  // 用 vh 计算（拖拽位移 / 视口高 * 100），夹紧在 [MIN_DRAG, EXPANDED]。
   // movedRef 区分「拖拽」与「轻点」：拖过则吞掉随后的 click（touchend 后浏览器仍补发 click）。
   const movedRef = useRef(false);
   const onDragStart = (y: number) => {
@@ -73,14 +75,20 @@ export function AskAiSheet({
     if (!d) return;
     if (Math.abs(y - d.startY) > 4) movedRef.current = true;
     const deltaVh = ((d.startY - y) / window.innerHeight) * 100; // 上拖为正
-    const next = Math.max(COLLAPSED, Math.min(EXPANDED, d.startVh + deltaVh));
+    const next = Math.max(MIN_DRAG, Math.min(EXPANDED, d.startVh + deltaVh));
     setSheetVh(next);
   };
   const onDragEnd = () => {
     if (!dragRef.current) return;
     dragRef.current = null;
-    // 吸附到最近档位（中点为界）。
-    setSheetVh((v) => (v >= (COLLAPSED + EXPANDED) / 2 ? EXPANDED : COLLAPSED));
+    setSheetVh((v) => {
+      if (v < CLOSE_AT) {
+        onClose(); // 下拖足够低 → 关闭
+        return v;
+      }
+      // 否则吸附到最近档位（75/95 中点为界）。
+      return v >= (COLLAPSED + EXPANDED) / 2 ? EXPANDED : COLLAPSED;
+    });
   };
   const onHandleClick = () => {
     if (movedRef.current) {
