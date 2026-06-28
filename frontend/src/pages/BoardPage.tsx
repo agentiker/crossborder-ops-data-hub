@@ -801,6 +801,104 @@ function ProfitCard({
 /* ── 经营概览（照 fork BusinessOverview：MetricCard 行 + 分段 tab + 趋势图）──── */
 
 // fork MetricCard：图标+标题 / 大数值 / 涨跌行。涨跌行走后端真实环比（当期 vs 紧邻等长上期）：
+// 广告费构成弹窗：点击广告/ROAS 卡 ⓘ 打开。比 tooltip 空间大、且 fixed 居中不被滚动容器/卡片裁切。
+// 列清付费投放(GMV Max) / 达人带货佣金(TAP+联盟) 各多少 + 营销总支出 + ROAS 口径 + 结算状态。
+function AdSpendDialog({
+  ads,
+  onClose,
+}: {
+  ads: NonNullable<NonNullable<BoardData["overview"]>["ads"]>;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onEsc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onEsc);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onEsc);
+    };
+  }, [onClose]);
+
+  const complete = ads.complete !== false;
+  const asOf = ads.latest_covered_date ? ads.latest_covered_date.slice(5) : null;
+  const noPaid = ads.paid_ad_spend <= 0;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="广告费构成"
+      onClick={onClose}
+      className="fixed inset-0 z-[60] flex items-end justify-center bg-black/50 sm:items-center sm:p-4"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[86vh] w-full overflow-y-auto rounded-t-2xl bg-card p-5 shadow-xl sm:max-w-md sm:rounded-2xl"
+      >
+        <div className="mb-3 flex items-start justify-between">
+          <div>
+            <h3 className="text-base font-semibold text-foreground">广告费构成</h3>
+            <p className="mt-0.5 text-xs text-foreground-secondary">结算口径（成交后由平台结算）</p>
+          </div>
+          <button
+            type="button"
+            aria-label="关闭"
+            onClick={onClose}
+            className="-m-1 rounded-lg p-1 text-foreground-secondary transition-colors hover:bg-fill-shallow hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:p-2"
+          >
+            <X className="size-5" />
+          </button>
+        </div>
+
+        <div className="space-y-0.5">
+          <div className="flex items-center justify-between py-1.5">
+            <span className="text-sm text-foreground">
+              付费投放<span className="ml-1.5 text-xs text-foreground-tertiary">GMV Max 智能广告</span>
+            </span>
+            <span className="tabnum text-sm font-medium text-foreground">{fmtMoney(ads.paid_ad_spend)}</span>
+          </div>
+          <div className="flex items-center justify-between py-1.5">
+            <span className="text-sm text-foreground">
+              达人带货佣金<span className="ml-1.5 text-xs text-foreground-tertiary">成交分佣</span>
+            </span>
+            <span className="tabnum text-sm font-medium text-foreground">{fmtMoney(ads.creator_commission)}</span>
+          </div>
+          <div className="flex items-center justify-between py-1 pl-4">
+            <span className="text-xs text-foreground-secondary">· TAP（达人代运营）</span>
+            <span className="tabnum text-xs text-foreground-secondary">{fmtMoney(ads.tap_commission)}</span>
+          </div>
+          <div className="flex items-center justify-between py-1 pl-4">
+            <span className="text-xs text-foreground-secondary">· 联盟（开放达人）</span>
+            <span className="tabnum text-xs text-foreground-secondary">{fmtMoney(ads.affiliate_commission)}</span>
+          </div>
+          <div className="mt-1 flex items-center justify-between border-t border-border-shallow pt-2">
+            <span className="text-sm font-semibold text-foreground">营销总支出</span>
+            <span className="tabnum text-sm font-semibold text-foreground">{fmtMoney(ads.total_ad_spend)}</span>
+          </div>
+        </div>
+
+        <div className="mt-4 space-y-2 rounded-lg bg-fill-shallow p-3 text-xs leading-relaxed text-foreground-secondary">
+          <p>
+            <span className="font-medium text-foreground">ROAS 口径：</span>GMV ÷ 付费投放（仅 GMV Max）。TAP
+            与联盟都是达人带货佣金、成交才付、跟着 GMV 走，<span className="font-medium">不计入 ROAS</span>
+            （否则等于在算佣金率倒数）。{noPaid ? "本店未投 GMV Max，故 ROAS 留空。" : ""}
+          </p>
+          <p>
+            <span className="font-medium text-foreground">结算状态：</span>
+            {complete
+              ? "本窗口广告费已结算完整。"
+              : `广告费结算滞后约两周，近几天的单仍在结算填充${
+                  asOf ? `（数据截至 ${asOf}）` : ""
+                }，故数字偏低、ROAS 暂不可比。`}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // 升=绿↑、降=红↓、持平=灰−；change 为 null/undefined（上期无基准或旧后端无该字段）时整行不渲染，不臆造。
 function MetricCard({
   title,
@@ -853,6 +951,7 @@ type OverviewTab = "sales" | "orders" | "traffic" | "funnel";
 function BusinessOverview({ data, loading }: { data: BoardData | null; loading: boolean }) {
   const t = useChartTokens();
   const [activeTab, setActiveTab] = useState<OverviewTab>("sales");
+  const [adDialogOpen, setAdDialogOpen] = useState(false); // 广告费构成弹窗（点击广告/ROAS 卡 ⓘ 打开）
   const o = data?.overview.orders;
   const ads = data?.overview.ads;
   const ch = data?.overview.change;
@@ -868,25 +967,20 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
   const settlingNote = !adComplete && adAsOf ? `结算中·截至 ${adAsOf}` : null;
   // 有营销支出但付费投放(GMV Max)为 0 = 全靠达人带货、没投智能广告 → ROAS 无从谈起，诚实标注。
   const noPaidSpend = hasAdSpend && !!ads && ads.paid_ad_spend <= 0;
-  const adInfo =
-    hasAdSpend && ads ? (
-      <InfoTooltip
-        align="start"
-        content={`付费投放（仅 GMV Max 智能广告）${fmtMoney(ads.paid_ad_spend)} · 达人带货佣金（TAP+联盟，成交分佣）${fmtMoney(ads.creator_commission)}。ROAS 仅按付费投放算，达人佣金随成交走、不计入。${
-          !adComplete ? "广告费按结算口径、滞后数日，近几天仍在结算填充，数字偏低。" : ""
-        }`}
-      >
-        <Info className="h-3.5 w-3.5" />
-      </InfoTooltip>
-    ) : undefined;
-  const roasInfo = (
-    <InfoTooltip
-      align="start"
-      content="ROAS = GMV ÷ 付费投放（仅 GMV Max 智能广告）。TAP 与联盟都是达人带货佣金、成交才付、跟着 GMV 走，不计入分母（否则等于在算佣金率倒数）。未投 GMV Max → 留空不臆造。"
+  // 广告/ROAS 卡口径信息量大 → 点击 ⓘ 开居中弹窗（空间大、不被滚动容器/卡片裁切），不用易遮挡的 tooltip。
+  const adInfoBtn = ads ? (
+    <button
+      type="button"
+      aria-label="广告费构成说明"
+      className="-m-1 inline-flex items-center p-1 text-foreground-secondary transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:p-1.5"
+      onClick={(e) => {
+        e.stopPropagation();
+        setAdDialogOpen(true);
+      }}
     >
       <Info className="h-3.5 w-3.5" />
-    </InfoTooltip>
-  );
+    </button>
+  ) : undefined;
   const labels = pts.map((p) => p.date.slice(5));
 
   const axisX = (boundaryGap: boolean) => ({
@@ -1018,7 +1112,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           title="广告消耗"
           value={adCostValue}
           subtitle={hasAdSpend ? settlingNote ?? "结算口径·含达人佣金" : "暂无结算数据"}
-          info={adInfo}
+          info={hasAdSpend ? adInfoBtn : undefined}
           icon={<Megaphone size={14} />}
         />
         <MetricCard loading={loading} change={ch?.order_count} title="订单数" value={fmtInt(o?.order_count)} icon={<ShoppingCart size={14} />} />
@@ -1033,10 +1127,14 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           subtitle={
             noPaidSpend ? "未投 GMV Max（全靠达人带货）" : adComplete ? "仅付费投放" : settlingNote ?? "结算中·暂不可比"
           }
-          info={roasInfo}
+          info={adInfoBtn}
           icon={<Gauge size={14} />}
         />
       </div>
+
+      {adDialogOpen && ads && (
+        <AdSpendDialog ads={ads} onClose={() => setAdDialogOpen(false)} />
+      )}
 
       {/* 第四行：预估利润大卡（bare 内嵌，紧随 KPI、趋势图之前） */}
       <ProfitCard data={data} loading={loading} bare />
