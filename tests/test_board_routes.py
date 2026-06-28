@@ -197,6 +197,7 @@ def test_collect_sets_current_account_before_nested_data_calls(monkeypatch):
         lambda **kwargs: {
             "total_ad_spend": 0,
             "paid_ad_spend": 0,
+            "creator_commission": 0,
             "gmv_max_fee": 0,
             "tap_commission": 0,
             "affiliate_commission": 0,

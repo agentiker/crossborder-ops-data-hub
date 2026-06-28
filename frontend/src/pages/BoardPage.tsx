@@ -866,11 +866,13 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
   const adComplete = !ads || ads.complete !== false;
   const adAsOf = ads?.latest_covered_date ? ads.latest_covered_date.slice(5) : null;
   const settlingNote = !adComplete && adAsOf ? `结算中·截至 ${adAsOf}` : null;
+  // 有营销支出但付费投放(GMV Max)为 0 = 全靠达人带货、没投智能广告 → ROAS 无从谈起，诚实标注。
+  const noPaidSpend = hasAdSpend && !!ads && ads.paid_ad_spend <= 0;
   const adInfo =
     hasAdSpend && ads ? (
       <InfoTooltip
         align="start"
-        content={`付费投放（GMV Max+TAP）${fmtMoney(ads.paid_ad_spend)} · 达人佣金（CPS，成交分佣）${fmtMoney(ads.affiliate_commission)}。ROAS 仅按付费投放算，达人佣金随成交走、不计入。${
+        content={`付费投放（仅 GMV Max 智能广告）${fmtMoney(ads.paid_ad_spend)} · 达人带货佣金（TAP+联盟，成交分佣）${fmtMoney(ads.creator_commission)}。ROAS 仅按付费投放算，达人佣金随成交走、不计入。${
           !adComplete ? "广告费按结算口径、滞后数日，近几天仍在结算填充，数字偏低。" : ""
         }`}
       >
@@ -880,7 +882,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
   const roasInfo = (
     <InfoTooltip
       align="start"
-      content="ROAS = GMV ÷ 付费投放（GMV Max+TAP）。达人 CPS 佣金成交才付、跟着 GMV 走，不计入分母（否则等于在算佣金率倒数）。付费投放为 0 → 留空不臆造。"
+      content="ROAS = GMV ÷ 付费投放（仅 GMV Max 智能广告）。TAP 与联盟都是达人带货佣金、成交才付、跟着 GMV 走，不计入分母（否则等于在算佣金率倒数）。未投 GMV Max → 留空不臆造。"
     >
       <Info className="h-3.5 w-3.5" />
     </InfoTooltip>
@@ -1025,10 +1027,12 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
         <MetricCard loading={loading} title="ROI" value="—" subtitle="口径待定" icon={<Percent size={14} />} />
         <MetricCard
           loading={loading}
-          change={adComplete ? ch?.roas : undefined}
+          change={noPaidSpend || !adComplete ? undefined : ch?.roas}
           title="ROAS"
-          value={adComplete ? roasValue : "—"}
-          subtitle={adComplete ? "仅付费投放" : settlingNote ?? "结算中·暂不可比"}
+          value={noPaidSpend || !adComplete ? "—" : roasValue}
+          subtitle={
+            noPaidSpend ? "未投 GMV Max（全靠达人带货）" : adComplete ? "仅付费投放" : settlingNote ?? "结算中·暂不可比"
+          }
           info={roasInfo}
           icon={<Gauge size={14} />}
         />

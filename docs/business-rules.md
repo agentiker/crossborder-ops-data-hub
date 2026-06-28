@@ -172,12 +172,24 @@
 
 ### 6.1 ⚠️ 两类口径分开：付费投放 vs 达人佣金（2026-06-28 真打修正）
 
-真打 prod 店（`7494172960764429390`，授权完全 OK、60 结算单/3.4 万交易全可拉）揭示：该店「广告消耗」**99.5% 是联盟达人 CPS 佣金**，GMV Max 预算投流 = 0。**把 CPS 佣金当广告投放算 ROAS 会误导**——佣金是成交后按比例分佣、跟着 GMV 走、无撬动，`GMV ÷ 佣金` = 佣金率倒数，无"广告效率"含义。故拆两类：
+真打 prod 店（`7494172960764429390`，授权完全 OK、60 结算单/3.4 万交易全可拉）揭示：该店「广告消耗」**几乎全是达人带货佣金**，GMV Max 预算投流 = 0。**把成交分佣当广告投放算 ROAS 会误导**——佣金成交后按比例分、跟着 GMV 走、无撬动，`GMV ÷ 佣金` = 佣金率倒数，无"广告效率"含义。
 
-- **付费投放** `paid_ad_spend = gmv_max_fee + tap_commission`：预算/撬动型投放。**ROAS 只对它算**（`get_roas` 分母）；付费投放 = 0 → `roas=None`，诚实留空。
-- **达人佣金** `affiliate_commission`：CPS 分佣，单列展示、不进 ROAS。
-- 前端「广告消耗」卡 value 仍显营销总支出、`InfoTooltip` 拆「付费投放 X · 达人佣金 Y」；ROAS 卡注「仅付费投放」。广告环比（`change.ad_cost`）按付费投放算（与 ROAS 口径一致）。
-- **纠偏**：旧文档"广告消耗=0 是没接通 Finance scope"在此店**不成立**——授权是通的，付费投放真的≈0（达人主导店本就不怎么投流）。"是否接通"不能只看广告消耗低。
+**⚠️ 站内三项的本质（查证 + 客户澄清，2026-06-28）——只有 GMV Max 是付费投放：**
+
+| 字段 | 站内营销 | 本质 | 归类 |
+|------|----------|------|------|
+| `gmv_max_ad_fee_amount` | **GMV Max**（小店智能广告） | 设预算买曝光、AI 投流，**预算撬动型** | **付费投放** |
+| `tap_shop_ads_commission` | **TAP**（TikTok Affiliate Partner，机构代管达人） | 成交才付佣金（CPS），字段名带 "ads" 但本质是佣金 | 达人佣金 |
+| `affiliate_ads_commission_amount` | **联盟**（开放达人计划） | 成交才付佣金（CPS） | 达人佣金 |
+
+> 站外投流（TikTok Ads Manager 独立广告账户）走**另一套 Marketing API、不进 Shop 结算单**，本数据源（Finance statement）天然只有站内三项——与"目前只有站内投流"一致，非遗漏。
+
+故拆两类：
+- **付费投放** `paid_ad_spend = gmv_max_fee`（**仅 GMV Max**）：**ROAS 只对它算**（`get_roas` 分母）；未投 GMV Max → `paid_ad_spend=0 → roas=None`，前端 ROAS 标「未投 GMV Max（全靠达人带货）」，诚实留空。
+- **达人带货佣金** `creator_commission = tap_commission + affiliate_commission`：CPS 分佣，单列展示、不进 ROAS。
+- 前端「广告消耗」卡 value 仍显营销总支出、`InfoTooltip` 拆「付费投放（仅 GMV Max）X · 达人带货佣金（TAP+联盟）Y」；广告环比（`change.ad_cost`）按付费投放算（与 ROAS 口径一致）。
+- **纠偏 1（口径）**：早前误把 TAP 与 GMV Max 一起算"付费投放"——TAP 是 TikTok Affiliate **Partner**（达人联盟代运营、成交分佣），是佣金不是投放，已挪到达人佣金侧。
+- **纠偏 2（接通）**：旧文档"广告消耗=0 是没接通 Finance scope"在此店**不成立**——授权是通的，付费投放真的=0（达人主导店本就不投 GMV Max）。"是否接通"不能只看广告消耗低。
 
 ### 6.2 ⚠️ 结算滞后护栏（`complete` / `settled_through`）
 
@@ -269,4 +281,5 @@
 | 2026-06-27 | 费率告警业务规则落档（§7.1）：费率定义=官方扣费额÷订单GMV同批订单/含税不含物流、结算+及时双口径、双阈值+护栏、B2分项归因(交集费项·跨口径降级·80%覆盖)、配置参数表、触发vs诊断粒度分离 | 本文 §7.1、`services/fee_rate_{metrics,alerts}.py`、`flows/scan_fulfillment_alerts.py` |
 | 2026-06-27 | §7.1 补「类目轴为何暂缓」决策：真实缺口(单类目调佣被总费率稀释)但当前不做(数据薄/B1B2已覆盖普涨/需先接 get_product)，重启条件 + 届时须诊断展示不得独立触发 | 本文 §7.1 |
 | 2026-06-28 | 看板「近 30 天新品」卡：近30天上线在售品的每日销量曲线 + 单日破阈(=50,同爆单告警)界面提醒；飞书爆单告警(规则5)对新品标注 🌟，同阈不重复推送 | 本文 §4.4/§7、`services/order_metrics.py`、`services/hotsell_alerts.py`、`web/routes/board.py` |
-| 2026-06-28 | 广告口径拆分(付费投放 GMV Max+TAP vs 达人佣金 CPS)+ ROAS 只对付费投放；结算滞后护栏 complete/settled_through(ad_settle_lag_days=14)，近窗标「结算中」不显环比。真打纠偏:授权OK、付费投放真≈0(达人主导)、本周ROAS暴涨=结算滞后假象 | 本文 §6、`services/ad_metrics.py`、`web/routes/board.py`、`core/config.py` |
+| 2026-06-28 | 广告口径拆分 + ROAS 只对付费投放；结算滞后护栏 complete/settled_through(ad_settle_lag_days=14)，近窗标「结算中」不显环比。真打纠偏:授权OK、付费投放真≈0(达人主导)、本周ROAS暴涨=结算滞后假象 | 本文 §6、`services/ad_metrics.py`、`web/routes/board.py`、`core/config.py` |
+| 2026-06-28 | §6.1 修正 TAP 归类:站内三项只有 GMV Max 是付费投放,TAP(TikTok Affiliate Partner 机构代管达人)+联盟均为达人 CPS 佣金→`paid_ad_spend=仅gmv_max`、`creator_commission=tap+affiliate`;ROAS 未投 GMV Max 时标「未投 GMV Max」;附站内三项本质表+站外不在结算单说明 | 本文 §6.1、`services/ad_metrics.py`、前端广告卡 |

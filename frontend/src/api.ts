@@ -200,11 +200,12 @@ export interface BoardData {
     };
     inventory: { total_sku?: number; total_stock?: number; low_stock_count?: number };
     // 广告消耗（结算口径）：无结算数据时 total_ad_spend=0、roas=null，前端降级为「—」。
-    // 拆分两类：付费投放(paid_ad_spend=GMV Max+TAP，ROAS 口径) vs 达人佣金(affiliate_commission，CPS)。
+    // 拆两类：付费投放(paid_ad_spend=仅 GMV Max，ROAS 口径) vs 达人佣金(creator_commission=TAP+联盟，CPS)。
     // complete=false → 窗口落在结算滞后区，广告/ROAS 不完整，前端标注「结算中·截至 latest_covered_date」。
     ads?: {
       total_ad_spend: number;
       paid_ad_spend: number;
+      creator_commission: number;
       roas: number | null;
       gmv_max_fee: number;
       tap_commission: number;

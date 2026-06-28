@@ -230,11 +230,12 @@ async def _collect(
     }
     overview["ads"] = {
         "total_ad_spend": cur_ads["total_ad_spend"],
-        "paid_ad_spend": cur_ads["paid_ad_spend"],       # 付费投放（GMV Max+TAP），ROAS 口径
+        "paid_ad_spend": cur_ads["paid_ad_spend"],       # 付费投放 = 仅 GMV Max，ROAS 口径
+        "creator_commission": cur_ads["creator_commission"],  # 达人佣金 = TAP + 联盟（CPS）
         "roas": cur_roas["roas"],
         "gmv_max_fee": cur_ads["gmv_max_fee"],
         "tap_commission": cur_ads["tap_commission"],
-        "affiliate_commission": cur_ads["affiliate_commission"],  # 达人佣金（CPS）
+        "affiliate_commission": cur_ads["affiliate_commission"],
         "currency": cur_ads["currency"],
         # 结算滞后护栏：complete=False 时前端标注「结算中·近 N 天不完整」，settled_through=结算完整线
         "complete": cur_ads["complete"],
