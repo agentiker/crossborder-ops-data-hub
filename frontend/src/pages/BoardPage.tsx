@@ -121,6 +121,21 @@ export function BoardPage() {
 
   const canSwitch = !!data?.can_switch && (data?.scopes.length ?? 0) > 1;
 
+  // 区1 区头副说明：回显后端实际取数窗口（data.window，与卡片数字同源，比前端 range 更稳——
+  // DateRangeValue 无 preset label 拿不到「近7天」字样）。含今日时点明「当日累计」，精确时刻
+  // 交给经营概览卡头已有的 as_of 徽章，区头不重复。
+  const dateSectionHint = useMemo(() => {
+    const w = data?.window;
+    if (!w) return "下方数据均按上方所选日期范围统计。";
+    const md = (iso: string) => {
+      const [, m, d] = iso.split("-");
+      return `${Number(m)}/${Number(d)}`;
+    };
+    const span = w.start === w.end ? md(w.start) : `${md(w.start)} ~ ${md(w.end)}`;
+    const todayNote = w.includes_today ? "（含今日，为当日累计）" : "";
+    return `下方数据按所选日期 ${span} 统计${todayNote}。`;
+  }, [data?.window]);
+
   // 上划收起筛选栏（移动端省纵向空间）：内容区滚动驱动；带迟滞阈值防边界抖动。
   const [filtersCollapsed, setFiltersCollapsed] = useState(false);
   const onContentScroll = (e: UIEvent<HTMLDivElement>) => {
@@ -197,6 +212,8 @@ export function BoardPage() {
             </BoardCard>
           ) : (
             <>
+              {/* ── 区1：按所选日期（随上方日期筛选变化）── */}
+              <SectionHeader title="按所选日期" hint={dateSectionHint} />
               <NoDataBanner data={data} loading={loading} />
               <BusinessOverview data={data} loading={loading} />
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -211,7 +228,18 @@ export function BoardPage() {
                     country: region || undefined,
                   }}
                 />
+                <ChannelPie data={data} loading={loading} />
+              </div>
+
+              {/* ── 区2：实时·固定口径（不随日期筛选）── */}
+              <SectionHeader
+                accent
+                title="实时 · 固定口径"
+                hint="以下数据不随上方日期筛选变化：库存为当前快照、新品为独立近 60 天窗口、费率为固定评估/基准窗口、待发货为当前未发货订单。"
+              />
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                 <InventoryHealth data={data} loading={loading} />
+                <FeeRateMonitor data={data} loading={loading} />
               </div>
               <NewProducts
                 query={{
@@ -221,10 +249,6 @@ export function BoardPage() {
                 }}
                 reloadKey={reloadKey}
               />
-              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                <ChannelPie data={data} loading={loading} />
-                <FeeRateMonitor data={data} loading={loading} />
-              </div>
               <OrderSection data={data} loading={loading} />
             </>
           )}
@@ -262,6 +286,31 @@ function NoDataBanner({ data, loading }: { data: BoardData | null; loading: bool
 function BoardCard({ children }: { children: ReactNode }) {
   return (
     <div className="rounded-2xl border border-border-shallow bg-card p-5">{children}</div>
+  );
+}
+
+// 版面分区区头（区1 按所选日期 / 区2 实时·固定口径）。轻量、非卡片，贴 space-y-6 节奏
+// 浮在卡片之上。accent=true（区2）：左侧 info 蓝色条 + 极淡蓝底，克制地暗示「不随筛选」
+// （蓝在本项目 token 语义=监控/信息，非告警，正贴合固定口径的"实时监控"含义）。
+function SectionHeader({
+  title,
+  hint,
+  accent = false,
+}: {
+  title: ReactNode;
+  hint?: ReactNode;
+  accent?: boolean;
+}) {
+  return (
+    <div
+      className={
+        "rounded-lg px-3 py-2 " +
+        (accent ? "border-l-[3px] border-info bg-info/5" : "border-l-[3px] border-border-shallow")
+      }
+    >
+      <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+      {hint && <p className="mt-0.5 text-xs text-foreground-secondary">{hint}</p>}
+    </div>
   );
 }
 
