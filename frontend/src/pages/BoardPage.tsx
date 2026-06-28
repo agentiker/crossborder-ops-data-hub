@@ -1564,6 +1564,7 @@ function HotProducts({
 }) {
   const [rankBy, setRankBy] = useState<RankBy>("sales");
   const [openProduct, setOpenProduct] = useState<TopSku | null>(null); // 详情弹窗当前商品
+  const [expanded, setExpanded] = useState(false); // 默认折叠：先显 5 个，点「更多」展开后 5 个
   const raw = data?.top.items ?? [];
 
   const items = useMemo(() => {
@@ -1572,6 +1573,9 @@ function HotProducts({
     );
     return sorted.slice(0, 10);
   }, [raw, rankBy]);
+
+  // 切换排序时重置折叠，避免「按 GMV 已展开 → 切销量仍展开」的错位观感。
+  const visible = expanded ? items : items.slice(0, 5);
 
   // fork 排序含「按利润」；我方无利润数据源 → 仅保留 销量/GMV。
   const rankOptions: { id: RankBy; label: string }[] = [
@@ -1582,8 +1586,17 @@ function HotProducts({
   return (
     <BoardCard>
       <CardHead
-        title="爆款商品 TOP 10"
-        right={<TabPills tabs={rankOptions} value={rankBy} onChange={setRankBy} />}
+        title="爆款商品"
+        right={
+          <TabPills
+            tabs={rankOptions}
+            value={rankBy}
+            onChange={(v) => {
+              setRankBy(v);
+              setExpanded(false);
+            }}
+          />
+        }
       />
 
       {loading ? (
@@ -1592,7 +1605,7 @@ function HotProducts({
         <ChartEmpty loading={false} empty="该时段暂无销量数据" height={320} />
       ) : (
         <div className="space-y-1">
-          {items.map((p, index) => {
+          {visible.map((p, index) => {
             const rowKey = (p.product_id || p.sku_id || "") + index;
             const code = styleCodeLabel(p);
             const canOpen = !!p.product_id;
@@ -1631,6 +1644,18 @@ function HotProducts({
               </button>
             );
           })}
+          {items.length > 5 && (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="mt-1 flex w-full items-center justify-center gap-1 rounded-lg py-2 text-sm font-medium text-foreground-secondary transition-colors hover:bg-fill-shallow hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:py-2.5"
+            >
+              {expanded ? "收起" : `查看更多 ${items.length - 5} 个`}
+              <ChevronDown
+                className={"size-4 transition-transform " + (expanded ? "rotate-180" : "")}
+              />
+            </button>
+          )}
         </div>
       )}
 
