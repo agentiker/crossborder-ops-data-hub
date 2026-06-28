@@ -352,9 +352,10 @@ async def board_new_products(
     platform: str | None = Query(None),
     country: str | None = Query(None),
 ):
-    """「近 30 天新品」卡懒加载端点：返回近 30 天上线在售商品 + 每日销量曲线 + 爆单判定。
+    """「近 N 天新品」卡懒加载端点：返回近 N 天上线在售商品 + 每日销量曲线 + 爆单判定。
 
-    口径固定为「近 30 天上线 / 付款口径销量 / 爆单阈值 = settings.hotsell_daily_units_threshold」，
+    窗口 N = settings.new_product_lookback_days（默认 60）。口径「付款口径销量 / 爆单阈值 =
+    settings.hotsell_daily_units_threshold」，
     与飞书爆单告警同阈（见 docs/business-rules §4.4 / §7）。范围经权限闸夹紧，无数据则 available=False，
     不阻断看板其它卡。不塞进主 /board/data，保持首载快（与 product-detail 同策略）。
     """
@@ -368,7 +369,7 @@ async def board_new_products(
         return JSONResponse({"error": "forbidden", "detail": str(exc)}, status_code=403)
 
     as_of = business_today()
-    lookback_days = 30
+    lookback_days = settings.new_product_lookback_days
     threshold = settings.hotsell_daily_units_threshold
     try:
         items = get_new_product_trends(

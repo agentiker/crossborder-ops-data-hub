@@ -141,7 +141,7 @@ def test_hotsell_tags_new_product_with_star():
     assert "🌟 经典T恤" not in d.message
     assert "经典T恤 今日已售 55 件" in d.message
     # 有新品爆发 → 追加图例尾注
-    assert "🌟 = 近 30 天新品爆发" in d.message
+    assert "🌟 = 新上线爆款" in d.message
     by_id = {p["product_id"]: p for p in d.new_products}
     assert by_id["p1"]["is_new"] is True and by_id["p2"]["is_new"] is False
 
@@ -150,6 +150,6 @@ def test_hotsell_no_new_product_message_unchanged():
     """不传 new_product_ids（默认空集）→ 无 🌟、无尾注，存量爆单文案逐字不变（回归锁）。"""
     d = _decision(None)
     assert "🌟" not in d.message
-    assert "近 30 天新品爆发" not in d.message
+    assert "新上线爆款" not in d.message
     assert "新款连衣裙 今日已售 60 件" in d.message
     assert all(p["is_new"] is False for p in d.new_products)

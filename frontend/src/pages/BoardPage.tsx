@@ -1513,8 +1513,9 @@ function HotProducts({
   );
 }
 
-/* ── 近 30 天新品（懒加载：每个新品日销量曲线 + 单日破阈爆单提醒）────────────────
-   口径见 docs/business-rules §4.4：近 30 天上线在售商品、付款口径销量、爆单阈值与飞书告警同源
+/* ── 近 N 天新品（懒加载：每个新品日销量曲线 + 单日破阈爆单提醒）────────────────
+   窗口天数由端点 window.lookback_days 下发（settings.new_product_lookback_days，默认 60）。
+   口径见 docs/business-rules §4.4：近 N 天上线在售商品、付款口径销量、爆单阈值与飞书告警同源
    （settings.hotsell_daily_units_threshold=50）。界面爆单徽章由端点确定性计算，不依赖告警 timer。 */
 
 // 短日期 MM-DD（series.date 为 ISO yyyy-mm-dd）。
@@ -1642,7 +1643,17 @@ function BurstBadge({ peak }: { peak: number }) {
   );
 }
 
-function NewProductRow({ p, rank, threshold }: { p: NewProduct; rank: number; threshold: number }) {
+function NewProductRow({
+  p,
+  rank,
+  threshold,
+  lookbackDays,
+}: {
+  p: NewProduct;
+  rank: number;
+  threshold: number;
+  lookbackDays: number;
+}) {
   const [open, setOpen] = useState(false);
   const code =
     p.sku_count > 1 ? `${p.sku_count} 个规格` : p.seller_sku ? `款号 ${p.seller_sku}` : null;
@@ -1688,7 +1699,7 @@ function NewProductRow({ p, rank, threshold }: { p: NewProduct; rank: number; th
           <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-foreground-secondary">
             {p.source_create_time && <span>上线日 {mmdd(p.source_create_time.slice(0, 10))}</span>}
             {p.peak_date && <span>峰值日 {mmdd(p.peak_date)} · {p.peak_units} 件</span>}
-            <span>近 30 天累计 {fmtInt(p.total_units)} 件</span>
+            <span>近 {lookbackDays} 天累计 {fmtInt(p.total_units)} 件</span>
           </div>
         </div>
       )}
@@ -1699,6 +1710,7 @@ function NewProductRow({ p, rank, threshold }: { p: NewProduct; rank: number; th
 function NewProducts({ query, reloadKey }: { query: BoardQuery; reloadKey: number }) {
   const [data, setData] = useState<NewProduct[] | null>(null);
   const [threshold, setThreshold] = useState(50);
+  const [lookbackDays, setLookbackDays] = useState(60); // 新品窗口天数，由端点 window.lookback_days 下发
   const [loading, setLoading] = useState(true);
   const [available, setAvailable] = useState(true);
 
@@ -1711,6 +1723,7 @@ function NewProducts({ query, reloadKey }: { query: BoardQuery; reloadKey: numbe
         if (ctrl.signal.aborted) return;
         setData(res.items);
         setThreshold(res.threshold);
+        setLookbackDays(res.window.lookback_days);
         setAvailable(res.available);
       })
       .catch(() => {
@@ -1734,7 +1747,7 @@ function NewProducts({ query, reloadKey }: { query: BoardQuery; reloadKey: numbe
         title={
           <span className="inline-flex items-center gap-2">
             <Sparkles className="size-4 text-positive" aria-hidden />
-            近 30 天新品
+            近 {lookbackDays} 天新品
           </span>
         }
         right={
@@ -1759,7 +1772,7 @@ function NewProducts({ query, reloadKey }: { query: BoardQuery; reloadKey: numbe
       ) : !data || !data.length ? (
         <div className="flex flex-col items-center gap-1 py-10 text-center">
           <Sparkles className="size-6 text-foreground-tertiary" aria-hidden />
-          <div className="text-sm text-foreground-secondary">近 30 天暂无起量的新上线款号</div>
+          <div className="text-sm text-foreground-secondary">近 {lookbackDays} 天暂无起量的新上线款号</div>
           <div className="text-xs text-foreground-tertiary">
             新款上线并产生销量后，会在此追踪曲线并提醒单日爆单
           </div>
@@ -1767,7 +1780,13 @@ function NewProducts({ query, reloadKey }: { query: BoardQuery; reloadKey: numbe
       ) : (
         <div className="space-y-2">
           {data.map((p, i) => (
-            <NewProductRow key={p.product_id} p={p} rank={i + 1} threshold={threshold} />
+            <NewProductRow
+              key={p.product_id}
+              p={p}
+              rank={i + 1}
+              threshold={threshold}
+              lookbackDays={lookbackDays}
+            />
           ))}
         </div>
       )}

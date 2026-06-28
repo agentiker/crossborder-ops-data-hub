@@ -184,6 +184,10 @@ class Settings(BaseSettings):
     # 当日去重：同一商品同一天只报一次；跨天自动重置（见 services/hotsell_alerts）。
     hotsell_daily_units_threshold: int = 50
 
+    # 「新品」窗口：source_create_time 落近 N 天即算新品（看板新品卡 + 爆单告警🌟标注同口径，
+    # 见 docs/business-rules §4.4）。看板卡、/board/new-products 端点、scan flow 告警标注三处共用。
+    new_product_lookback_days: int = 60
+
     # 补货公式默认参数（运营可经 replenishment_config 表按范围覆盖，见 services/replenishment_config）。
     # 目标备货 = 近 velocity_days 天销量 × 系数；普通 SKU 用 normal、超级爆品(人工标记)用 superhot。
     # 补货量 = 目标备货 − 可用库存 − 在途，≤0 剔除。

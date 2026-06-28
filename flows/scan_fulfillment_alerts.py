@@ -396,9 +396,9 @@ def _scan_hotsell(session, *, account, open_id, scope, scope_id, dry_run: bool) 
         platform=scope.platform, country=scope.country, shop_ids=scope.shop_ids or None,
         session=session,
     )
-    # 近 30 天上线的新品集合 → 文案对命中的爆单商品标注 🌟「新品爆发」（同阈不重复推送）
+    # 近 N 天上线的新品集合 → 文案对命中的爆单商品标注 🌟「新品爆发」（同阈不重复推送）
     new_ids = get_new_product_ids(
-        as_of=today,
+        as_of=today, lookback_days=settings.new_product_lookback_days,
         platform=scope.platform, country=scope.country, shop_ids=scope.shop_ids or None,
         session=session,
     )
