@@ -75,11 +75,33 @@ def get_profit_card(
         by_kind = {row.profit_kind: _pack(row) for row in query.all()}
         estimated = by_kind.get("estimated")
         settled = by_kind.get("settled")
+
+        # 覆盖天数护栏：预聚合表缺天会静默少算（aggregate_profit 漏跑/未回填）。统计 estimated
+        # 行在窗口内实际覆盖的不同业务日数,与期望天数对比,让"数据不全"在前端可见。
+        cov_q = session.query(
+            func.count(func.distinct(DailyProfit.metric_date))
+        ).filter(
+            DailyProfit.metric_date >= start_date,
+            DailyProfit.metric_date <= end_date,
+            DailyProfit.profit_kind == "estimated",
+        )
+        if platform:
+            cov_q = cov_q.filter(DailyProfit.platform == platform)
+        if country:
+            cov_q = cov_q.filter(DailyProfit.country == country)
+        if shop_ids:
+            cov_q = cov_q.filter(DailyProfit.shop_id.in_(shop_ids))
+        covered_days = int(cov_q.scalar() or 0)
+        expected_days = (end_date - start_date).days + 1
+
         return {
             "available": estimated is not None,
             "currency": settings.profit_currency,
             "estimated": estimated,
             "settled": settled,
+            "expected_days": expected_days,
+            "covered_days": covered_days,
+            "coverage_complete": covered_days >= expected_days,
         }
     finally:
         if own:

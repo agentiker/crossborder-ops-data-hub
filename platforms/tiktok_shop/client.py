@@ -2,6 +2,7 @@
 
 import json
 import logging
+import random
 import time
 from typing import Optional
 
@@ -11,6 +12,21 @@ from core.redact import redact_secrets
 logger = logging.getLogger(__name__)
 
 PLATFORM = "tiktok_shop"
+
+# TikTok 业务级限流码（code 字段，非 HTTP）。命中即退避重试，而非当普通错误抛。
+RATE_LIMIT_CODES = {"36009002", 36009002}
+
+# 指数退避参数（秒）：base*2^attempt 封顶 cap，叠加 [0,jitter) 随机抖动避免多店同时重试惊群。
+_BACKOFF_BASE = 1.0
+_BACKOFF_CAP = 16.0
+_BACKOFF_JITTER = 1.0
+
+
+def _backoff_seconds(attempt: int) -> float:
+    """第 attempt 次失败后的退避时长：1s→2s→4s→8s→16s(封顶) + 抖动。"""
+    return min(_BACKOFF_BASE * (2 ** attempt), _BACKOFF_CAP) + random.uniform(
+        0, _BACKOFF_JITTER
+    )
 
 
 class TikTokShopClient(BaseAPIClient):
@@ -306,7 +322,7 @@ class TikTokShopClient(BaseAPIClient):
         path: str,
         params: dict = None,
         data: dict = None,
-        max_retries: int = 2,
+        max_retries: int = 4,
         version: str = "202309",
     ) -> dict:
         """TikTok request with access token header.
@@ -360,6 +376,11 @@ class TikTokShopClient(BaseAPIClient):
             if body_str:
                 headers = {**headers, "Content-Type": "application/json"}
 
+            def _resign() -> None:
+                # 退避数秒后重试前刷新时间戳并重新签名，避免 TikTok 因 timestamp/sign 过期拒绝。
+                params["timestamp"] = str(int(time.time()))
+                params["sign"] = self._generate_sign(path, params, body=body_str)
+
             for attempt in range(max_retries + 1):
                 resp = self.session.request(
                     method,
@@ -375,6 +396,16 @@ class TikTokShopClient(BaseAPIClient):
                     headers["x-tts-access-token"] = self.access_token or ""
                     params["sign"] = self._generate_sign(path, params, body=body_str)
                     continue
+                # HTTP 429（限流）/ 5xx（服务端临时故障）：指数退避后重试，重签时间戳。
+                if (resp.status_code == 429 or resp.status_code >= 500) and attempt < max_retries:
+                    wait = _backoff_seconds(attempt)
+                    logger.warning(
+                        "TikTok %s %s -> %s，退避 %.1fs 后重试 (attempt %d/%d)",
+                        method, path, resp.status_code, wait, attempt + 1, max_retries,
+                    )
+                    time.sleep(wait)
+                    _resign()
+                    continue
                 if resp.status_code >= 400:
                     logger.error(
                         "TikTok %s %s -> %s: %s",
@@ -383,6 +414,16 @@ class TikTokShopClient(BaseAPIClient):
                 resp.raise_for_status()
                 result = resp.json()
                 bcode = result.get("code")
+                # 业务级限流码：同样退避重试，而非直接抛错。
+                if bcode in RATE_LIMIT_CODES and attempt < max_retries:
+                    wait = _backoff_seconds(attempt)
+                    logger.warning(
+                        "TikTok %s %s -> code=%s 限流，退避 %.1fs 后重试 (attempt %d/%d)",
+                        method, path, bcode, wait, attempt + 1, max_retries,
+                    )
+                    time.sleep(wait)
+                    _resign()
+                    continue
                 if result.get("code") not in (0, "0", None):
                     raise Exception(f"API错误: {result.get('message')}")
                 ok = True

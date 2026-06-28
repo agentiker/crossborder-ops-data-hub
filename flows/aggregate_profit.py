@@ -76,6 +76,31 @@ def aggregate_profit_flow(
 
 
 if __name__ == "__main__":
+    import argparse
+    from datetime import date as _date
+    from functools import partial
+
     from flows._shop_discovery import run_for_all_shops
 
-    run_for_all_shops(aggregate_profit_flow)
+    parser = argparse.ArgumentParser(
+        description="预估利润聚合。无参数=聚合前一日（timer 行为）；回填用 --days 或 --date。"
+    )
+    g = parser.add_mutually_exclusive_group()
+    g.add_argument("--days", type=int, metavar="N",
+                   help="回填最近 N 天（含今日往前数 N 天的业务日，逐日聚合）")
+    g.add_argument("--date", type=str, metavar="YYYY-MM-DD",
+                   help="只聚合指定业务日")
+    args = parser.parse_args()
+
+    if args.date:
+        target = _date.fromisoformat(args.date)
+        run_for_all_shops(partial(aggregate_profit_flow, target_date=target))
+    elif args.days:
+        # 含今日往前 N 天：today-(N-1) … today（业务日，逐日聚合）。
+        today = business_today()
+        for i in range(args.days):
+            d = today - timedelta(days=i)
+            print(f"=== 回填业务日 {d}（{i + 1}/{args.days}）===")
+            run_for_all_shops(partial(aggregate_profit_flow, target_date=d))
+    else:
+        run_for_all_shops(aggregate_profit_flow)

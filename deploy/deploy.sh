@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # Data Hub 生产部署（systemd user timer）。在目标机仓库根或任意处跑：
-#   ./deploy/deploy.sh [--pull] [--sync-skill] [--restart-web] [--restart-gateway] [--restart-tunnel] [--no-business-timers] [--dry-run]
+#   ./deploy/deploy.sh [--pull] [--sync-skill] [--restart-web] [--restart-gateway] [--restart-tunnel] [--no-business-timers] [--no-alert-timers] [--dry-run]
 #
 # --no-business-timers：过审前用。只 enable 基建 timer（审计锚定/备份/校验链）+ data-hub，
 #   不 enable 业务同步/聚合/告警 timer——避免部署顺手把业务任务全拉起（含 scan-alerts 误发告警）。
 #   不会 disable 已启用的业务 timer（只是"不新启"）；要停回过审前用 docs/ops-runbook.md 的 disable 循环。
+#
+# --no-alert-timers：中间态。enable 同步/聚合 timer（数据先跑起来），但跳过会主动给客户发飞书的
+#   告警类 timer（scan-alerts 超时/低库存、push-replenishment 采购单）。过审前「想跑数据、不发客户」用它。
+#   与 --no-business-timers 互斥语义上更细：前者只挡告警两枚，后者挡掉全部业务 timer。
 #
 # 做什么（幂等）：
 #   1) （--pull）git pull
@@ -27,7 +31,7 @@ UNIT_DST="$HOME/.config/systemd/user"
 ENV_FILE="$REPO_DIR/.env"
 UV="$(command -v uv 2>/dev/null || echo "$HOME/.local/bin/uv")"
 
-PULL=0; SYNC_SKILL=0; RESTART_WEB=0; RESTART_GW=0; RESTART_TUNNEL=0; NO_BIZ_TIMERS=0; DRY=0
+PULL=0; SYNC_SKILL=0; RESTART_WEB=0; RESTART_GW=0; RESTART_TUNNEL=0; NO_BIZ_TIMERS=0; NO_ALERT_TIMERS=0; DRY=0
 for a in "$@"; do case "$a" in
   --pull) PULL=1 ;;
   --sync-skill) SYNC_SKILL=1 ;;
@@ -35,12 +39,15 @@ for a in "$@"; do case "$a" in
   --restart-gateway) RESTART_GW=1 ;;
   --restart-tunnel) RESTART_TUNNEL=1 ;;
   --no-business-timers) NO_BIZ_TIMERS=1 ;;
+  --no-alert-timers) NO_ALERT_TIMERS=1 ;;
   --dry-run) DRY=1 ;;
   *) echo "未知参数：$a" >&2; exit 2 ;;
 esac; done
 
 # 过审前只起这些基建 timer（审计锚定/备份/校验链）；其余 data-* 视为业务 timer。
 INFRA_TIMERS="data-anchor-audit.timer data-backup-db.timer data-verify-audit-chain.timer"
+# 会主动给客户发飞书的告警类 timer：--no-alert-timers 时跳过（数据照跑、不发客户）。
+ALERT_TIMERS="data-scan-alerts.timer data-push-replenishment.timer"
 
 run() { echo "+ $*"; [ "$DRY" -eq 1 ] || "$@"; }
 
@@ -104,6 +111,12 @@ for t in "$UNIT_SRC"/*.timer; do
     case " $INFRA_TIMERS " in
       *" $name "*) : ;;  # 基建 timer，照常 enable
       *) echo "  跳过业务 timer：${name}（--no-business-timers）"; continue ;;
+    esac
+  fi
+  # 中间态：只挡会给客户发飞书的告警类 timer，同步/聚合照常 enable。
+  if [ "$NO_ALERT_TIMERS" -eq 1 ]; then
+    case " $ALERT_TIMERS " in
+      *" $name "*) echo "  跳过客户告警 timer：${name}（--no-alert-timers）"; continue ;;
     esac
   fi
   run systemctl --user enable --now "$name"

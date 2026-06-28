@@ -29,10 +29,14 @@ SORT_FIELD = "order_create_time"
 SORT_ORDER = "ASC"
 
 
-def _resolve_window() -> tuple[int, int]:
-    """按 order_create_time 取 [今天 − lookback, 今天] 的 Unix 秒窗口（全量替换，不用游标）。"""
+def _resolve_window(lookback_days: Optional[int] = None) -> tuple[int, int]:
+    """按 order_create_time 取 [今天 − lookback, 今天] 的 Unix 秒窗口（全量替换，不用游标）。
+
+    lookback_days 不为空则覆盖 settings.unsettled_lookback_days（回填可拉更长窗口）。
+    """
     now = datetime.now(timezone.utc)
-    start = now - timedelta(days=settings.unsettled_lookback_days)
+    days = lookback_days if lookback_days is not None else settings.unsettled_lookback_days
+    start = now - timedelta(days=days)
     return int(start.timestamp()), int(now.timestamp())
 
 
@@ -152,10 +156,11 @@ def sync_unsettled_fees_flow(
     shop_id: Optional[str] = None,
     seller_id: Optional[str] = None,
     account_id: Optional[str] = None,
+    lookback_days: Optional[int] = None,
 ):
-    """未结算预估费用同步主流程。"""
+    """未结算预估费用同步主流程。lookback_days 不为空 = 覆盖默认回看窗口（回填用）。"""
     log_egress_ip()
-    search_time_ge, search_time_lt = _resolve_window()
+    search_time_ge, search_time_lt = _resolve_window(lookback_days)
     pages = fetch_unsettled(
         search_time_ge=search_time_ge,
         search_time_lt=search_time_lt,
@@ -180,6 +185,18 @@ def sync_unsettled_fees_flow(
 
 
 if __name__ == "__main__":
+    import argparse
+    from functools import partial
+
     from flows._shop_discovery import run_for_all_shops
 
-    run_for_all_shops(sync_unsettled_fees_flow)
+    parser = argparse.ArgumentParser(
+        description="未结算预估费用同步（全量替换）。回填用 --lookback-days N 覆盖默认窗口。"
+    )
+    parser.add_argument("--lookback-days", type=int, metavar="N",
+                        help="覆盖 settings.unsettled_lookback_days，拉最近 N 天未结算窗口")
+    args = parser.parse_args()
+
+    flow = (partial(sync_unsettled_fees_flow, lookback_days=args.lookback_days)
+            if args.lookback_days else sync_unsettled_fees_flow)
+    run_for_all_shops(flow)

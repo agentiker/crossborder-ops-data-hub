@@ -209,3 +209,31 @@ def test_get_profit_card(session):
     assert card["estimated"]["gmv"] == 100.0
     assert card["estimated"]["gross_profit"] == 60.0  # 100-10-5-20-5
     assert card["settled"] is None
+    # 单日窗口、1 天有数据 → 覆盖完整
+    assert card["expected_days"] == 1
+    assert card["covered_days"] == 1
+    assert card["coverage_complete"] is True
+
+
+def test_get_profit_card_coverage_incomplete(session):
+    """窗口 7 天但只聚合了 1 天 → coverage_complete=False（缺天可见，不静默少算）。"""
+    from datetime import timedelta
+
+    from services.metrics_store import upsert_daily_profit
+    from services.profit_summary import get_profit_card
+
+    rec = ProfitRecordInput(
+        metric_date=D, platform="tiktok_shop", shop_id="S1", account_id=ACC,
+        gmv=Decimal("100"), commission_fee=Decimal("10"), ad_cost=Decimal("5"),
+        product_cost=Decimal("20"), refund_amount=Decimal("5"),
+        currency="CNY", profit_kind="estimated",
+    )
+    upsert_daily_profit(session, rec)
+    session.commit()
+
+    start = D - timedelta(days=6)
+    card = get_profit_card(start_date=start, end_date=D, platform="tiktok_shop", session=session)
+    assert card["available"] is True       # 有数据
+    assert card["expected_days"] == 7
+    assert card["covered_days"] == 1
+    assert card["coverage_complete"] is False

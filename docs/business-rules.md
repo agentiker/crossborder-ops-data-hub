@@ -26,6 +26,15 @@
 - 只统计已付款（`paid_time` 非空 / 对应状态）的订单。
 - 报告里 GMV 缩写展示（`Rp xxK/M/B`）只在前端展示层，后端返回原值。
 
+### 2.1 看板「预估利润卡」GMV ≠「经营概览」GMV（口径不同，非 bug）
+
+代码：`services/profit_summary.py:get_profit_card` ← 预聚合表 `fact_profit_daily`（`flows/aggregate_profit` 写入）。
+
+- **经营概览 GMV**：实时直查 `orders`，**付款口径**（仅 `paid_time` 非空），完整窗口。
+- **利润卡 GMV**：读预聚合表，**下单口径**——含**货到付款（COD）在途订单**（COD 主导市场约 75% 单在送达前 `paid_time` 为空，付款口径会漏掉，故利润聚合改按下单口径，见 `services/profit_aggregation`）。
+- 两者量级本就不同，前端 GMV 行加 `<Info>` tooltip 注明「含 COD 下单口径」，避免客户误判汇率/算错。
+- **覆盖天数护栏**：利润卡读预聚合表，若 `aggregate_profit` 漏跑/未回填某天，会**静默少算**。`get_profit_card` 返回 `expected_days`（窗口应有天数）/`covered_days`（estimated 行实际覆盖的不同业务日）/`coverage_complete`；前端在 `coverage_complete=false` 时显 `TriangleAlert` + 「数据不完整：近 N 天仅 M 天已聚合」横幅，让缺失可见而非静默。**根治靠 `aggregate_profit` timer 常态跑 + 回填**（`uv run python -m flows.aggregate_profit --days 30`）。
+
 ---
 
 ## 3. 订单同步（增量）

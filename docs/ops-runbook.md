@@ -68,6 +68,17 @@ systemctl --user restart openclaw-gateway.service     # 改 openclaw.json 后，
 #    不 enable 业务同步/聚合/告警 timer，避免顺手把 scan-alerts 拉起误发告警。
 ./deploy/deploy.sh --restart-web --no-business-timers
 
+# 中间态：想让数据跑起来验证、但绝不给客户发飞书 → --no-alert-timers。
+#   enable 8 个同步/聚合 timer，只跳过 scan-alerts / push-replenishment 两枚客户告警。
+./deploy/deploy.sh --restart-web --no-alert-timers
+
+# 历史回填（不破坏游标增量；可反复跑。回填高频打 API，client 已内置指数退避+jitter：
+#   遇 HTTP 429 / 5xx / 业务限流码 36009002 自动退避重试 1s→2s→4s→8s，无需手动节流）
+~/.local/bin/uv run python -m flows.sync_orders --since-days 30
+~/.local/bin/uv run python -m flows.sync_ad_spend --since-days 30
+~/.local/bin/uv run python -m flows.sync_unsettled_fees                 # 可选 --lookback-days N
+~/.local/bin/uv run python -m flows.aggregate_profit --days 30          # 或 --date YYYY-MM-DD 补单日
+
 # 仅前端改动可绕开 deploy.sh（不触发 timer enable）：git pull + 直接构建 frontend/dist（见 §2.5 / deploy-hp skill）
 
 # 若忘了加 --no-business-timers（或老脚本），跑完手动把业务 timer 停回过审前：

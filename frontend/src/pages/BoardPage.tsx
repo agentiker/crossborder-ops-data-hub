@@ -5,6 +5,7 @@ import {
   DollarSign,
   Gauge,
   Globe,
+  Info,
   Megaphone,
   Percent,
   Search,
@@ -12,9 +13,11 @@ import {
   ShoppingCart,
   Store,
   TrendingUp,
+  TriangleAlert,
 } from "lucide-react";
 import { api, type BoardData, type LowStockItem, type TopSku } from "@/api";
 import { DateRangePicker, type DateRangeValue } from "@/components/board/DateRangePicker";
+import { InfoTooltip } from "@/components/ui/tooltip";
 import { EChart, useChartTokens } from "@/components/EChart";
 import {
   DEMO_ORDERS,
@@ -229,7 +232,7 @@ function BoardCard({ children }: { children: ReactNode }) {
   );
 }
 
-function CardHead({ title, right }: { title: string; right?: ReactNode }) {
+function CardHead({ title, right }: { title: ReactNode; right?: ReactNode }) {
   return (
     <div className="mb-4 flex items-center justify-between">
       <h2 className="text-base font-semibold text-foreground">{title}</h2>
@@ -578,6 +581,8 @@ function ProfitCard({
   const empty = !p?.available ? "暂无利润数据（需接生产店并跑聚合）" : "";
   // 商品成本未录入（product_cost≈0）→ 利润/利润率虚高，明确标注「未扣商品成本」，不展示误导性利润率。
   const costMissing = !!est && (!est.product_cost || est.product_cost === 0);
+  // 覆盖天数护栏：预聚合表缺天 → 利润静默少算。有数据但覆盖不全时显告警，让缺失可见。
+  const coverageIncomplete = !!p?.available && p?.coverage_complete === false;
   const detail: { label: string; value: number | undefined }[] = [
     { label: "GMV", value: est?.gmv },
     { label: "扣点", value: est?.commission_fee },
@@ -588,7 +593,18 @@ function ProfitCard({
   const body = (
     <>
       <CardHead
-        title="预估利润（折 CNY）"
+        title={
+          <span className="inline-flex items-center gap-1.5">
+            预估利润（折 CNY）
+            {coverageIncomplete && (
+              <InfoTooltip
+                content={`利润数据不完整：近 ${p?.expected_days ?? "?"} 天仅 ${p?.covered_days ?? 0} 天已聚合，其余待补全，当前金额偏低。`}
+              >
+                <TriangleAlert className="h-4 w-4 text-warning" />
+              </InfoTooltip>
+            )}
+          </span>
+        }
         right={
           <span className="text-xs text-foreground-secondary">
             GMV − 扣点 − 广告 − 成本 − 退货
@@ -630,11 +646,24 @@ function ProfitCard({
           <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
             {detail.map((d) => (
               <div key={d.label} className="flex items-center justify-between text-sm">
-                <span className="text-foreground-secondary">{d.label}</span>
+                <span className="inline-flex items-center gap-1 text-foreground-secondary">
+                  {d.label}
+                  {d.label === "GMV" && (
+                    <InfoTooltip content="包含货到付款（COD）在途订单，按下单口径统计；故与上方「经营概览」的已付款口径金额量级不同。">
+                      <Info className="h-3.5 w-3.5" />
+                    </InfoTooltip>
+                  )}
+                </span>
                 <span className="tabnum text-foreground">{fmtMoneyCny(d.value)}</span>
               </div>
             ))}
           </div>
+          {coverageIncomplete && (
+            <div className="rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning">
+              ⚠️ 利润数据不完整：近 {p?.expected_days ?? "?"} 天仅 {p?.covered_days ?? 0} 天已聚合，
+              其余待补全，当前金额偏低。
+            </div>
+          )}
           {costMissing && (
             <div className="rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning">
               ⚠️ 商品成本未录入，利润为「未扣商品成本」口径、偏高；录入成本后方为真实毛利。

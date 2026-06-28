@@ -173,6 +173,11 @@ export interface BoardData {
     currency: string;
     estimated: ProfitBreakdown | null;
     settled: ProfitBreakdown | null;
+    // 覆盖天数护栏：窗口应有 expected_days 天，预聚合表实际覆盖 covered_days 天。
+    // coverage_complete=false 时前端显「数据不完整」告警（缺天静默少算的可见化）。
+    expected_days?: number;
+    covered_days?: number;
+    coverage_complete?: boolean;
   };
   // 费率监控（实时算、复用 B1 及时口径）。status：normal 正常 / alert 异常升高 / insufficient 数据积累中。
   fee_rate?: FeeRateMonitor;

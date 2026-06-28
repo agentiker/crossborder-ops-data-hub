@@ -36,9 +36,17 @@ def _resolve_window(
     shop_id: Optional[str],
     seller_id: Optional[str],
     account_id: Optional[str],
+    since_days: Optional[int] = None,
 ) -> tuple[int, int]:
-    """Return (create_time_ge, create_time_lt) Unix seconds for this run."""
+    """Return (create_time_ge, create_time_lt) Unix seconds for this run.
+
+    since_days 不为空时为显式回填：start = now - since_days 天（忽略游标），end = now；
+    跑完仍照常更新游标（不破坏后续增量）。默认 None = 游标增量行为。
+    """
     now = datetime.now(timezone.utc)
+    if since_days is not None:
+        start = now - timedelta(days=since_days)
+        return int(start.timestamp()), int(now.timestamp())
     cursor = get_cursor(
         session,
         platform=TIKTOK_PLATFORM,
@@ -163,8 +171,9 @@ def sync_orders_flow(
     shop_id: Optional[str] = None,
     seller_id: Optional[str] = None,
     account_id: Optional[str] = None,
+    since_days: Optional[int] = None,
 ):
-    """订单增量同步主流程。"""
+    """订单增量同步主流程。since_days 不为空 = 显式回填该天数（不破坏游标增量）。"""
     log_egress_ip()
     session = SessionLocal()
     try:
@@ -174,6 +183,7 @@ def sync_orders_flow(
             shop_id=shop_id,
             seller_id=seller_id,
             account_id=account_id,
+            since_days=since_days,
         )
     finally:
         session.close()
@@ -202,6 +212,18 @@ def sync_orders_flow(
 
 
 if __name__ == "__main__":
+    import argparse
+    from functools import partial
+
     from flows._shop_discovery import run_for_all_shops
 
-    run_for_all_shops(sync_orders_flow)
+    parser = argparse.ArgumentParser(
+        description="订单同步。无参数=游标增量；回填用 --since-days N（忽略游标拉最近 N 天，跑完仍更新游标）。"
+    )
+    parser.add_argument("--since-days", type=int, metavar="N",
+                        help="忽略游标，回填最近 N 天订单")
+    args = parser.parse_args()
+
+    flow = (partial(sync_orders_flow, since_days=args.since_days)
+            if args.since_days else sync_orders_flow)
+    run_for_all_shops(flow)
