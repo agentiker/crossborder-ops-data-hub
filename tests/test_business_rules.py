@@ -57,6 +57,15 @@ def test_get_rules_missing_doc_degrades(monkeypatch, tmp_path):
     assert r["available"] is False
 
 
+def test_get_rules_carries_audience_note():
+    # 受众提示随内容下发：提醒 AI 滤掉技术细节、用老板能懂的话转述
+    r = business_rules.get_rules("2")
+    assert "audience_note" in r
+    assert "老板" in r["audience_note"] or "运营" in r["audience_note"]
+    # 目录路径也带
+    assert "audience_note" in business_rules.get_rules()
+
+
 def test_tool_registered():
     assert "ops_business_rules" in TOOL_NAMES
 

@@ -24,6 +24,14 @@ _DOC_PATH = Path(__file__).resolve().parents[1] / "docs" / "business-rules.md"
 # 模块级缓存：(mtime, sections, intro)；mtime 变化即重解析（本地改文档免重启）。
 _cache: tuple[float, list[dict], str] | None = None
 
+# 随返回内容一起下发的受众提示：文档是给开发者写的，含表名/字段/代码/命令。提醒调用方
+# （对话 AI）转述给老板/运营时只取业务口径、滤掉技术细节。即使对话历史被裁剪、只剩这条
+# 工具结果，提示也跟着内容走（与 chat SYSTEM_PROMPT 的受众约束互为冗余）。
+_AUDIENCE_NOTE = (
+    "以下是给开发者看的内部文档，含数据库表名/字段名/代码路径/命令等技术细节。"
+    "回答老板或运营时，只转述业务含义与口径，务必滤掉这些技术名词，用大白话表达。"
+)
+
 # 二级标题行：## <编号>. <标题>  或  ## <标题>（无编号时用 slug 兜底 id）
 _H2 = re.compile(r"^##\s+(?P<title>.+?)\s*$")
 _NUM_PREFIX = re.compile(r"^(?P<num>\d+(?:\.\d+)*)\.?\s+(?P<rest>.+)$")
@@ -121,6 +129,7 @@ def get_rules(section: str | None = None) -> dict:
                     "available": True,
                     "section": {"id": s["id"], "title": s["title"]},
                     "content": s["body"],
+                    "audience_note": _AUDIENCE_NOTE,
                 }
         # 未命中：落到目录，不报错（模型可据 toc 改选）
     return {
@@ -128,4 +137,5 @@ def get_rules(section: str | None = None) -> dict:
         "intro": intro,
         "toc": [{"id": s["id"], "title": s["title"]} for s in sections],
         "note": "未指定或未匹配章节，返回引言与目录；如需某节细则，按 toc 的 id 再次调用并传 section。",
+        "audience_note": _AUDIENCE_NOTE,
     }
