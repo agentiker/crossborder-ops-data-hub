@@ -90,14 +90,6 @@
        本身滚动。dvh 跟随可视区，地址栏收起后补满；旧浏览器忽略本行、回落上面的 100%。 */
     min-height: 100dvh;
   }
-  /* iOS 26 scroll runway（见下方 @supports 块）：body 顶部多出一段可滚动空间，
-     #root 用负 margin 把内容视觉拉回顶部，sticky 顶栏不受影响（负 margin 只改布局起点，
-     不脱离文档流）。runway 让 Safari 进入「非零滚动」状态，从而能在工具栏区 composite
-     真实像素而非回退灰——这是侧栏 SPA 软导航后底部栏不发灰的关键。仅 iOS Safari 启用。
-     ⚠️ 副作用：路由切换时 JS scrollTo(runway) 会让内容下移约 --safari-runway(62px)，
-     sticky 顶栏仍吸附顶部，用户上滑可看回顶。这是社区唯一已知的触发器（1ar.io 2026-05），
-     无内容跳动的方案不存在（Apple 定性为 by design）。真机实测若副作用不可接受，把
-     --safari-runway 设为 0 即完全回退到「发灰」现状。 */
   html {
     /* 背景与 body 同色（hsl(var(--background))）：iOS Safari 底部半透明工具栏会采样页面边缘色，
        html 在安全区/回弹露出的也是这层——统一成页面底色,底部栏与页面融为一体不发灰。 */
@@ -114,29 +106,19 @@
   }
 }
 
-/* iOS 26 Safari 底部工具栏上色——双管齐下：
-   (A) 采样诱饵 #ios-toolbar-tint：fixed 不可见带色条，供 Safari 渲染时采样（整页加载/直接访问/刷新有效）。
-   (B) scroll runway：body 顶部多出 --safari-runway(≈62px) 可滚动空间，#root 负 margin 抵消使视觉顶部不变。
-       作用是让 SPA 软导航后文档仍处于「非零滚动」状态——iOS 26 在 scrollY=0 时工具栏用回退色，
-       只有非零滚动并合成后才能显示真实像素。路由切换时 JS scrollTo(runway) 触发合成。
-   两套都只在 -webkit-touch-callout（≈iOS Safari）启用，避免影响桌面/安卓。
-   ⚠️ runway 是社区 1ar.io 唯一公开的「根治」形态（2026-05）；诱饵阈值见 jahir.dev/andesco。 */
+/* iOS 26 Safari 底部工具栏「采样诱饵」：
+   iOS 26 起 Safari 不再读 theme-color，改为渲染时采样靠近视口底边的 fixed/sticky 元素背景色
+   来给底部工具栏上色（液态玻璃，by design）。我们的页面底边无稳定带色 fixed 元素 → 工具栏回落
+   默认灰。放一个不可见的 fixed 诱饵专供采样，背景=页面底色，让底部栏与页面融为一体。
+   尺寸阈值（社区实测）：bottom<4px / width>88% / min-height>2px 才能压过 body 被优先采样。
+   只在支持 -webkit-touch-callout（≈iOS Safari）时启用，避免影响桌面/安卓。
+   z-index:-1 沉到页面内容之下：被内容盖住不挡视觉，仅在底部空白处露出（与 body 同色不可见）。
+   pointer-events:none：纯采样诱饵，不挡交互。
+   ⚠️ 已知局限（2026-06-29，搁置）：此诱饵对「整页加载/直接访问/刷新」有效，但对 SPA 软导航
+   （侧栏点页切换）无效——iOS 26 软导航后不重采样工具栏，故侧栏切入仍会发灰。试过 5 种 hack
+   （静态 theme-color / JS 重写 theme-color / 重插诱饵 DOM / 路由后微滚动）均未解；该问题 Apple
+   无文档、各点版本行为不一。彻底根治需 PWA 装主屏（系统栏消失）。勿再单点死磕。 */
 @supports (-webkit-touch-callout: none) {
-  :root {
-    --safari-runway: 62px;
-  }
-  html {
-    /* 让文档始终可滚出 runway 那段空间（不钉死视口高）。overflow-y:auto 已由默认值保证。 */
-  }
-  body {
-    /* 顶部让出 runway，文档总高 = 内容 + runway，scrollY 可达 runway。 */
-    padding-top: var(--safari-runway);
-  }
-  #root {
-    /* 负 margin 把内容视觉拉回顶部 0（等于抵消 body 的 padding-top）。
-       负 margin 不脱离文档流、不破坏内部 sticky（sticky 相对最近滚动祖先=html，top:0 仍吸附视口顶）。 */
-    margin-top: calc(-1 * var(--safari-runway));
-  }
   #ios-toolbar-tint {
     position: fixed;
     bottom: 3px;
