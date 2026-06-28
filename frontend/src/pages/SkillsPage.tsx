@@ -29,9 +29,9 @@ export function SkillsPage() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      {/* 页头：tab + 说明 */}
-      <header className="sticky top-0 z-50 flex h-[68px] shrink-0 items-center justify-between gap-2 border-b border-border-shallow bg-background px-4 sm:px-6">
+    <div className="flex flex-1 flex-col">
+      {/* 页头：tab + 说明（文档滚动：桌面 sticky 贴顶，移动端随内容滚走、靠全局顶栏导航） */}
+      <header className="z-40 flex h-[68px] shrink-0 items-center justify-between gap-2 border-b border-border-shallow bg-background px-4 sm:px-6 lg:sticky lg:top-0">
         <div className="flex items-center gap-7">
           <TabButton active={tab === "hub"} onClick={() => setTab("hub")}>
             技能中枢（{TOOL_SKILLS.length}）
@@ -50,8 +50,8 @@ export function SkillsPage() {
         </div>
       </header>
 
-      {/* 内容 */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+      {/* 内容（文档级滚动：不再内层 overflow，自然撑高让 body 滚动 → iOS 下滑收栏沉浸） */}
+      <div className="flex-1 p-4 sm:p-6">
         <div className="mx-auto max-w-[1200px]">
           {/* 分类筛选 */}
           <div className="mb-6 flex flex-wrap gap-2">

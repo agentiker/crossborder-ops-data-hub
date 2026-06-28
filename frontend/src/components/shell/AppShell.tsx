@@ -80,11 +80,11 @@ export function AppShell() {
   }
 
   return (
-    <div className="grid h-full grid-cols-1 lg:grid-cols-[auto_minmax(0,1fr)]">
-      {/* 桌面固定侧栏（可收起：宽度由 collapsed 驱动，列宽 auto 跟随） */}
+    <div className="grid grid-cols-1 lg:grid-cols-[auto_minmax(0,1fr)]">
+      {/* 桌面侧栏：sticky 贴顶留位（文档滚动时不动），自身满屏高、内部可独立滚长会话列表 */}
       <aside
         className={cn(
-          "hidden border-r border-border-shallow bg-fill-shallow transition-[width] duration-300 lg:flex lg:flex-col lg:overflow-hidden",
+          "sticky top-0 hidden h-screen border-r border-border-shallow bg-fill-shallow transition-[width] duration-300 lg:flex lg:flex-col lg:overflow-hidden",
           collapsed ? "lg:w-16" : "lg:w-[280px]",
         )}
       >
@@ -118,9 +118,9 @@ export function AppShell() {
         />
       </aside>
 
-      <main className="flex min-h-0 flex-col overflow-hidden">
-        {/* 移动顶栏（顶部留状态栏/刘海安全区，viewport-fit=cover 下内容不被系统栏压住） */}
-        <div className="flex shrink-0 items-center gap-2 border-b border-border-shallow px-4 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] lg:hidden">
+      <main className="flex min-h-[100dvh] flex-col">
+        {/* 移动顶栏：sticky 贴顶常驻（文档滚动时不动），顶部留状态栏/刘海安全区 */}
+        <div className="sticky top-0 z-40 flex shrink-0 items-center gap-2 border-b border-border-shallow bg-background px-4 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] lg:hidden">
           <button
             onClick={() => setMobileOpen(true)}
             className="rounded-lg p-1.5 text-foreground-secondary hover:bg-fill"
@@ -131,10 +131,10 @@ export function AppShell() {
           <span className="font-display font-semibold">数据中枢</span>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-hidden">
+        <div className="flex flex-1 flex-col">
           <Suspense
             fallback={
-              <div className="flex h-full items-center justify-center text-sm text-foreground-tertiary">
+              <div className="flex flex-1 items-center justify-center text-sm text-foreground-tertiary">
                 加载中…
               </div>
             }

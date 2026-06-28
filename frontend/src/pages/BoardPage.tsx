@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, createContext, useContext, type ReactNode, type UIEvent } from "react";
+import { useEffect, useMemo, useState, createContext, useContext, type ReactNode } from "react";
 import {
   ArrowUpDown,
   Calendar,
@@ -141,18 +141,22 @@ export function BoardPage() {
     return `下方数据按所选日期 ${span} 统计${todayNote}。`;
   }, [data?.window]);
 
-  // 上划收起筛选栏（移动端省纵向空间）：内容区滚动驱动；带迟滞阈值防边界抖动。
+  // 上划收起筛选栏（移动端省纵向空间）：文档级滚动改监听 window.scrollY；带迟滞阈值防边界抖动。
   const [filtersCollapsed, setFiltersCollapsed] = useState(false);
-  const onContentScroll = (e: UIEvent<HTMLDivElement>) => {
-    const top = e.currentTarget.scrollTop;
-    setFiltersCollapsed((prev) => (top > 40 ? true : top < 10 ? false : prev));
-  };
+  useEffect(() => {
+    const onScroll = () => {
+      const top = window.scrollY;
+      setFiltersCollapsed((prev) => (top > 40 ? true : top < 10 ? false : prev));
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   return (
     <AskAiContext.Provider value={setAskQ}>
-    <section className="flex h-full flex-col">
-      {/* Header（照 fork DashboardPage：h-[68px] + 底边） */}
-      <header className="sticky top-0 z-50 flex h-[68px] shrink-0 items-center justify-between gap-2 border-b border-border-shallow bg-background px-4">
+    <section className="flex flex-1 flex-col">
+      {/* Header（文档滚动：桌面 sticky 贴顶，移动端随内容滚走、靠全局顶栏导航） */}
+      <header className="z-40 flex h-[68px] shrink-0 items-center justify-between gap-2 border-b border-border-shallow bg-background px-4 lg:sticky lg:top-0">
         <div className="flex min-w-0 flex-1 items-center gap-1">
           <h1 className="truncate text-lg font-medium leading-6 text-foreground">运营看板</h1>
         </div>
@@ -200,8 +204,8 @@ export function BoardPage() {
         </div>
       </div>
 
-      {/* Content（照 fork：max-w-[1400px] + 满宽概览 + 2 列 + 满宽底部段） */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6" onScroll={onContentScroll}>
+      {/* Content（文档级滚动：去内层 overflow，自然撑高让 body 滚动 → iOS 下滑收栏沉浸） */}
+      <div className="flex-1 p-4 sm:p-6">
         <div className="mx-auto max-w-[1400px] space-y-6">
           {error ? (
             <BoardCard>
@@ -1463,15 +1467,20 @@ function ProductDetailDialog({
     };
   }, []);
 
-  // Esc：先关灯箱，再关弹窗
+  // Esc：先关灯箱，再关弹窗；打开期间锁背景滚动（文档级滚动下防背景透穿）
   useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const onEsc = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (lightbox) setLightbox(false);
       else onClose();
     };
     window.addEventListener("keydown", onEsc);
-    return () => window.removeEventListener("keydown", onEsc);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onEsc);
+    };
   }, [lightbox, onClose]);
 
   // 懒加载：打开时拉详情（渠道 + 各 SKU）

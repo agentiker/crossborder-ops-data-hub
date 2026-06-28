@@ -97,7 +97,6 @@ export function ChatPage() {
   const [liveSteps, setLiveSteps] = useState<ThinkingStep[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
   const loadedRef = useRef<number | null>(null);
 
   // 会话切换由 URL /c/:id 驱动；loadedRef 防止「发消息后导航到新 id」时重复加载。
@@ -129,8 +128,9 @@ export function ChatPage() {
       });
   }, [convId]);
 
+  // 文档级滚动：流式追加时滚到文档底，让最新消息可见（输入框 sticky 钉在视口底不挡）。
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    window.scrollTo({ top: document.body.scrollHeight });
   }, [messages, liveText, liveSteps, streaming]);
 
   async function send(text: string) {
@@ -201,7 +201,7 @@ export function ChatPage() {
   // ── 首页 launcher（空态）：照 fork App 的 chat 分支组合 WelcomeScreen + ChatInput + QuickActions ──
   if (isEmpty) {
     return (
-      <section className="flex flex-col h-full">
+      <section className="flex flex-1 flex-col">
         <div className="flex-1 flex flex-col items-center justify-center pb-24 px-4 sm:px-6 md:px-8">
           <div className="w-full max-w-[1038px] flex flex-col items-center">
             <WelcomeScreen userName={who} />
@@ -221,9 +221,9 @@ export function ChatPage() {
 
   // ── 会话视图：照 fork ChatPage 版式（h-[68px] 头 + max-w-4xl 消息区 gap-9 + sticky 输入）──
   return (
-    <section className="flex flex-col h-full">
-      {/* Header */}
-      <header className="flex items-center justify-between gap-2 px-4 h-[68px] shrink-0 border-b border-border-shallow sticky z-50 top-0 bg-background-solid">
+    <section className="flex flex-1 flex-col">
+      {/* Header（文档滚动：桌面 sticky 贴顶；移动端随内容滚走、靠全局顶栏导航） */}
+      <header className="z-40 flex items-center justify-between gap-2 px-4 h-[68px] shrink-0 border-b border-border-shallow bg-background-solid lg:sticky lg:top-0">
         <div className="flex items-center gap-1 flex-1 min-w-0">
           <div className="flex-1 flex flex-col justify-center min-w-0">
             <h1 className="text-lg font-medium text-foreground leading-6 truncate">
@@ -233,8 +233,8 @@ export function ChatPage() {
         </div>
       </header>
 
-      {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      {/* Messages（文档级滚动：去内层 overflow，随 body 滚动） */}
+      <div className="flex-1">
         <div className="mx-auto w-full max-w-4xl px-0 py-3 pb-24 md:py-6 md:px-4 md:pb-32">
           <div className="px-1.5 md:px-6">
             <div className="flex flex-col gap-9 pb-20 pt-2 transition-[min-height] duration-500 ease-out mx-auto w-full max-w-4xl">

@@ -66,8 +66,8 @@ export function ScheduledPage() {
   );
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="sticky top-0 z-50 flex h-[68px] shrink-0 items-center justify-between gap-2 border-b border-border-shallow bg-background px-4 sm:px-6">
+    <div className="flex flex-1 flex-col">
+      <header className="z-40 flex h-[68px] shrink-0 items-center justify-between gap-2 border-b border-border-shallow bg-background px-4 sm:px-6 lg:sticky lg:top-0">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <h1 className="truncate text-lg font-semibold tracking-tight text-foreground">定时任务</h1>
           <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
@@ -95,7 +95,7 @@ export function ScheduledPage() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+      <div className="flex flex-1 flex-col p-4 sm:p-6">
         {tasks.length === 0 ? (
           // 空态：Hero 在剩余空间垂直居中，模板区 mt-auto 钉底（照 fork ScheduledPage 空态版式）
           <div className="mx-auto flex h-full min-h-full max-w-[1100px] flex-col">

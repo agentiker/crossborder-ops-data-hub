@@ -201,7 +201,7 @@ export function AdminPage() {
   if (!me.is_boss) return <Navigate to="/" replace />;
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="flex-1">
       <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
         <PageHeader
           title="用户权限管理"
