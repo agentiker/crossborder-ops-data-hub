@@ -106,7 +106,7 @@ export function AppShell() {
       )}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-[70] flex w-[280px] flex-col border-r border-border-shallow bg-background transition-transform duration-300 lg:hidden",
+          "fixed inset-y-0 left-0 z-[70] flex w-[280px] flex-col border-r border-border-shallow bg-background pt-[env(safe-area-inset-top)] transition-transform duration-300 lg:hidden",
           mobileOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
@@ -119,8 +119,8 @@ export function AppShell() {
       </aside>
 
       <main className="flex min-h-0 flex-col overflow-hidden">
-        {/* 移动顶栏 */}
-        <div className="flex shrink-0 items-center gap-2 border-b border-border-shallow px-4 py-2.5 lg:hidden">
+        {/* 移动顶栏（顶部留状态栏/刘海安全区，viewport-fit=cover 下内容不被系统栏压住） */}
+        <div className="flex shrink-0 items-center gap-2 border-b border-border-shallow px-4 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] lg:hidden">
           <button
             onClick={() => setMobileOpen(true)}
             className="rounded-lg p-1.5 text-foreground-secondary hover:bg-fill"
