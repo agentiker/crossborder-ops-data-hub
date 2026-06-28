@@ -13,11 +13,14 @@ export function InfoTooltip({
   children,
   className,
   side = "top",
+  align = "center",
 }: {
   content: React.ReactNode;
   children: React.ReactNode;
   className?: string;
   side?: "top" | "bottom";
+  // 水平对齐：center 居中（默认）；start 气泡左缘贴触发点向右展开（用于靠左、左侧被侧栏/容器裁剪处）；end 反之。
+  align?: "center" | "start" | "end";
 }) {
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef<HTMLSpanElement>(null);
@@ -55,8 +58,11 @@ export function InfoTooltip({
         <span
           role="tooltip"
           className={cn(
-            "absolute left-1/2 z-50 w-56 -translate-x-1/2 rounded-lg border border-border-shallow bg-background px-3 py-2 text-xs leading-relaxed text-foreground shadow-lg",
+            "absolute z-50 w-56 rounded-lg border border-border-shallow bg-background px-3 py-2 text-xs leading-relaxed text-foreground shadow-lg",
             side === "top" ? "bottom-full mb-2" : "top-full mt-2",
+            align === "center" && "left-1/2 -translate-x-1/2",
+            align === "start" && "left-0",
+            align === "end" && "right-0",
           )}
         >
           {content}

@@ -723,7 +723,10 @@ function ProfitCard({
               pct={100}
               tone="base"
               info={
-                <InfoTooltip content="按下单时间统计，含货到付款（COD）尚未付款的在途订单，所以会比上方「经营概览」里只算已付款的 GMV 大。">
+                <InfoTooltip
+                  align="start"
+                  content="按下单时间统计，含货到付款（COD）尚未付款的在途订单，所以会比上方「经营概览」里只算已付款的 GMV 大。"
+                >
                   <Info className="h-3.5 w-3.5" />
                 </InfoTooltip>
               }

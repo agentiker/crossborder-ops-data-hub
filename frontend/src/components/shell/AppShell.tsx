@@ -25,6 +25,21 @@ export function AppShell() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [mobileOpen, setMobileOpen] = useState(false);
+  // 桌面侧栏收起态（仅 lg+ 生效），localStorage 持久化，跨刷新记住用户偏好。
+  const [collapsed, setCollapsed] = useState(
+    () => typeof localStorage !== "undefined" && localStorage.getItem("sidebar-collapsed") === "1",
+  );
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem("sidebar-collapsed", next ? "1" : "0");
+      } catch {
+        // localStorage 不可用（隐私模式等）时静默忽略，状态仍在内存生效。
+      }
+      return next;
+    });
+  }, []);
 
   const refreshConversations = useCallback(() => {
     api.conversations().then((r) => setConversations(r.items)).catch(() => {});
@@ -65,10 +80,21 @@ export function AppShell() {
   }
 
   return (
-    <div className="grid h-full grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)]">
-      {/* 桌面固定侧栏 */}
-      <aside className="hidden border-r border-border-shallow bg-fill-shallow lg:flex lg:flex-col lg:overflow-hidden">
-        <SidebarContent me={me} conversations={conversations} onRefresh={refreshConversations} />
+    <div className="grid h-full grid-cols-1 lg:grid-cols-[auto_minmax(0,1fr)]">
+      {/* 桌面固定侧栏（可收起：宽度由 collapsed 驱动，列宽 auto 跟随） */}
+      <aside
+        className={cn(
+          "hidden border-r border-border-shallow bg-fill-shallow transition-[width] duration-300 lg:flex lg:flex-col lg:overflow-hidden",
+          collapsed ? "lg:w-16" : "lg:w-[280px]",
+        )}
+      >
+        <SidebarContent
+          me={me}
+          conversations={conversations}
+          onRefresh={refreshConversations}
+          collapsed={collapsed}
+          onToggleCollapse={toggleCollapsed}
+        />
       </aside>
 
       {/* 移动抽屉 */}
