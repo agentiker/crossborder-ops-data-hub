@@ -85,10 +85,22 @@ export interface TrendPoint {
 
 export interface TopSku {
   sku_id?: string;
+  product_id?: string;
   product_name?: string;
   sku_name?: string;
+  seller_sku?: string; // 款号（同商品多 SKU 时取其一，配合 sku_count 显示）
+  sku_count?: number; // 该商品的 SKU/规格数；>1 时前端显「N 个规格」而非单一款号
   units_sold: number;
   gmv?: number;
+  image_url?: string; // 主图缩略图（爆款小图，可空 → 前端占位）
+}
+
+// 单品渠道 4 分（达人/自营素材/商品卡/店铺页）。available=false → 该商品暂无渠道数据。
+export interface ProductChannels {
+  channels: { key: string; label: string; gmv: number; pct: number }[];
+  total_gmv: number;
+  currency: string | null;
+  available: boolean;
 }
 
 export interface LowStockItem {
@@ -283,6 +295,18 @@ export const api = {
     if (q.platform) params.set("platform", q.platform);
     if (q.country) params.set("country", q.country);
     return getJSON<BoardData>(`/board/data?${params.toString()}`);
+  },
+  // 单品渠道 4 分（懒加载）：点击爆款卡某商品时才请求。窗口/范围与 boardData 同源。
+  productChannels: (productId: string, q: BoardQuery = {}) => {
+    const params = new URLSearchParams();
+    params.set("product_id", productId);
+    if (q.start) params.set("start_date", q.start);
+    if (q.end) params.set("end_date", q.end);
+    if (q.period) params.set("period", q.period);
+    if (q.scope) params.set("scope", q.scope);
+    if (q.platform) params.set("platform", q.platform);
+    if (q.country) params.set("country", q.country);
+    return getJSON<ProductChannels>(`/board/product-channels?${params.toString()}`);
   },
   adminRoles: () => getJSON<{ items: RoleRow[] }>("/api/admin/roles"),
   adminScopes: () => getJSON<{ items: AdminScopeOption[] }>("/api/admin/scopes"),

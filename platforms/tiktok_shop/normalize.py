@@ -219,14 +219,17 @@ def _min_sku_price(skus: list[dict]) -> tuple[Optional[Decimal], Optional[str]]:
 def to_domain_products(
     products: list[dict],
     price_skus_by_id: Optional[dict[str, list[dict]]] = None,
+    images_by_id: Optional[dict[str, str]] = None,
 ) -> list[DomainProduct]:
     """products/search 的 products[] → list[DomainProduct]（丢无 id 项，清洗最低价/时间）。
 
     price_skus_by_id：{product_id: 商品详情的 skus[]}，用于取含税 sale_price 算 min_price
     （products/search 不回 sale_price）。某商品缺映射时回退用 search 自带 skus 的税前价。
+    images_by_id：{product_id: 主图缩略图 URL}（来自商品详情 main_images，看板爆款小图）。
     sku_count 始终以 search 的 skus 为准（枚举口径不变）。
     """
     price_skus_by_id = price_skus_by_id or {}
+    images_by_id = images_by_id or {}
     items: list[DomainProduct] = []
     for p in products:
         product_id = p.get("id")
@@ -244,6 +247,7 @@ def to_domain_products(
                 sku_count=len(skus),
                 min_price=min_price,
                 currency=currency,
+                main_image_url=images_by_id.get(product_id),
                 source_create_time=_epoch_to_dt(p.get("create_time")),
                 source_update_time=_epoch_to_dt(p.get("update_time")),
             )

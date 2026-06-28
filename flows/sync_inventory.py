@@ -65,7 +65,7 @@ def fetch_product_prices(
     单个商品取价失败只跳过（该商品 min_price 回退到 search 税前价），不阻断整体。
     """
     if not product_ids:
-        return {}
+        return {}, {}
     client = TikTokShopClient(
         country=country,
         shop_id=shop_id,
@@ -73,19 +73,37 @@ def fetch_product_prices(
         account_id=account_id,
     )
     prices: dict[str, list[dict[str, Any]]] = {}
+    images: dict[str, str] = {}
     for pid in product_ids:
         try:
             detail = client.get_product(pid)
             prices[pid] = detail.get("skus") or []
+            thumb = _thumb_url_from_detail(detail)
+            if thumb:
+                images[pid] = thumb
         except Exception as e:  # noqa: BLE001
             print(f"商品 {pid} 详情取价失败，回退税前价: {e}")
-    return prices
+    return prices, images
+
+
+def _thumb_url_from_detail(detail: dict[str, Any]) -> Optional[str]:
+    """从 get_product 详情取主图缩略图 URL（main_images[0].thumb_urls[0]，看板爆款小图）。
+
+    main_images 是商品主图列表，每张含 thumb_urls（缩略图，约 300×300）与 urls（原图）。
+    取第一张主图的第一个缩略图；无图返回 None。CDN 无防盗链，可直接 <img src>。
+    """
+    imgs = detail.get("main_images") or []
+    if not imgs:
+        return None
+    thumbs = imgs[0].get("thumb_urls") or []
+    return thumbs[0] if thumbs else None
 
 
 @retry(retries=2, delay_seconds=30)
 def save_products(
     products: list[dict[str, Any]],
     price_skus_by_id: Optional[dict[str, list[dict[str, Any]]]] = None,
+    images_by_id: Optional[dict[str, str]] = None,
     *,
     country: str = "GLOBAL",
     shop_id: Optional[str] = None,
@@ -95,7 +113,7 @@ def save_products(
     """清洗并幂等 upsert 商品主数据，记一条 products/search 的 raw 审计。"""
     if not products:
         return 0
-    items = to_domain_products(products, price_skus_by_id)
+    items = to_domain_products(products, price_skus_by_id, images_by_id)
     session = SessionLocal()
     try:
         raw_record = record_raw_response(
@@ -265,7 +283,7 @@ def sync_inventory_flow(
 
     # 商品主数据顺手入库；失败不阻断库存主链路。
     try:
-        price_skus_by_id = fetch_product_prices(
+        price_skus_by_id, images_by_id = fetch_product_prices(
             product_ids,
             country=country,
             shop_id=shop_id,
@@ -275,6 +293,7 @@ def sync_inventory_flow(
         product_count = save_products(
             products,
             price_skus_by_id,
+            images_by_id,
             country=country,
             shop_id=shop_id,
             seller_id=seller_id,

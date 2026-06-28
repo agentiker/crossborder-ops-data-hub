@@ -21,7 +21,12 @@ from core.timezone import business_now, business_today, previous_window
 from services.ad_metrics import get_ad_spend_summary, get_roas
 from services.channel_metrics import get_channel_gmv_breakdown
 from services.fee_rate_metrics import get_fee_rate_monitor
-from services.order_metrics import get_gmv_summary, get_gmv_summary_intraday_range
+from services.order_metrics import (
+    get_gmv_summary,
+    get_gmv_summary_intraday_range,
+    get_top_products,
+)
+from services.product_channel_metrics import get_product_channel_breakdown
 from services.profit_summary import get_profit_card
 from services.scope_resolution import ScopeError, list_scopes
 from services.user_authz import AuthzError, UserPermission, resolve_authorized_scope
@@ -29,7 +34,6 @@ from web.routes.data import (
     _resolve_window,
     get_fulfillments_pending,
     get_low_stock,
-    get_orders_top_skus,
     get_orders_trend,
     get_overview,
 )
@@ -148,11 +152,6 @@ async def _collect(
         platform=platform, country=country, shop_id=None,
         scope_id=None, shop_ids=shop_ids, open_id=None,
     )
-    top = await get_orders_top_skus(
-        start_date=start_date, end_date=end_date, period=period,
-        platform=platform, country=country, shop_id=None,
-        scope_id=None, shop_ids=shop_ids, limit=10, open_id=None,
-    )
     low = await get_low_stock(
         platform=platform, country=country, shop_id=None,
         scope_id=None, shop_ids=shop_ids,
@@ -173,6 +172,12 @@ async def _collect(
     )
     prev_start, prev_end = previous_window(cur_start, cur_end)
     shop_id_list = filters.shop_ids or None
+    # 爆款「商品」榜（按 product_id 聚合，带小图/款号；窗口同当期）。直调服务（不走 data 路由），
+    # 与 channels/profit 一致：商品级语义 + 单品渠道拆分 join 都按 product_id。
+    top_items = get_top_products(
+        start_date=cur_start, end_date=cur_end,
+        platform=platform, country=country, shop_ids=shop_id_list, limit=10,
+    )
     # 渠道 GMV 拆分（直播/视频/商品卡，实时调 TikTok analytics + 进程缓存）。沙箱店无
     # analytics 数据时内部降级返回 available=False，不抛错、不阻断看板其它块。
     channels = get_channel_gmv_breakdown(
@@ -253,7 +258,7 @@ async def _collect(
         "window": window_meta,
         "overview": overview,
         "trend": _asdict(trend),
-        "top": _asdict(top),
+        "top": {"items": top_items},
         "low": _asdict(low),
         "fulfillment": _asdict(fulfillment),
         "channels": channels,
@@ -294,6 +299,39 @@ async def board_data(
         data = await _collect(perm, period, scope, start_date, end_date, platform, country)
     except (ScopeError, AuthzError) as exc:
         return JSONResponse({"error": "forbidden", "detail": str(exc)}, status_code=403)
+    return JSONResponse(data)
+
+
+@router.get("/board/product-channels", include_in_schema=False)
+async def board_product_channels(
+    perm: UserPermission = Depends(require_web_user),
+    product_id: str = Query(..., description="商品 product_id"),
+    period: str = Query("last_30d"),
+    scope: str = Query(""),
+    start_date: str | None = Query(None),
+    end_date: str | None = Query(None),
+    platform: str | None = Query(None),
+    country: str | None = Query(None),
+):
+    """单品渠道 4 分（达人/自营素材/商品卡/店铺页）懒加载端点：点击爆款卡某商品时才请求。
+
+    窗口/范围与看板同源（_resolve_window + resolve_authorized_scope 夹紧），不拖慢看板首载。
+    沙箱/无 analytics 数据 → available=False，前端显「该商品暂无渠道数据」。
+    """
+    set_current_account(perm.account_id)
+    try:
+        filters = resolve_authorized_scope(
+            perm, requested_scope_key=scope or None,
+            platform=platform or None, country=country or None,
+        )
+    except (ScopeError, AuthzError) as exc:
+        return JSONResponse({"error": "forbidden", "detail": str(exc)}, status_code=403)
+    cur_start, cur_end = _resolve_window(start_date, end_date, period, default_back_days=6)
+    data = get_product_channel_breakdown(
+        product_id=product_id,
+        start_date=cur_start, end_date=cur_end,
+        country=filters.country, shop_ids=filters.shop_ids or None,
+    )
     return JSONResponse(data)
 
 

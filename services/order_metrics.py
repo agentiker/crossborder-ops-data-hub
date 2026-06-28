@@ -214,6 +214,75 @@ def get_top_skus(
         session.close()
 
 
+def get_top_products(
+    *,
+    start_date: date,
+    end_date: date,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_id: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
+    limit: int = 10,
+    session=None,
+) -> list[dict]:
+    """爆款「商品」榜（按 product_id 聚合，付款口径），供看板爆款卡用。
+
+    与 get_top_skus（SKU 粒度）并列保留：客户的「爆款商品」语义是商品级，且单品渠道拆分
+    （202605）也按 product_id —— 故按 product_id 聚合，一行=一个商品。
+    - 款号：seller_sku（同商品多 SKU 时取 max，前端按 sku_count>1 显「N 个规格」而非单一款号）。
+    - 小图：LEFT JOIN products 取 main_image_url（同店同 product_id；多店时取任一）。
+    """
+    start_dt, end_dt = _paid_window(start_date, end_date)
+    own_session = session is None
+    session = session or SessionLocal()
+    try:
+        query = (
+            session.query(
+                OrderLineItem.product_id,
+                func.max(OrderLineItem.product_name),
+                func.max(OrderLineItem.seller_sku),
+                func.count(func.distinct(OrderLineItem.sku_id)),
+                func.count(OrderLineItem.line_item_id),
+                func.coalesce(func.sum(OrderLineItem.sale_price), 0),
+                func.max(Product.main_image_url),
+            )
+            .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
+            .outerjoin(
+                Product,
+                (Product.product_id == OrderLineItem.product_id)
+                & (Product.platform == OrderLineItem.platform),
+            )
+            .filter(
+                OrderLineItem.product_id.isnot(None),
+                OrderHeader.paid_time.isnot(None),
+                OrderHeader.paid_time >= start_dt,
+                OrderHeader.paid_time <= end_dt,
+            )
+        )
+        query = _scope_filters(query, OrderHeader, platform, country, shop_id, shop_ids)
+        query = (
+            query.group_by(OrderLineItem.product_id)
+            .order_by(func.count(OrderLineItem.line_item_id).desc())
+            .limit(limit)
+        )
+
+        return [
+            {
+                "product_id": product_id,
+                "product_name": product_name,
+                "seller_sku": seller_sku,
+                "sku_count": int(sku_count or 0),
+                "units_sold": int(units or 0),
+                "gmv": _to_float(gmv),
+                "image_url": image_url,
+            }
+            for product_id, product_name, seller_sku, sku_count, units, gmv, image_url in query.all()
+        ]
+    finally:
+        if own_session:
+            session.close()
+
+
 def get_units_by_sku(
     *,
     start_date: date,

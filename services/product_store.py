@@ -56,6 +56,9 @@ def upsert_products(
             existing.sku_count = item.sku_count
             existing.min_price = item.min_price
             existing.currency = item.currency
+            # 图仅在本次取到时覆盖：偶发 get_product 失败 → main_image_url=None，保留旧图不抹掉。
+            if item.main_image_url:
+                existing.main_image_url = item.main_image_url
             existing.source_create_time = item.source_create_time
             existing.source_update_time = item.source_update_time
             existing.raw_response_id = raw_response_id
@@ -75,6 +78,7 @@ def upsert_products(
                     sku_count=item.sku_count,
                     min_price=item.min_price,
                     currency=item.currency,
+                    main_image_url=item.main_image_url,
                     source_create_time=item.source_create_time,
                     source_update_time=item.source_update_time,
                     raw_response_id=raw_response_id,

@@ -89,5 +89,6 @@ class DomainProduct:
     sku_count: int = 0
     min_price: Optional[Decimal] = None
     currency: Optional[str] = None
+    main_image_url: Optional[str] = None  # 主图缩略图 URL（看板爆款小图）
     source_create_time: Optional[datetime] = None
     source_update_time: Optional[datetime] = None

@@ -756,6 +756,55 @@ class TikTokShopClient(BaseAPIClient):
             "/analytics/202509/shop/performance", start_date, end_date
         )
 
+    def get_shop_products_performance(
+        self, start_date, end_date, *, page_size: int = 50, max_pages: int = 5
+    ) -> Optional[list[dict]]:
+        """单品级表现列表（GET /analytics/202605/shop_products/performance，单品渠道饼图数据源）。
+
+        每个商品按「卖家/达人 × 直播/视频/商品卡 + 店铺页」交叉拆分,字段:
+        affiliate_{live,video,total}_performance / seller_{live,video,product_card}_performance /
+        shop_tab_performance / total_performance,各含 .attributed_gmv.{amount,currency}。
+        缺字段=该渠道无销量(按 0)。按 gmv DESC 翻页累计(覆盖 top 商品即够,默认拉满 max_pages)。
+
+        入参 start_date_ge 含、end_date_lt **不含** → 闭区间末日 +1。沙箱/无 analytics 数据或
+        任何异常 → None(交 service 降级)。返回 products[] 累计列表。
+        """
+        from datetime import timedelta
+
+        out: list[dict] = []
+        page_token = ""
+        for _ in range(max_pages):
+            params: dict = {
+                "start_date_ge": start_date.isoformat(),
+                "end_date_lt": (end_date + timedelta(days=1)).isoformat(),
+                "page_size": page_size,
+                "sort_field": "gmv",
+                "sort_order": "DESC",
+                "currency": "LOCAL",
+            }
+            if page_token:
+                params["page_token"] = page_token
+            if self.shop_cipher:
+                params["shop_cipher"] = self.shop_cipher
+            try:
+                result = self.request(
+                    "GET",
+                    "/analytics/202605/shop_products/performance",
+                    params=params, data=None, version="202605",
+                )
+            except Exception as exc:  # noqa: BLE001 — 优雅降级
+                logger.warning(
+                    "analytics shop_products/performance shop=%s 取数失败: %s",
+                    self.shop_id, exc,
+                )
+                return out or None
+            data = result.get("data", {}) or {}
+            out.extend(data.get("products") or [])
+            page_token = data.get("next_page_token") or ""
+            if not page_token:
+                break
+        return out
+
 
 def _coerce_expiry(data: dict, key: str, now: float) -> float:
     value = data.get(key)

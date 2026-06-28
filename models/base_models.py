@@ -70,6 +70,7 @@ class Product(Base):
     sku_count = Column(Integer, default=0)
     min_price = Column(Numeric(18, 4))  # 该商品 SKU 最低售价（概览用）
     currency = Column(String(8))
+    main_image_url = Column(String(1024))  # 主图缩略图 URL（get_product().main_images[0].thumb_urls[0]，看板爆款小图用）
     source_create_time = Column(DateTime)  # 商品在平台的创建时间
     source_update_time = Column(DateTime)  # 商品在平台的最后更新时间
     raw_response_id = Column(Integer, nullable=True)

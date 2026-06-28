@@ -151,9 +151,9 @@ def test_collect_sets_current_account_before_nested_data_calls(monkeypatch):
         assert current_account() == "ecom-app-gtl"
         return {"points": [], "window_label": "近 30 天"}
 
-    async def fake_get_orders_top_skus(**kwargs):
+    def fake_get_top_products(**kwargs):
         assert current_account() == "ecom-app-gtl"
-        return {"items": []}
+        return []
 
     async def fake_get_low_stock(**kwargs):
         assert current_account() == "ecom-app-gtl"
@@ -176,7 +176,7 @@ def test_collect_sets_current_account_before_nested_data_calls(monkeypatch):
 
     monkeypatch.setattr(board_routes, "get_overview", fake_get_overview)
     monkeypatch.setattr(board_routes, "get_orders_trend", fake_get_orders_trend)
-    monkeypatch.setattr(board_routes, "get_orders_top_skus", fake_get_orders_top_skus)
+    monkeypatch.setattr(board_routes, "get_top_products", fake_get_top_products)
     monkeypatch.setattr(board_routes, "get_low_stock", fake_get_low_stock)
     monkeypatch.setattr(board_routes, "get_fulfillments_pending", fake_get_fulfillments_pending)
     monkeypatch.setattr(board_routes, "get_channel_gmv_breakdown", fake_get_channel_gmv_breakdown)

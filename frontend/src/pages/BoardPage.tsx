@@ -16,7 +16,14 @@ import {
   TrendingUp,
   TriangleAlert,
 } from "lucide-react";
-import { api, type BoardData, type LowStockItem, type TopSku } from "@/api";
+import {
+  api,
+  type BoardData,
+  type BoardQuery,
+  type LowStockItem,
+  type ProductChannels,
+  type TopSku,
+} from "@/api";
 import { DateRangePicker, type DateRangeValue } from "@/components/board/DateRangePicker";
 import { InfoTooltip } from "@/components/ui/tooltip";
 import { EChart, useChartTokens } from "@/components/EChart";
@@ -186,7 +193,17 @@ export function BoardPage() {
               <NoDataBanner data={data} loading={loading} />
               <BusinessOverview data={data} loading={loading} />
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                <HotProducts data={data} loading={loading} />
+                <HotProducts
+                  data={data}
+                  loading={loading}
+                  query={{
+                    start: range.start ?? undefined,
+                    end: range.end ?? undefined,
+                    scope,
+                    platform: platform || undefined,
+                    country: region || undefined,
+                  }}
+                />
                 <InventoryHealth data={data} loading={loading} />
               </div>
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -995,17 +1012,154 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
   );
 }
 
-/* ── 爆款商品（照 fork HotProducts：排行列表 + 右侧明细面板）──────────── */
+/* ── 爆款商品（商品级：小图 + 标题 + 款号 + 单量，点击展开单品渠道 4 分饼）────────
+   客户诉求落地：① 小图(image_url，缺图→序号色块) ② 标题(长名 2 行截断) ③ 款号(seller_sku，
+   次要灰字；多规格显「N 个规格」) ④ 单量/GMV ⑤ 点击行内联展开渠道饼(达人/自营素材/商品卡/
+   店铺页，懒加载 /board/product-channels)。移动端：展开块堆在行下满宽，触控区加大。 */
 
 type RankBy = "sales" | "gmv";
 
-function skuName(i: TopSku): string {
-  return i.product_name || i.sku_name || i.sku_id || "?";
+function productLabel(i: TopSku): string {
+  return i.product_name || i.seller_sku || i.product_id || i.sku_id || "?";
 }
 
-function HotProducts({ data, loading }: { data: BoardData | null; loading: boolean }) {
+// 款号/规格次要行：多规格(sku_count>1)显「N 个规格」，否则显款号(seller_sku)。
+function styleCodeLabel(i: TopSku): string | null {
+  if ((i.sku_count ?? 0) > 1) return `${i.sku_count} 个规格`;
+  if (i.seller_sku) return `款号 ${i.seller_sku}`;
+  return null;
+}
+
+// 商品小图：有图显缩略图(object-cover)，加载失败/无图回落「序号色块」。前 3 名色块用实心强调。
+function ProductThumb({ src, rank }: { src?: string; rank: number }) {
+  const [failed, setFailed] = useState(false);
+  const showImg = src && !failed;
+  return (
+    <div className="relative size-11 shrink-0 overflow-hidden rounded-lg">
+      {showImg ? (
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          onError={() => setFailed(true)}
+          className="size-full object-cover"
+        />
+      ) : (
+        <div
+          className={
+            "flex size-full items-center justify-center text-sm font-bold " +
+            (rank <= 3
+              ? "bg-foreground text-primary-foreground"
+              : "bg-fill-default text-foreground-secondary")
+          }
+        >
+          {rank}
+        </div>
+      )}
+      {/* 有图时也叠一枚小序号角标，保留排名信息 */}
+      {showImg && (
+        <span
+          className={
+            "absolute left-0 top-0 flex size-4 items-center justify-center rounded-br-md text-[10px] font-bold " +
+            (rank <= 3 ? "bg-foreground text-primary-foreground" : "bg-fill-deep text-foreground-secondary")
+          }
+        >
+          {rank}
+        </span>
+      )}
+    </div>
+  );
+}
+
+const CHANNEL_COLORS: Record<string, keyof ReturnType<typeof useChartTokens>> = {
+  affiliate: "primary",
+  seller_content: "positive",
+  product_card: "warning",
+  shop_tab: "sub",
+};
+
+// 单品渠道 4 分饼（懒加载）：点击某商品时挂载，请求 /board/product-channels 再渲染环图 + 图例。
+function ProductChannelPanel({ productId, query }: { productId: string; query: BoardQuery }) {
+  const t = useChartTokens();
+  const [state, setState] = useState<{ loading: boolean; data: ProductChannels | null; error: string | null }>(
+    { loading: true, data: null, error: null },
+  );
+  const queryKey = JSON.stringify(query);
+
+  useEffect(() => {
+    let alive = true;
+    setState({ loading: true, data: null, error: null });
+    api
+      .productChannels(productId, query)
+      .then((d) => alive && setState({ loading: false, data: d, error: null }))
+      .catch((e) => alive && setState({ loading: false, data: null, error: String(e) }));
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productId, queryKey]);
+
+  const cb = state.data;
+  const option = useMemo(
+    () => ({
+      tooltip: {
+        trigger: "item",
+        formatter: (p: { name: string; value: number; percent: number }) =>
+          `${p.name}<br/>${fmtMoney(p.value)} (${p.percent}%)`,
+      },
+      legend: { bottom: 0, textStyle: { color: t.sub }, itemWidth: 10, itemHeight: 10 },
+      series: [
+        {
+          type: "pie",
+          radius: ["48%", "72%"],
+          center: ["50%", "42%"],
+          itemStyle: { borderRadius: 5, borderColor: t.card, borderWidth: 2 },
+          label: { show: false },
+          data: (cb?.channels || [])
+            .filter((c) => c.gmv > 0)
+            .map((c) => ({
+              name: c.label,
+              value: c.gmv,
+              itemStyle: { color: t[CHANNEL_COLORS[c.key] ?? "sub"] as string },
+            })),
+        },
+      ],
+    }),
+    [cb, t],
+  );
+
+  if (state.loading)
+    return (
+      <div className="flex items-center justify-center gap-2 py-8 text-sm text-foreground-secondary">
+        <span className="size-3.5 animate-spin rounded-full border-2 border-border border-t-foreground" />
+        渠道数据加载中…
+      </div>
+    );
+  if (state.error || !cb?.available)
+    return (
+      <div className="py-6 text-center text-sm text-foreground-secondary">
+        {state.error ? "渠道数据加载失败" : "该商品暂无渠道数据"}
+      </div>
+    );
+  return (
+    <div>
+      <div className="mb-1 text-xs text-foreground-secondary">渠道构成（按 GMV）</div>
+      <EChart option={option} height={220} />
+    </div>
+  );
+}
+
+function HotProducts({
+  data,
+  loading,
+  query,
+}: {
+  data: BoardData | null;
+  loading: boolean;
+  query: BoardQuery;
+}) {
   const [rankBy, setRankBy] = useState<RankBy>("sales");
-  const [selected, setSelected] = useState<number | null>(null);
+  const [openKey, setOpenKey] = useState<string | null>(null); // 展开渠道饼的商品（product_id|index）
   const raw = data?.top.items ?? [];
 
   const items = useMemo(() => {
@@ -1014,9 +1168,6 @@ function HotProducts({ data, loading }: { data: BoardData | null; loading: boole
     );
     return sorted.slice(0, 10);
   }, [raw, rankBy]);
-
-  const totalUnits = useMemo(() => items.reduce((s, i) => s + (i.units_sold || 0), 0), [items]);
-  const sel = selected != null ? items[selected] : null;
 
   // fork 排序含「按利润」；我方无利润数据源 → 仅保留 销量/GMV。
   const rankOptions: { id: RankBy; label: string }[] = [
@@ -1036,77 +1187,62 @@ function HotProducts({ data, loading }: { data: BoardData | null; loading: boole
       ) : !items.length ? (
         <ChartEmpty loading={false} empty="该时段暂无销量数据" height={320} />
       ) : (
-        <div className="flex flex-col gap-4 lg:flex-row">
-          {/* 排行列表（照 fork：序号徽章 + 名称 + 数值；前 3 名 bg-foreground 实心） */}
-          <div className="max-h-[320px] flex-1 space-y-1.5 overflow-y-auto">
-            {items.map((p, index) => {
-              const val = rankBy === "gmv" ? p.gmv ?? 0 : p.units_sold;
-              return (
+        <div className="space-y-1">
+          {items.map((p, index) => {
+            const rowKey = (p.product_id || p.sku_id || "") + index;
+            const isOpen = openKey === rowKey;
+            const code = styleCodeLabel(p);
+            const canExpand = !!p.product_id;
+            return (
+              <div key={rowKey} className="rounded-lg">
                 <button
                   type="button"
-                  key={(p.sku_id || "") + index}
-                  onClick={() => setSelected(index)}
-                  aria-pressed={selected === index}
+                  onClick={() => canExpand && setOpenKey(isOpen ? null : rowKey)}
+                  aria-expanded={isOpen}
+                  disabled={!canExpand}
                   className={
-                    "flex w-full cursor-pointer items-center gap-3 rounded-lg p-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:p-3 " +
-                    (selected === index ? "bg-fill-default" : "hover:bg-fill-shallow")
+                    "flex w-full items-center gap-3 rounded-lg p-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:p-2.5 " +
+                    (isOpen ? "bg-fill-default" : "hover:bg-fill-shallow") +
+                    (canExpand ? " cursor-pointer" : " cursor-default")
                   }
                 >
-                  <span
-                    className={
-                      "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold " +
-                      (index < 3
-                        ? "bg-foreground text-primary-foreground"
-                        : "bg-fill-default text-foreground-secondary")
-                    }
-                  >
-                    {index + 1}
-                  </span>
+                  <ProductThumb src={p.image_url} rank={index + 1} />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium text-foreground">{skuName(p)}</div>
-                    <div className="text-xs text-foreground-secondary">
-                      {rankBy === "gmv" ? fmtMoney(val) : `${fmtInt(val)} 件`}
+                    <div className="line-clamp-2 text-sm font-medium leading-snug text-foreground">
+                      {productLabel(p)}
+                    </div>
+                    {code && (
+                      <div className="mt-0.5 truncate text-xs text-foreground-secondary">{code}</div>
+                    )}
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <div className="tabnum text-sm font-semibold text-foreground">
+                      {rankBy === "gmv" ? fmtMoney(p.gmv) : `${fmtInt(p.units_sold)} 件`}
+                    </div>
+                    <div className="tabnum text-xs text-foreground-secondary">
+                      {rankBy === "gmv" ? `${fmtInt(p.units_sold)} 件` : fmtMoney(p.gmv)}
                     </div>
                   </div>
+                  {canExpand && (
+                    <ChevronDown
+                      className={
+                        "size-4 shrink-0 text-foreground-tertiary transition-transform " +
+                        (isOpen ? "rotate-180" : "")
+                      }
+                    />
+                  )}
                 </button>
-              );
-            })}
-          </div>
-
-          {/* 右侧明细面板：fork 是单品 7 天趋势图；我方无单品时序 → 换成选中品的真实占比/数值（不造假）。
-              移动端：窄屏堆到列表下方满宽，lg 起回到右侧固定宽。 */}
-          <div className="w-full shrink-0 lg:w-[240px]">
-            {sel ? (
-              <div className="space-y-3">
-                <div className="truncate text-sm font-medium text-foreground">{skuName(sel)}</div>
-                <DetailStat label="销量" value={`${fmtInt(sel.units_sold)} 件`} />
-                <DetailStat label="GMV" value={fmtMoney(sel.gmv)} />
-                <DetailStat
-                  label="占榜单销量"
-                  value={totalUnits ? `${Math.round((sel.units_sold / totalUnits) * 100)}%` : "—"}
-                />
-                {sel.sku_id && (
-                  <div className="pt-1 text-xs text-foreground-secondary">SKU · {sel.sku_id}</div>
+                {isOpen && p.product_id && (
+                  <div className="border-t border-border-shallow px-2 pb-2 pt-3">
+                    <ProductChannelPanel productId={p.product_id} query={query} />
+                  </div>
                 )}
               </div>
-            ) : (
-              <div className="flex h-full items-center justify-center py-6 text-center text-sm text-foreground-secondary lg:py-0">
-                点击商品查看明细
-              </div>
-            )}
-          </div>
+            );
+          })}
         </div>
       )}
     </BoardCard>
-  );
-}
-
-function DetailStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl bg-fill-shallow p-3">
-      <div className="text-xs text-foreground-secondary">{label}</div>
-      <div className="tabnum mt-0.5 text-lg font-bold text-foreground">{value}</div>
-    </div>
   );
 }
 
