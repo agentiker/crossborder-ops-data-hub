@@ -112,9 +112,12 @@
    默认灰。放一个不可见的 fixed 诱饵专供采样，背景=页面底色，让底部栏与页面融为一体。
    尺寸阈值（社区实测）：bottom<4px / width>88% / min-height>2px 才能压过 body 被优先采样。
    只在支持 -webkit-touch-callout（≈iOS Safari）时启用，避免影响桌面/安卓。
-   z-index:-1 沉到页面内容之下：被内容盖住不挡视觉，仅在底部空白处露出（与 body 同色不可见），
-   工具栏收起时也不会浮现成一条可见矩形条；负 z-index 仍在 body 背景之上，不影响 Safari 采样。
-   pointer-events:none：纯采样诱饵，不挡交互。 */
+   z-index:-1 沉到页面内容之下：被内容盖住不挡视觉，仅在底部空白处露出（与 body 同色不可见）。
+   pointer-events:none：纯采样诱饵，不挡交互。
+   ⚠️ 已知局限（2026-06-29，搁置）：此诱饵对「整页加载/直接访问/刷新」有效，但对 SPA 软导航
+   （侧栏点页切换）无效——iOS 26 软导航后不重采样工具栏，故侧栏切入仍会发灰。试过 5 种 hack
+   （静态 theme-color / JS 重写 theme-color / 重插诱饵 DOM / 路由后微滚动）均未解；该问题 Apple
+   无文档、各点版本行为不一。彻底根治需 PWA 装主屏（系统栏消失）。勿再单点死磕。 */
 @supports (-webkit-touch-callout: none) {
   #ios-toolbar-tint {
     position: fixed;
