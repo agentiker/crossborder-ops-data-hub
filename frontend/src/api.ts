@@ -121,6 +121,13 @@ export interface BoardData {
   scopes: ScopeOption[];
   role: string;
   period: string;
+  // 当期窗口元信息。includes_today=true 时窗口含半天今天,前端显「当日累计」徽章 + 利润卡提示。
+  window?: {
+    start: string;
+    end: string;
+    includes_today: boolean;
+    as_of_label: string | null;
+  };
   overview: {
     orders: {
       gmv: number;

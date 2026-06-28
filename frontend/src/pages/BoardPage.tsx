@@ -669,6 +669,11 @@ function ProfitCard({
               ⚠️ 商品成本未录入，利润为「未扣商品成本」口径、偏高；录入成本后方为真实毛利。
             </div>
           )}
+          {data?.window?.includes_today && (
+            <div className="rounded-lg bg-fill-shallow px-3 py-2 text-xs text-foreground-secondary">
+              📅 今日利润为当日累计，随订单实时增加、次日凌晨定稿，勿与整日直接比较。
+            </div>
+          )}
           <div className="text-xs text-foreground-secondary">
             预估口径：扣点/广告含未结算订单 TikTok 官方预估 + 已结算真实；退货按配置率预估
           </div>
@@ -846,9 +851,22 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
   // traffic/funnel 为演示数据 tab（后端无源），选中时标注徽章、走 demo-data 的 option。
   const isDemo = activeTab === "traffic" || activeTab === "funnel";
 
+  // 窗口含今日：当期含半天今天,环比已在后端按 intraday 公平比较（不再假暴跌），此处再显眼
+  // 标一枚徽章告诉客户「今天还没走完、为当日累计」，避免把今天的低值当成下降。
+  const asOf = data?.window?.includes_today ? data.window.as_of_label : null;
+
   return (
     <BoardCard>
-      <CardHead title="经营概览" />
+      <CardHead
+        title="经营概览"
+        right={
+          asOf ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2.5 py-1 text-xs text-warning">
+              📅 {asOf}
+            </span>
+          ) : undefined
+        }
+      />
 
       {/* KPI 固定 2 列：第一行 GMV/广告消耗、第二行 订单/销量、第三行 ROI/ROAS（客单价暂去） */}
       <div className="mb-4 grid grid-cols-2 gap-3">

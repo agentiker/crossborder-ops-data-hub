@@ -17,11 +17,11 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from core.tenancy import set_current_account
-from core.timezone import previous_window
+from core.timezone import business_now, business_today, previous_window
 from services.ad_metrics import get_ad_spend_summary, get_roas
 from services.channel_metrics import get_channel_gmv_breakdown
 from services.fee_rate_metrics import get_fee_rate_monitor
-from services.order_metrics import get_gmv_summary
+from services.order_metrics import get_gmv_summary, get_gmv_summary_intraday_range
 from services.profit_summary import get_profit_card
 from services.scope_resolution import ScopeError, list_scopes
 from services.user_authz import AuthzError, UserPermission, resolve_authorized_scope
@@ -48,6 +48,49 @@ def _pct(cur: float, prev: float):
     if not prev:
         return None
     return round((cur - prev) / prev * 100, 1)
+
+
+def _overview_window_and_gmv(
+    cur_start, cur_end, prev_start, prev_end, *, platform, country, shop_ids,
+):
+    """当期/上期 GMV 摘要 + 窗口元信息。
+
+    窗口结束在「今天」(WIB 业务日)时,当期含半天今天。若直接整窗 vs 上期整窗,环比会被半天
+    拉成「假暴跌」(半天比全天)。含今日则改用 intraday 公平比较:cur/prev 都钉「截至此刻」
+    (末日截到 cutoff、中间天整天),与日报 _weekly_windows 同款口径(get_gmv_summary_intraday_range);
+    不含今日则照旧整天对整天。返回 (cur, prev, window_meta)。
+    """
+    includes_today = cur_end == business_today()
+    if includes_today:
+        cutoff = business_now().time()
+        cur = get_gmv_summary_intraday_range(
+            start_date=cur_start, end_date=cur_end, cutoff=cutoff,
+            platform=platform, country=country, shop_ids=shop_ids,
+        )
+        prev = get_gmv_summary_intraday_range(
+            start_date=prev_start, end_date=prev_end, cutoff=cutoff,
+            platform=platform, country=country, shop_ids=shop_ids,
+        )
+        as_of_label = (
+            f"数据截至 {business_now().strftime('%m-%d %H:%M')}（印尼时间）· 今日为当日累计"
+        )
+    else:
+        cur = get_gmv_summary(
+            start_date=cur_start, end_date=cur_end,
+            platform=platform, country=country, shop_ids=shop_ids,
+        )
+        prev = get_gmv_summary(
+            start_date=prev_start, end_date=prev_end,
+            platform=platform, country=country, shop_ids=shop_ids,
+        )
+        as_of_label = None
+    window_meta = {
+        "start": cur_start.isoformat(),
+        "end": cur_end.isoformat(),
+        "includes_today": includes_today,
+        "as_of_label": as_of_label,
+    }
+    return cur, prev, window_meta
 
 
 def _scope_options(perm: UserPermission) -> list[dict]:
@@ -151,12 +194,8 @@ async def _collect(
     except Exception:  # noqa: BLE001 — 单卡兜底，费率取数失败不整页挂
         logger.warning("fee_rate monitor card failed", exc_info=True)
         fee_rate = {"status": "insufficient", "skip_reason": "取数失败", "trend": []}
-    cur = get_gmv_summary(
-        start_date=cur_start, end_date=cur_end,
-        platform=platform, country=country, shop_ids=shop_id_list,
-    )
-    prev = get_gmv_summary(
-        start_date=prev_start, end_date=prev_end,
+    cur, prev, window_meta = _overview_window_and_gmv(
+        cur_start, cur_end, prev_start, prev_end,
         platform=platform, country=country, shop_ids=shop_id_list,
     )
     # 广告消耗（结算口径）：复用同一当期/上期窗口与 filters，各取一次摘要算环比；当期再取 ROAS。
@@ -210,6 +249,8 @@ async def _collect(
         "scopes": _scope_options(perm),
         "role": perm.role,
         "period": period,
+        # 当期窗口元信息:含今日时前端显「当日累计」徽章 + 利润卡提示,避免客户把半天今天当下降。
+        "window": window_meta,
         "overview": overview,
         "trend": _asdict(trend),
         "top": _asdict(top),
