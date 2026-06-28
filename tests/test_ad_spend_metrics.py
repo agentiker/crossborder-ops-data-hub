@@ -49,6 +49,7 @@ def test_summary_aggregates_window_and_shop(session, monkeypatch):
         platform="tiktok_shop", country="ID", shop_ids=["shop-1"],
     )
     assert out["total_ad_spend"] == 365.0   # 125 + 240
+    assert out["paid_ad_spend"] == 350.0     # 付费投放 = gmv_max(300) + tap(50)
     assert out["gmv_max_fee"] == 300.0       # 100 + 200
     assert out["tap_commission"] == 50.0     # 20 + 30
     assert out["affiliate_commission"] == 15.0  # 5 + 10
@@ -69,7 +70,8 @@ def test_summary_empty_returns_zeroes(session, monkeypatch):
 
 def test_get_roas_computes_ratio(session, monkeypatch):
     monkeypatch.setattr(ad_metrics, "SessionLocal", lambda: session)
-    _spend_row(session, date(2026, 6, 8), shop_id="shop-1", gmv="0", tap="0", aff="0", total="100")
+    # 付费投放 = gmv_max(60)+tap(40) = 100；达人佣金 aff=999 不进 ROAS 分母
+    _spend_row(session, date(2026, 6, 8), shop_id="shop-1", gmv="60", tap="40", aff="999", total="1099")
     session.commit()
     # GMV 由 get_gmv_summary 提供，这里直接 stub 掉（口径另有专测）
     monkeypatch.setattr(
@@ -78,22 +80,53 @@ def test_get_roas_computes_ratio(session, monkeypatch):
     )
     out = ad_metrics.get_roas(
         start_date=date(2026, 6, 8), end_date=date(2026, 6, 8),
-        platform="tiktok_shop", country="ID", shop_ids=["shop-1"],
+        platform="tiktok_shop", country="ID", shop_ids=["shop-1"], as_of=date(2026, 7, 1),
     )
     assert out["gmv"] == 500.0
-    assert out["ad_spend"] == 100.0
-    assert out["roas"] == 5.0  # 500 / 100
+    assert out["paid_ad_spend"] == 100.0   # 仅付费投放
+    assert out["roas"] == 5.0              # 500 / 100（达人佣金 999 不进分母）
+    assert out["ad_spend"] == 1099.0       # 营销总支出仍含佣金（展示用）
 
 
-def test_get_roas_none_when_spend_zero(session, monkeypatch):
+def test_get_roas_none_when_no_paid_spend(session, monkeypatch):
+    """只有达人佣金、付费投放=0 → roas=None（佣金不当广告算）。"""
     monkeypatch.setattr(ad_metrics, "SessionLocal", lambda: session)
-    # 无任何 spend 行 → total_ad_spend=0
+    _spend_row(session, date(2026, 6, 8), shop_id="shop-1", gmv="0", tap="0", aff="500", total="500")
+    session.commit()
     monkeypatch.setattr(
         ad_metrics, "get_gmv_summary",
         lambda **kw: {"gmv": 500.0, "order_count": 5, "units_sold": 5, "avg_order_value": 100.0},
     )
     out = ad_metrics.get_roas(
         start_date=date(2026, 6, 8), end_date=date(2026, 6, 8), shop_ids=["shop-1"],
+        as_of=date(2026, 7, 1),
     )
-    assert out["ad_spend"] == 0.0
-    assert out["roas"] is None  # spend=0 → 不臆造，None
+    assert out["paid_ad_spend"] == 0.0
+    assert out["affiliate_commission"] == 500.0
+    assert out["roas"] is None  # 付费投放=0 → 不臆造
+
+
+def test_summary_settlement_guardrail(session, monkeypatch):
+    """结算护栏：窗口结束日晚于「as_of − ad_settle_lag_days」→ complete=False。"""
+    from core.config import settings
+
+    monkeypatch.setattr(ad_metrics, "SessionLocal", lambda: session)
+    monkeypatch.setattr(settings, "ad_settle_lag_days", 14, raising=False)
+    _spend_row(session, date(2026, 6, 20), shop_id="shop-1")
+    session.commit()
+    as_of = date(2026, 6, 28)  # 结算完整线 = 6/14
+
+    # 近窗（结束 6/28 > 6/14）→ 不完整
+    near = ad_metrics.get_ad_spend_summary(
+        start_date=date(2026, 6, 22), end_date=date(2026, 6, 28),
+        shop_ids=["shop-1"], as_of=as_of,
+    )
+    assert near["complete"] is False
+    assert near["settled_through"] == "2026-06-14"
+
+    # 历史窗（结束 6/10 ≤ 6/14）→ 完整
+    past = ad_metrics.get_ad_spend_summary(
+        start_date=date(2026, 6, 4), end_date=date(2026, 6, 10),
+        shop_ids=["shop-1"], as_of=as_of,
+    )
+    assert past["complete"] is True

@@ -200,13 +200,19 @@ export interface BoardData {
     };
     inventory: { total_sku?: number; total_stock?: number; low_stock_count?: number };
     // 广告消耗（结算口径）：无结算数据时 total_ad_spend=0、roas=null，前端降级为「—」。
+    // 拆分两类：付费投放(paid_ad_spend=GMV Max+TAP，ROAS 口径) vs 达人佣金(affiliate_commission，CPS)。
+    // complete=false → 窗口落在结算滞后区，广告/ROAS 不完整，前端标注「结算中·截至 latest_covered_date」。
     ads?: {
       total_ad_spend: number;
+      paid_ad_spend: number;
       roas: number | null;
       gmv_max_fee: number;
       tap_commission: number;
       affiliate_commission: number;
       currency?: string;
+      complete?: boolean;
+      settled_through?: string | null;
+      latest_covered_date?: string | null;
     };
     // 环比：当期 vs 紧邻等长上期的百分比；上期无基准（为 0）时为 null，不渲染、不臆造。
     change?: {

@@ -809,6 +809,7 @@ function MetricCard({
   change,
   loading,
   subtitle,
+  info,
 }: {
   title: string;
   value: string;
@@ -817,6 +818,8 @@ function MetricCard({
   loading?: boolean;
   // 可选副标注：广告卡用「结算口径」标口径、降级时用「暂无结算数据」提示，避免误导。
   subtitle?: string;
+  // 可选标题旁信息气泡（口径说明），如广告卡拆分付费投放/达人佣金。
+  info?: ReactNode;
 }) {
   const dir = change == null ? null : change > 0 ? "up" : change < 0 ? "down" : "flat";
   return (
@@ -824,6 +827,7 @@ function MetricCard({
       <div className="flex items-center gap-2 text-foreground-secondary">
         {icon}
         <span className="text-xs">{title}</span>
+        {info}
       </div>
       <div className="tabnum text-2xl font-bold text-foreground">{loading ? "…" : value}</div>
       {!loading && subtitle && (
@@ -857,6 +861,30 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
   const hasAdSpend = !!ads && ads.total_ad_spend > 0;
   const adCostValue = hasAdSpend ? fmtMoney(ads!.total_ad_spend) : "—";
   const roasValue = ads && ads.roas != null ? `${ads.roas.toFixed(2)}×` : "—";
+  // 广告口径拆分 + 结算护栏（2026-06-28）：付费投放(GMV Max+TAP) vs 达人佣金(CPS)；
+  // complete=false → 窗口落在结算滞后区，广告/ROAS 不完整，标注「结算中·截至 X」避免误读。
+  const adComplete = !ads || ads.complete !== false;
+  const adAsOf = ads?.latest_covered_date ? ads.latest_covered_date.slice(5) : null;
+  const settlingNote = !adComplete && adAsOf ? `结算中·截至 ${adAsOf}` : null;
+  const adInfo =
+    hasAdSpend && ads ? (
+      <InfoTooltip
+        align="start"
+        content={`付费投放（GMV Max+TAP）${fmtMoney(ads.paid_ad_spend)} · 达人佣金（CPS，成交分佣）${fmtMoney(ads.affiliate_commission)}。ROAS 仅按付费投放算，达人佣金随成交走、不计入。${
+          !adComplete ? "广告费按结算口径、滞后数日，近几天仍在结算填充，数字偏低。" : ""
+        }`}
+      >
+        <Info className="h-3.5 w-3.5" />
+      </InfoTooltip>
+    ) : undefined;
+  const roasInfo = (
+    <InfoTooltip
+      align="start"
+      content="ROAS = GMV ÷ 付费投放（GMV Max+TAP）。达人 CPS 佣金成交才付、跟着 GMV 走，不计入分母（否则等于在算佣金率倒数）。付费投放为 0 → 留空不臆造。"
+    >
+      <Info className="h-3.5 w-3.5" />
+    </InfoTooltip>
+  );
   const labels = pts.map((p) => p.date.slice(5));
 
   const axisX = (boundaryGap: boolean) => ({
@@ -984,10 +1012,11 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
         <MetricCard loading={loading} change={ch?.gmv} title="GMV（已付款）" value={fmtMoney(o?.gmv)} icon={<DollarSign size={14} />} />
         <MetricCard
           loading={loading}
-          change={hasAdSpend ? ch?.ad_cost : undefined}
+          change={hasAdSpend && adComplete ? ch?.ad_cost : undefined}
           title="广告消耗"
           value={adCostValue}
-          subtitle={hasAdSpend ? "结算口径" : "暂无结算数据"}
+          subtitle={hasAdSpend ? settlingNote ?? "结算口径·含达人佣金" : "暂无结算数据"}
+          info={adInfo}
           icon={<Megaphone size={14} />}
         />
         <MetricCard loading={loading} change={ch?.order_count} title="订单数" value={fmtInt(o?.order_count)} icon={<ShoppingCart size={14} />} />
@@ -996,10 +1025,11 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
         <MetricCard loading={loading} title="ROI" value="—" subtitle="口径待定" icon={<Percent size={14} />} />
         <MetricCard
           loading={loading}
-          change={ch?.roas}
+          change={adComplete ? ch?.roas : undefined}
           title="ROAS"
-          value={roasValue}
-          subtitle="结算口径"
+          value={adComplete ? roasValue : "—"}
+          subtitle={adComplete ? "仅付费投放" : settlingNote ?? "结算中·暂不可比"}
+          info={roasInfo}
           icon={<Gauge size={14} />}
         />
       </div>

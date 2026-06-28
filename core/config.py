@@ -188,6 +188,12 @@ class Settings(BaseSettings):
     # 见 docs/business-rules §4.4）。看板卡、/board/new-products 端点、scan flow 告警标注三处共用。
     new_product_lookback_days: int = 60
 
+    # 广告费结算滞后天数：广告费来自已结算 statement，且 fact_ad_spend_daily 按 order_create_time
+    # 归日 → 近 N 天下单的单多未结算、广告费持续填充中。窗口结束日落在「今天−N」之内即判「不完整」，
+    # 前端标注「结算中」，避免把"结算未回"误读成"广告变高效/ROAS 暴涨"（见 docs §6）。与扣点费率
+    # 的 fee_rate_settle_lag_days 同源同量级（都来自 statement 结算）。
+    ad_settle_lag_days: int = 14
+
     # 补货公式默认参数（运营可经 replenishment_config 表按范围覆盖，见 services/replenishment_config）。
     # 目标备货 = 近 velocity_days 天销量 × 系数；普通 SKU 用 normal、超级爆品(人工标记)用 superhot。
     # 补货量 = 目标备货 − 可用库存 − 在途，≤0 剔除。

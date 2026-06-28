@@ -196,10 +196,14 @@ def test_collect_sets_current_account_before_nested_data_calls(monkeypatch):
         "get_ad_spend_summary",
         lambda **kwargs: {
             "total_ad_spend": 0,
+            "paid_ad_spend": 0,
             "gmv_max_fee": 0,
             "tap_commission": 0,
             "affiliate_commission": 0,
             "currency": "IDR",
+            "complete": True,
+            "settled_through": "2026-06-14",
+            "latest_covered_date": None,
         },
     )
     monkeypatch.setattr(board_routes, "get_roas", lambda **kwargs: {"roas": None})

@@ -166,9 +166,27 @@
 
 ## 6. 广告 / ROAS 口径
 
-- **广告消耗 = 结算口径**，含 GMV Max / TAP / 联盟三项拆分（在 TikTok Shop Finance API 结算费用拆项里，如 `gmv_max_ad_fee_amount`）。
-- **广告消耗 = 0 通常是数据尚未接通**（缺 Finance 授权 scope），**不是"没投广告"**——报告 / AI 不要当作问题、不要建议投放。
-- 接通前提：Partner Center 加 Finance 权限 + 店铺重授权，再写 finance sync + ROAS + 预警。
+代码：`services/ad_metrics.py`（取数 + 拆分 + 护栏）、`web/routes/board.py:_collect`（overview.ads 注入）、前端 `BoardPage.tsx` 经营概览广告/ROAS 卡。数据源 `fact_ad_spend_daily`（`flows/sync_ad_spend`，结算口径、按 `order_create_time` 归印尼业务日）。
+
+- **三项均来自已结算 statement 的 `fee_tax_breakdown.fee`**：`gmv_max_ad_fee_amount`（GMV Max 投流）/ `tap_shop_ads_commission`（TAP 达人广告）/ `affiliate_ads_commission_amount`（联盟达人 CPS 佣金）。
+
+### 6.1 ⚠️ 两类口径分开：付费投放 vs 达人佣金（2026-06-28 真打修正）
+
+真打 prod 店（`7494172960764429390`，授权完全 OK、60 结算单/3.4 万交易全可拉）揭示：该店「广告消耗」**99.5% 是联盟达人 CPS 佣金**，GMV Max 预算投流 = 0。**把 CPS 佣金当广告投放算 ROAS 会误导**——佣金是成交后按比例分佣、跟着 GMV 走、无撬动，`GMV ÷ 佣金` = 佣金率倒数，无"广告效率"含义。故拆两类：
+
+- **付费投放** `paid_ad_spend = gmv_max_fee + tap_commission`：预算/撬动型投放。**ROAS 只对它算**（`get_roas` 分母）；付费投放 = 0 → `roas=None`，诚实留空。
+- **达人佣金** `affiliate_commission`：CPS 分佣，单列展示、不进 ROAS。
+- 前端「广告消耗」卡 value 仍显营销总支出、`InfoTooltip` 拆「付费投放 X · 达人佣金 Y」；ROAS 卡注「仅付费投放」。广告环比（`change.ad_cost`）按付费投放算（与 ROAS 口径一致）。
+- **纠偏**：旧文档"广告消耗=0 是没接通 Finance scope"在此店**不成立**——授权是通的，付费投放真的≈0（达人主导店本就不怎么投流）。"是否接通"不能只看广告消耗低。
+
+### 6.2 ⚠️ 结算滞后护栏（`complete` / `settled_through`）
+
+广告费仅**已结算**才有，且 `fact_ad_spend_daily` 按 `order_create_time` 归日 → 近几天下单的单多未结算、广告费**持续填充中**（叠加同步 timer 未跑则更滞后）。真打实证：6/24-6/28 广告消耗几乎为 0，本周 ROAS 因分母被掏空而"暴涨"5 倍，是**结算滞后假象**，非广告变高效。
+
+- 护栏**不看"有没有数据"**（近期日有数据但不全会误判完整），看**结算完整线** `settled_through = as_of − ad_settle_lag_days`（`settings.ad_settle_lag_days` 默认 **14**，与 §7.1 扣点 `fee_rate_settle_lag_days` 同源同量级）。窗口结束日晚于该线 → `complete=False`。
+- 前端 `complete=False` 时广告/ROAS 卡标注「结算中·截至 MM-DD」，且**不显环比**（避免把结算未回读成涨跌）。这与利润卡 `coverage_complete`、费率告警 `settle_lag_days` 是同一类滞后护栏。
+- **效应滞后 ≠ 结算滞后**：广告"本周花、下周起量"是真实业务现象（效应滞后，主要在 GMV Max/TAP 这类预算投放）；但看板上更主导的是**结算滞后**（费用入库晚）。本店付费投放≈0，故效应滞后基本不适用，失真几乎全来自结算滞后 + 把佣金当广告。
+- 接通更多投放数据前提：Partner Center 加 Finance 权限 + 店铺重授权（本店已通）；同步靠 `data-sync-ad-spend` timer（过审前停，故 fact 表需手动补跑才完整）。
 
 ---
 
@@ -251,3 +269,4 @@
 | 2026-06-27 | 费率告警业务规则落档（§7.1）：费率定义=官方扣费额÷订单GMV同批订单/含税不含物流、结算+及时双口径、双阈值+护栏、B2分项归因(交集费项·跨口径降级·80%覆盖)、配置参数表、触发vs诊断粒度分离 | 本文 §7.1、`services/fee_rate_{metrics,alerts}.py`、`flows/scan_fulfillment_alerts.py` |
 | 2026-06-27 | §7.1 补「类目轴为何暂缓」决策：真实缺口(单类目调佣被总费率稀释)但当前不做(数据薄/B1B2已覆盖普涨/需先接 get_product)，重启条件 + 届时须诊断展示不得独立触发 | 本文 §7.1 |
 | 2026-06-28 | 看板「近 30 天新品」卡：近30天上线在售品的每日销量曲线 + 单日破阈(=50,同爆单告警)界面提醒；飞书爆单告警(规则5)对新品标注 🌟，同阈不重复推送 | 本文 §4.4/§7、`services/order_metrics.py`、`services/hotsell_alerts.py`、`web/routes/board.py` |
+| 2026-06-28 | 广告口径拆分(付费投放 GMV Max+TAP vs 达人佣金 CPS)+ ROAS 只对付费投放；结算滞后护栏 complete/settled_through(ad_settle_lag_days=14)，近窗标「结算中」不显环比。真打纠偏:授权OK、付费投放真≈0(达人主导)、本周ROAS暴涨=结算滞后假象 | 本文 §6、`services/ad_metrics.py`、`web/routes/board.py`、`core/config.py` |

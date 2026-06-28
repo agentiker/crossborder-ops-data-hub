@@ -230,13 +230,18 @@ async def _collect(
     }
     overview["ads"] = {
         "total_ad_spend": cur_ads["total_ad_spend"],
+        "paid_ad_spend": cur_ads["paid_ad_spend"],       # 付费投放（GMV Max+TAP），ROAS 口径
         "roas": cur_roas["roas"],
         "gmv_max_fee": cur_ads["gmv_max_fee"],
         "tap_commission": cur_ads["tap_commission"],
-        "affiliate_commission": cur_ads["affiliate_commission"],
+        "affiliate_commission": cur_ads["affiliate_commission"],  # 达人佣金（CPS）
         "currency": cur_ads["currency"],
+        # 结算滞后护栏：complete=False 时前端标注「结算中·近 N 天不完整」，settled_through=结算完整线
+        "complete": cur_ads["complete"],
+        "settled_through": cur_ads["settled_through"],
+        "latest_covered_date": cur_ads["latest_covered_date"],
     }
-    # ROAS 环比：任一期 roas 为 None（该期无广告费）则不可比 → None，不臆造。
+    # ROAS 环比：任一期 roas 为 None（该期无付费投放）则不可比 → None，不臆造。
     roas_change = (
         _pct(cur_roas["roas"], prev_roas["roas"])
         if cur_roas["roas"] is not None and prev_roas["roas"] is not None
@@ -247,7 +252,8 @@ async def _collect(
         "order_count": _pct(cur["order_count"], prev["order_count"]),
         "units_sold": _pct(cur["units_sold"], prev["units_sold"]),
         "avg_order_value": _pct(cur["avg_order_value"], prev["avg_order_value"]),
-        "ad_cost": _pct(cur_ads["total_ad_spend"], prev_ads["total_ad_spend"]),
+        # 广告环比按付费投放（与 ROAS 口径一致），佣金随成交波动不算"广告增减"
+        "ad_cost": _pct(cur_ads["paid_ad_spend"], prev_ads["paid_ad_spend"]),
         "roas": roas_change,
     }
     return {
