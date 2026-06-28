@@ -9,6 +9,9 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- iOS 26 Safari 底部工具栏采样诱饵（样式见 index.css #ios-toolbar-tint）。放在 #root 外、
+         不入 React 树，路由切换不影响，常驻供 Safari 采样底部边缘色。 -->
+    <div id="ios-toolbar-tint" aria-hidden="true"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

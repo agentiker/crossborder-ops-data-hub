@@ -106,6 +106,26 @@
   }
 }
 
+/* iOS 26 Safari 底部工具栏「采样诱饵」：
+   iOS 26 起 Safari 不再读 theme-color，改为渲染时采样靠近视口底边的 fixed/sticky 元素背景色
+   来给底部工具栏上色（液态玻璃，by design）。我们的页面底边无稳定带色 fixed 元素 → 工具栏回落
+   默认灰。放一个不可见的 fixed 诱饵专供采样，背景=页面底色，让底部栏与页面融为一体。
+   尺寸阈值（社区实测）：bottom<4px / width>88% / min-height>2px 才能压过 body 被优先采样。
+   只在支持 -webkit-touch-callout（≈iOS Safari）时启用，避免影响桌面/安卓。
+   pointer-events:none + 低 z-index：纯采样诱饵，不挡交互、视觉上被内容盖住不可见。 */
+@supports (-webkit-touch-callout: none) {
+  #ios-toolbar-tint {
+    position: fixed;
+    bottom: 3px;
+    left: 5%;
+    width: 90%;
+    min-height: 15px;
+    background-color: hsl(var(--background));
+    z-index: 0;
+    pointer-events: none;
+  }
+}
+
 @layer utilities {
   /* 招牌：所有指标/金额走等宽数字，对齐成账册感 */
   .tabnum {
