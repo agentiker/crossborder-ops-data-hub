@@ -112,17 +112,18 @@
 
 - **Top5 占比** = 单品 GMV / 当期总 GMV（商品行口径近似，guard 除零）。
 
-#### 看板「爆款商品」卡：商品级聚合 + 单品渠道 4 分（2026-06-28 上线）
+#### 看板「爆款商品」卡：商品级聚合 + 单品渠道构成（2026-06-28 上线）
 
-代码：`services/order_metrics.py:get_top_products`（榜单）、`services/product_channel_metrics.py`（渠道）、`web/routes/board.py`（`top` 直调 + `/board/product-channels` 懒加载端点）。
+代码：`services/order_metrics.py:get_top_products`（榜单）、`services/product_channel_metrics.py`（渠道）、`web/routes/board.py`（`top` 直调 + `/board/product-detail` 懒加载端点，返渠道 `channels`粗+`fine`细 + 各 SKU 占比）。点击爆款行弹出详情弹窗（大图可点开看原图 / 渠道环图可切粗细 / SKU 明细默认收起）。
 
 - **榜单按 `product_id` 聚合**（非 SKU）：客户「爆款**商品**」语义是商品级，且单品渠道拆分也按 product_id。带 `seller_sku`（款号，多 SKU 取一）/`sku_count`（>1 前端显「N 个规格」）/`main_image_url`（主图，LEFT JOIN `products`）。旧 `get_top_skus`（SKU 粒度）保留供 MCP/报告。
 - **商品小图**：`get_product().main_images[0].thumb_urls[0]`（300×300，CDN 无防盗链可直接 `<img>`），随库存同步顺手入库到 `products.main_image_url`；取图偶发失败时**保留旧图不抹**（`product_store` 仅在新值非空时覆盖）。URL 带签名 query，靠每次同步刷新兜过期。
 - **⚠️ 渠道「两根正交轴」口径**（客户原话「达人/自营素材/直播/商品卡」混了两轴）：
   - `直播/视频/商品卡` = **content_type**（销售内容形式，三者和=100%，店铺级见 §阶段5 `channel_metrics`）。
   - `达人/自营素材` = **account_type**（谁带货：affiliate 达人 / seller 自营，横切视频·直播，商品卡无达人概念）。
-  - 单品级用 `GET /analytics/202605/shop_products/performance`（已交叉拆好 `affiliate/seller × live/video/product_card + shop_tab`），归并成干净 4 分且=总 GMV：**达人(affiliate_total) + 自营素材(seller_live+seller_video) + 商品卡(seller_product_card) + 店铺页(shop_tab)**。
-  - 降级：沙箱/无 analytics → `available=False`，前端显「该商品暂无渠道数据」，不阻断卡片其它信息。
+  - 单品级用 `GET /analytics/202605/shop_products/performance`（已交叉拆好 `affiliate/seller × live/video/product_card + shop_tab`）。**粗分 4**：达人(affiliate_total) / 自营素材(seller_live+seller_video) / 商品卡(seller_product_card) / 店铺页(shop_tab)；**细分**再把 达人→直播/视频/其它(残差)、自营→直播/视频 拆开（前端环图「粗分/细分」可切）。
+  - **⚠️ 真打修正（2026-06-28 prod 真值，沙箱/hp 店全 0 验不出）**：① 各块 GMV 字段名**不统一**——`affiliate_live`=`live_attributed_gmv`、`affiliate_video`=`attributed_video_gmv`、`shop_tab`=`shop_tab_gmv`，其余才是 `attributed_gmv`（原统一读 attributed_gmv 把 店铺页/达人直播/达人视频 恒读成 0）。② 渠道是**多触点归因可重叠**，4 渠道之和 ≠ total（实测 431M vs 389M），`affiliate_total` > live+video（差额=「达人其它」残差桶，保证细分∑=粗分）。故 donut 是**"渠道构成占比"**（各切片之和归一），**非真 GMV 分割**——别再写"4 分=总 GMV"。
+  - 降级：沙箱/无 analytics、或近 ~3-5 天 analytics 滞后致短近窗口返空 → `available=False`，前端显「该商品暂无渠道数据」，不阻断卡片其它信息。
 - **断货风险计数（KPI）**：统一走**销速模型**（库存 ÷ 日均销速 = 可售天数），只算真实风险桶（断货 + 告急 + 预警）。
   - **不用** overview 的静态"库存<10"计数——后者含卖不动的滞销死货，会和"按可售天数"的口径自相矛盾。
 
