@@ -86,6 +86,14 @@
 - **过去某天 / 区间**：整天对整天 / 紧邻等长窗口对比。
 - intraday 报告必须标注"数据截至 HH:MM（印尼时间）"，因为订单每小时才同步一次。
 
+#### 看板环比同款处理（2026-06-28 上线）
+
+看板默认窗口结束在今天（`_resolve_window` 默认 `ed=business_today()`），原 `overview.change` 按"当期整窗 vs 上期整窗"算 → 当期含半天今天被拉低、显示**假暴跌**（窗口越短越夸张，单日 today 可达 −40%）。
+
+- 修法：`web/routes/board.py:_overview_window_and_gmv`，**窗口结束=今天时** cur/prev 都用 `get_gmv_summary_intraday_range` 钉"截至此刻"（与日报同款），不含今日则整天对整天。差别全在上期被截到同一时刻（当期今天本就没有未来单，full 与 intraday 相等）。
+- 后端下发顶层 `window{start,end,includes_today,as_of_label}`；前端经营概览标题显"数据截至 MM-DD HH:MM·今日为当日累计"徽章，利润卡加"今日为当日累计、次日凌晨定稿"提示（利润卡读 `fact_profit_daily` 快照、无法 intraday 切，故只提示不重算）。
+- **广告/ROAS 环比不做 intraday**（结算口径 statement_time 滞后数日，今日近零、cur/prev 对称无假跌）。
+
 ### 4.3 ⚠️ 低单量护栏（2026-06-20 上线）
 
 **问题**：单量个位数时，环比百分比 = 除以一个接近 0 的小基准 / 小样本，被放大成噪声。
