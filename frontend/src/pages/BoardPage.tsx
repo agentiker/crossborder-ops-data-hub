@@ -931,15 +931,19 @@ function AdSpendDialog({
   ads: NonNullable<NonNullable<BoardData["overview"]>["ads"]>;
   onClose: () => void;
 }) {
+  // 锁背景滚动：mount-only，不依赖 onClose（避免父级重渲染令 onClose 变身→effect 重跑→
+  // cleanup 还原成已是 "hidden" 的旧值→关闭后页面卡死）。
   useEffect(() => {
-    const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, []);
+  // Esc 关闭（单独 effect，随 onClose 更新，不碰滚动锁）。
+  useEffect(() => {
     const onEsc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onEsc);
-    return () => {
-      document.body.style.overflow = prev;
-      window.removeEventListener("keydown", onEsc);
-    };
+    return () => window.removeEventListener("keydown", onEsc);
   }, [onClose]);
 
   const complete = ads.complete !== false;
@@ -1467,20 +1471,16 @@ function ProductDetailDialog({
     };
   }, []);
 
-  // Esc：先关灯箱，再关弹窗；打开期间锁背景滚动（文档级滚动下防背景透穿）
+  // Esc：先关灯箱，再关弹窗。（滚动锁已由上面的空依赖 effect 处理，勿在此重复锁——
+  // 否则 lightbox 变化时 cleanup 会把 overflow 错误地还原成已被锁的 "hidden",关弹窗后页面卡死。）
   useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     const onEsc = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (lightbox) setLightbox(false);
       else onClose();
     };
     window.addEventListener("keydown", onEsc);
-    return () => {
-      document.body.style.overflow = prev;
-      window.removeEventListener("keydown", onEsc);
-    };
+    return () => window.removeEventListener("keydown", onEsc);
   }, [lightbox, onClose]);
 
   // 懒加载：打开时拉详情（渠道 + 各 SKU）

@@ -91,8 +91,9 @@
     min-height: 100dvh;
   }
   html {
-    /* StoreClaw 极淡橄榄底色衬出卡片浮起 */
-    background-color: rgba(107, 104, 31, 0.05);
+    /* 背景与 body 同色（hsl(var(--background))）：iOS Safari 底部半透明工具栏会采样页面边缘色，
+       html 在安全区/回弹露出的也是这层——统一成页面底色,底部栏与页面融为一体不发灰。 */
+    background-color: hsl(var(--background));
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;

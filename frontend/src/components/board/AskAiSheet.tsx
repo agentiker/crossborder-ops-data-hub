@@ -98,16 +98,20 @@ export function AskAiSheet({
     return () => ctrl.abort();
   }, [question]);
 
-  // 打开期间锁背景滚动 + Esc 关闭(照搬 AdSpendDialog 经验)。
+  // 锁背景滚动：mount-only。**不依赖 onClose**——否则父级重渲染使 onClose 变身 → effect 重跑,
+  // cleanup 把 overflow 还原成此刻已是 "hidden" 的旧值 → 关闭后页面卡死(文档级滚动下尤为致命)。
   useEffect(() => {
-    const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, []);
+
+  // Esc 关闭(单独 effect,可随 onClose 更新,不碰滚动锁)。
+  useEffect(() => {
     const onEsc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onEsc);
-    return () => {
-      document.body.style.overflow = prev;
-      window.removeEventListener("keydown", onEsc);
-    };
+    return () => window.removeEventListener("keydown", onEsc);
   }, [onClose]);
 
   // 流式追加时滚到底,让最新内容可见。
