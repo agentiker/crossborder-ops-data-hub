@@ -42,7 +42,8 @@ export function InfoTooltip({
       <button
         type="button"
         aria-label="说明"
-        className="inline-flex items-center text-foreground-secondary transition-colors hover:text-foreground focus:outline-none"
+        // -m-1 p-1：放大触控热区（移动端老板手指点得到）而不撑动行内排版。
+        className="-m-1 inline-flex items-center p-1 text-foreground-secondary transition-colors hover:text-foreground focus:outline-none"
         onClick={(e) => {
           e.stopPropagation();
           setOpen((v) => !v);

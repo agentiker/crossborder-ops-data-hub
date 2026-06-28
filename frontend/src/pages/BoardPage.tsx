@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode, type UIEvent } from "react";
 import {
   ArrowUpDown,
+  Calendar,
   ChevronDown,
   DollarSign,
   Gauge,
@@ -232,10 +233,18 @@ function BoardCard({ children }: { children: ReactNode }) {
   );
 }
 
-function CardHead({ title, right }: { title: ReactNode; right?: ReactNode }) {
+function CardHead({
+  title,
+  right,
+  as: As = "h2",
+}: {
+  title: ReactNode;
+  right?: ReactNode;
+  as?: "h2" | "h3";
+}) {
   return (
     <div className="mb-4 flex items-center justify-between">
-      <h2 className="text-base font-semibold text-foreground">{title}</h2>
+      <As className="text-base font-semibold text-foreground">{title}</As>
       {right}
     </div>
   );
@@ -560,12 +569,13 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
   );
 }
 
-/* ── 预估利润卡（plan/17 阶段3a：预估利润 + 结算后真实利润双展示，折 CNY）──────── */
-
-// 数据走 /board/data 的 profit 字段。利润 = GMV − 扣点 − 广告 − 成本 − 退货（折 CNY）。
-// estimated=今早预估（主口径）；settled=结算后真实（3b 回填，本期 null → 显「待结算回填」）。
-// 无聚合数据 available=false → 显「暂无利润数据」。移动端：明细 grid-cols-2 sm:grid-cols-3 自适应。
-// bare=true：去掉外层卡片边框，作为「经营概览」KPI 之后的第四行内嵌渲染（避免卡中卡）。
+/* ── 预估利润卡（plan/17 阶段3a，折 CNY）────────────────────────────────────────
+   结构（shape）：① 预估利润 hero（利润率随附；settled 有值才显真实利润，否则一行小字说明，
+   不再留半幅空 tile）；② 分项构成——GMV 为基数，逐项扣减，每行带「占 GMV%」与淡比例条，
+   利润行高亮，一眼看懂「钱去哪了、利润占多少」（对照 fork DailyReport 的项目/金额/占比，
+   但用淡条而非 ECharts 环图：更轻、移动端友好、成本未录入时不会画出误导的大绿块）；
+   ③ 提示区——缺天/未录成本/含今日/口径说明统一成低权重图标行，不再是多面 amber 墙。
+   bare=true：内嵌「经营概览」第四行，去外框避免卡中卡。 */
 function ProfitCard({
   data,
   loading,
@@ -579,103 +589,159 @@ function ProfitCard({
   const est = p?.estimated;
   const settled = p?.settled;
   const empty = !p?.available ? "暂无利润数据（需接生产店并跑聚合）" : "";
-  // 商品成本未录入（product_cost≈0）→ 利润/利润率虚高，明确标注「未扣商品成本」，不展示误导性利润率。
+  // 商品成本未录入（product_cost≈0）→ 利润/利润率虚高，标注「未扣商品成本」，不展示误导性利润率。
   const costMissing = !!est && (!est.product_cost || est.product_cost === 0);
   // 覆盖天数护栏：预聚合表缺天 → 利润静默少算。有数据但覆盖不全时显告警，让缺失可见。
   const coverageIncomplete = !!p?.available && p?.coverage_complete === false;
-  const detail: { label: string; value: number | undefined }[] = [
-    { label: "GMV", value: est?.gmv },
+  const includesToday = !!data?.window?.includes_today;
+
+  // 分项占 GMV 比例（每行独立、皆为事实——成本=0 时该行 0%，不掩盖）。
+  const gmv = est?.gmv ?? 0;
+  const pctOf = (v: number | undefined) => (gmv > 0 && v != null ? (v / gmv) * 100 : 0);
+  const deductions = [
     { label: "扣点", value: est?.commission_fee },
     { label: "广告费", value: est?.ad_cost },
-    { label: "产品成本", value: est?.product_cost },
+    { label: "商品成本", value: est?.product_cost },
     { label: "预估退货", value: est?.refund_amount },
   ];
+  const marginPct = est?.profit_margin ?? pctOf(est?.gross_profit);
+
+  // 一行分项：淡比例条铺底 + 名称 + 金额 + 占比%。tone 决定底色/字色（base 基数 / cost 扣减 / profit 利润）。
+  const Row = ({
+    label,
+    value,
+    pct,
+    tone,
+    info,
+  }: {
+    label: string;
+    value: number | undefined;
+    pct: number;
+    tone: "base" | "cost" | "profit";
+    info?: ReactNode;
+  }) => (
+    <div className="relative overflow-hidden rounded-md">
+      <div
+        aria-hidden
+        className={`absolute inset-y-0 left-0 ${tone === "profit" ? "bg-positive/15" : "bg-fill-shallow"}`}
+        style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
+      />
+      <div className="relative flex items-center justify-between px-2 py-1.5">
+        <span
+          className={`inline-flex items-center gap-1 text-sm ${
+            tone === "profit"
+              ? "font-semibold text-positive"
+              : tone === "base"
+                ? "font-medium text-foreground"
+                : "text-foreground-secondary"
+          }`}
+        >
+          {label}
+          {info}
+        </span>
+        <span className="flex items-baseline gap-2.5">
+          <span
+            className={`tabnum text-sm ${
+              tone === "profit" ? "font-semibold text-positive" : "text-foreground"
+            }`}
+          >
+            {fmtMoneyCny(value)}
+          </span>
+          <span className="tabnum w-9 text-right text-xs text-foreground-tertiary">
+            {pct.toFixed(0)}%
+          </span>
+        </span>
+      </div>
+    </div>
+  );
+
+  // 提示区：统一成低权重图标行（暖色只落在小图标、文字用深前景色，避免暖白底浅色文字 washed-out）。
+  const notes: { icon: ReactNode; text: ReactNode }[] = [];
+  if (coverageIncomplete)
+    notes.push({
+      icon: <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />,
+      text: `近 ${p?.expected_days ?? "?"} 天里有 ${(p?.expected_days ?? 0) - (p?.covered_days ?? 0)} 天的数据还没算进来，利润偏低，稍后会自动补齐。`,
+    });
+  if (costMissing)
+    notes.push({
+      icon: <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />,
+      text: "还没录入商品成本，这里的利润没扣成本、偏高；录入后才是真实毛利。",
+    });
+  if (includesToday)
+    notes.push({
+      icon: <Calendar className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground-tertiary" />,
+      text: "含今日：当天利润还在累计，次日凌晨结算后才是完整值，别和整天直接比。",
+    });
+  notes.push({
+    icon: <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground-tertiary" />,
+    text: "扣点、广告费取自 TikTok 官方数据（未结算订单用其预估值）；退货按设定的退货率预估。",
+  });
+
   const body = (
     <>
-      <CardHead
-        title={
-          <span className="inline-flex items-center gap-1.5">
-            预估利润（折 CNY）
-            {coverageIncomplete && (
-              <InfoTooltip
-                content={`利润数据不完整：近 ${p?.expected_days ?? "?"} 天仅 ${p?.covered_days ?? 0} 天已聚合，其余待补全，当前金额偏低。`}
-              >
-                <TriangleAlert className="h-4 w-4 text-warning" />
-              </InfoTooltip>
-            )}
-          </span>
-        }
-        right={
-          <span className="text-xs text-foreground-secondary">
-            GMV − 扣点 − 广告 − 成本 − 退货
-          </span>
-        }
-      />
+      <CardHead title="预估利润（折 CNY）" as={bare ? "h3" : "h2"} />
       {loading || empty ? (
         <ChartEmpty loading={loading} empty={empty} height={200} />
       ) : (
         <div className="space-y-4">
-          {/* 两大数：预估利润 / 结算后真实利润 */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="rounded-xl bg-fill-shallow p-4">
-              <div className="text-xs text-foreground-secondary">
-                预估利润（今早）{costMissing && "· 未扣商品成本"}
-              </div>
-              <div className="tabnum text-2xl font-bold text-foreground">
-                {fmtMoneyCny(est?.gross_profit)}
-              </div>
-              {/* 成本未录入时利润率虚高，隐藏；录入后再显真实利润率 */}
+          {/* ① 预估利润 hero（单块，不留空 tile） */}
+          <div className="rounded-xl bg-fill-shallow p-4">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-xs text-foreground-secondary">
+                预估利润{costMissing && "（未扣商品成本）"}
+              </span>
               {!costMissing && est?.profit_margin != null && (
-                <div className="text-xs text-foreground-secondary">
+                <span className="text-xs text-foreground-secondary">
                   利润率 {est.profit_margin.toFixed(1)}%
-                </div>
+                </span>
               )}
             </div>
-            <div className="rounded-xl bg-fill-shallow p-4">
-              <div className="text-xs text-foreground-secondary">结算后真实利润</div>
-              {settled ? (
-                <div className="tabnum text-2xl font-bold text-foreground">
+            <div className="tabnum text-3xl font-bold text-foreground">
+              {fmtMoneyCny(est?.gross_profit)}
+            </div>
+            {settled ? (
+              <div className="mt-1 text-xs text-foreground-secondary">
+                结算后真实利润{" "}
+                <span className="tabnum font-medium text-foreground">
                   {fmtMoneyCny(settled.gross_profit)}
-                </div>
-              ) : (
-                <div className="pt-1 text-sm text-foreground-secondary">待结算回填</div>
-              )}
+                </span>
+              </div>
+            ) : (
+              <div className="mt-1 text-xs text-foreground-tertiary">
+                结算后真实利润将在订单结算（通常数日后）后显示
+              </div>
+            )}
+          </div>
+
+          {/* ② 分项构成：GMV 基数 → 逐项扣减 → 利润 */}
+          <div className="space-y-1">
+            <Row
+              label="GMV"
+              value={est?.gmv}
+              pct={100}
+              tone="base"
+              info={
+                <InfoTooltip content="按下单时间统计，含货到付款（COD）尚未付款的在途订单，所以会比上方「经营概览」里只算已付款的 GMV 大。">
+                  <Info className="h-3.5 w-3.5" />
+                </InfoTooltip>
+              }
+            />
+            {deductions.map((d) => (
+              <Row key={d.label} label={d.label} value={d.value} pct={pctOf(d.value)} tone="cost" />
+            ))}
+            <div className="!mt-2 border-t border-border-shallow pt-1">
+              <Row label="预估利润" value={est?.gross_profit} pct={marginPct} tone="profit" />
             </div>
           </div>
-          {/* 成本拆解明细 */}
-          <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
-            {detail.map((d) => (
-              <div key={d.label} className="flex items-center justify-between text-sm">
-                <span className="inline-flex items-center gap-1 text-foreground-secondary">
-                  {d.label}
-                  {d.label === "GMV" && (
-                    <InfoTooltip content="包含货到付款（COD）在途订单，按下单口径统计；故与上方「经营概览」的已付款口径金额量级不同。">
-                      <Info className="h-3.5 w-3.5" />
-                    </InfoTooltip>
-                  )}
-                </span>
-                <span className="tabnum text-foreground">{fmtMoneyCny(d.value)}</span>
+
+          {/* ③ 提示区：统一低权重图标行 */}
+          <div className="space-y-1.5 border-t border-border-shallow pt-3">
+            {notes.map((n, i) => (
+              <div key={i} className="flex items-start gap-2 text-xs text-foreground-secondary">
+                {n.icon}
+                <span>{n.text}</span>
               </div>
             ))}
-          </div>
-          {coverageIncomplete && (
-            <div className="rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning">
-              ⚠️ 利润数据不完整：近 {p?.expected_days ?? "?"} 天仅 {p?.covered_days ?? 0} 天已聚合，
-              其余待补全，当前金额偏低。
-            </div>
-          )}
-          {costMissing && (
-            <div className="rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning">
-              ⚠️ 商品成本未录入，利润为「未扣商品成本」口径、偏高；录入成本后方为真实毛利。
-            </div>
-          )}
-          {data?.window?.includes_today && (
-            <div className="rounded-lg bg-fill-shallow px-3 py-2 text-xs text-foreground-secondary">
-              📅 今日利润为当日累计，随订单实时增加、次日凌晨定稿，勿与整日直接比较。
-            </div>
-          )}
-          <div className="text-xs text-foreground-secondary">
-            预估口径：扣点/广告含未结算订单 TikTok 官方预估 + 已结算真实；退货按配置率预估
           </div>
         </div>
       )}
@@ -861,8 +927,10 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
         title="经营概览"
         right={
           asOf ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2.5 py-1 text-xs text-warning">
-              📅 {asOf}
+            // 暖色底作「留意」信号,文字用深前景色保证小字可读（amber-on-amber 小字不达 AA）。
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-warning/10 px-2.5 py-1 text-xs text-foreground-secondary">
+              <Calendar className="h-3.5 w-3.5 shrink-0 text-warning" />
+              {asOf}
             </span>
           ) : undefined
         }
