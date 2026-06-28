@@ -620,12 +620,14 @@ function ProfitCard({
     tone: "base" | "cost" | "profit";
     info?: ReactNode;
   }) => (
-    <div className="relative overflow-hidden rounded-md">
-      <div
-        aria-hidden
-        className={`absolute inset-y-0 left-0 ${tone === "profit" ? "bg-positive/15" : "bg-fill-shallow"}`}
-        style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
-      />
+    <div className="relative rounded-md">
+      {/* 比例条单独放进裁剪层；行容器本身不 overflow-hidden，否则会把 tooltip 气泡一起裁没。 */}
+      <div className="absolute inset-0 overflow-hidden rounded-md" aria-hidden>
+        <div
+          className={`absolute inset-y-0 left-0 ${tone === "profit" ? "bg-positive/15" : "bg-fill-shallow"}`}
+          style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
+        />
+      </div>
       <div className="relative flex items-center justify-between px-2 py-1.5">
         <span
           className={`inline-flex items-center gap-1 text-sm ${
@@ -660,21 +662,21 @@ function ProfitCard({
   if (coverageIncomplete)
     notes.push({
       icon: <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />,
-      text: `近 ${p?.expected_days ?? "?"} 天里有 ${(p?.expected_days ?? 0) - (p?.covered_days ?? 0)} 天的数据还没算进来，利润偏低，稍后会自动补齐。`,
+      text: `近 ${p?.expected_days ?? "?"} 天缺 ${(p?.expected_days ?? 0) - (p?.covered_days ?? 0)} 天数据，利润偏低，将自动补齐。`,
     });
   if (costMissing)
     notes.push({
       icon: <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />,
-      text: "还没录入商品成本，这里的利润没扣成本、偏高；录入后才是真实毛利。",
+      text: "未录入商品成本，利润偏高。",
     });
   if (includesToday)
     notes.push({
       icon: <Calendar className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground-tertiary" />,
-      text: "含今日：当天利润还在累计，次日凌晨结算后才是完整值，别和整天直接比。",
+      text: "含今日，为当日累计、次日凌晨定稿。",
     });
   notes.push({
     icon: <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground-tertiary" />,
-    text: "扣点、广告费取自 TikTok 官方数据（未结算订单用其预估值）；退货按设定的退货率预估。",
+    text: "扣点、广告费取自 TikTok 官方，退货按设定退货率预估。",
   });
 
   const body = (
