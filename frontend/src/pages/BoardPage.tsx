@@ -401,10 +401,13 @@ function ChannelPie({ data, loading }: { data: BoardData | null; loading: boolea
           radius: ["45%", "70%"],
           center: ["50%", "44%"],
           itemStyle: { borderRadius: 6, borderColor: t.card, borderWidth: 2 },
-          label: { show: false },
-          // hover 时禁用 emphasis：token 颜色是 CSS4 空格分隔 hsl()，zrender 推导高亮色解析失败
-          // 会把扇区画没（"鼠标指上去这块就不显示"）。tooltip 由 trigger:item 独立驱动，不受影响。
-          emphasis: { disabled: true },
+          label: { show: false, position: "center" },
+          // hover：扇区放大 + 中心显名称/占比（颜色解析已在 useChartTokens 规整为逗号 hsl，不再画没）。
+          emphasis: {
+            scale: true,
+            scaleSize: 6,
+            label: { show: true, position: "center", fontSize: 13, fontWeight: "bold", color: t.text },
+          },
           data: (cb?.channels || []).map((c) => ({
             name: c.label,
             value: c.gmv,
@@ -1079,57 +1082,86 @@ function ProductThumb({ src, rank }: { src?: string; rank: number }) {
   );
 }
 
-// 渠道配色。粗分 4 键各占一色；细分 6 键沿用所属粗分的色系（达人=primary 家族、自营=positive
-// 家族），video 子项降透明度区分 live，使「细分」视觉上仍能归到「粗分」的组里。
-const CHANNEL_COLORS: Record<string, { tok: keyof ReturnType<typeof useChartTokens>; opacity?: number }> = {
+// 渠道配色：显式高彩度 hex（主题 --primary 是近黑墨绿、彩度太低区分不开，故单品环图改用
+// 鲜明配色）。达人=靛蓝系、自营=翠绿系，子项渐浅，使「细分」视觉上仍归到「粗分」的组里。
+const CHANNEL_HEX: Record<string, string> = {
   // 粗分
-  affiliate: { tok: "primary" },
-  seller_content: { tok: "positive" },
-  product_card: { tok: "warning" },
-  shop_tab: { tok: "sub" },
-  // 细分（同色系区分子项：达人=primary 家族、自营=positive 家族）
-  affiliate_live: { tok: "primary" },
-  affiliate_video: { tok: "primary", opacity: 0.6 },
-  affiliate_other: { tok: "primary", opacity: 0.32 },
-  seller_live: { tok: "positive" },
-  seller_video: { tok: "positive", opacity: 0.55 },
+  affiliate: "#6366f1", // 靛蓝
+  seller_content: "#10b981", // 翠绿
+  product_card: "#f59e0b", // 琥珀
+  shop_tab: "#64748b", // 石板灰
+  // 细分（达人 靛蓝渐浅 / 自营 翠绿渐浅）
+  affiliate_live: "#6366f1",
+  affiliate_video: "#818cf8",
+  affiliate_other: "#c7d2fe",
+  seller_live: "#10b981",
+  seller_video: "#6ee7b7",
 };
+const channelHex = (key: string) => CHANNEL_HEX[key] ?? "#94a3b8";
 
-// 渠道环图（纯渲染，数据由弹窗 fetch 后传入）。channels 可为粗分 4 或细分 6。
+// 渠道环图（数据由弹窗 fetch 后传入）。channels 可为粗分 4 或细分 7。
+// hover：扇区放大 + 中心显名称/占比；下方常驻图例列出 色点·名称·占比%（比纯 hover 直观）。
 function ChannelDonut({ channels }: { channels: ProductChannels["channels"] }) {
-  const t = useChartTokens();
+  const slices = useMemo(() => channels.filter((c) => c.gmv > 0), [channels]);
   const option = useMemo(
     () => ({
       tooltip: {
         trigger: "item",
+        backgroundColor: "#fff",
+        borderColor: "#e5e7eb",
+        textStyle: { color: "#374151", fontSize: 12 },
         formatter: (p: { name: string; value: number; percent: number }) =>
           `${p.name}<br/>${fmtMoney(p.value)} (${p.percent}%)`,
       },
-      legend: { bottom: 0, textStyle: { color: t.sub }, itemWidth: 10, itemHeight: 10 },
       series: [
         {
           type: "pie",
-          radius: ["48%", "72%"],
-          center: ["50%", "42%"],
-          itemStyle: { borderRadius: 5, borderColor: t.card, borderWidth: 2 },
-          label: { show: false },
-          emphasis: { disabled: true }, // 同 ChannelPie：避免 hover 时扇区被高亮色推导画没
-          data: channels
-            .filter((c) => c.gmv > 0)
-            .map((c) => {
-              const cfg = CHANNEL_COLORS[c.key] ?? { tok: "sub" as const };
-              return {
-                name: c.label,
-                value: c.gmv,
-                itemStyle: { color: t[cfg.tok] as string, opacity: cfg.opacity ?? 1 },
-              };
-            }),
+          radius: ["54%", "80%"],
+          center: ["50%", "50%"],
+          avoidLabelOverlap: false,
+          itemStyle: { borderRadius: 6, borderColor: "#fff", borderWidth: 2 },
+          label: { show: false, position: "center" },
+          emphasis: {
+            scale: true,
+            scaleSize: 6,
+            label: {
+              show: true,
+              position: "center",
+              formatter: "{b}\n{d}%",
+              fontSize: 14,
+              fontWeight: "bold",
+              color: "#111827",
+              lineHeight: 20,
+            },
+          },
+          data: slices.map((c) => ({
+            name: c.label,
+            value: c.gmv,
+            itemStyle: { color: channelHex(c.key) },
+          })),
         },
       ],
     }),
-    [channels, t],
+    [slices],
   );
-  return <EChart option={option} height={220} />;
+  return (
+    <div>
+      <EChart option={option} height={180} />
+      {/* 常驻图例：色点 + 名称 + 占比%（始终可见，不必 hover） */}
+      <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1.5">
+        {slices.map((c) => (
+          <div key={c.key} className="flex items-center gap-1.5 text-xs">
+            <span
+              className="size-2.5 shrink-0 rounded-sm"
+              style={{ backgroundColor: channelHex(c.key) }}
+            />
+            <span className="min-w-0 flex-1 truncate text-foreground-secondary">{c.label}</span>
+            <span className="tabnum shrink-0 font-semibold text-foreground">{c.pct}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 // 商品详情弹窗（轻量，照 forkStoreClaw Dialog：backdrop + Esc + body 锁滚 + fade-up）。
@@ -1149,17 +1181,26 @@ function ProductDetailDialog({
   const [imgFailed, setImgFailed] = useState(false);
   const [granularity, setGranularity] = useState<"coarse" | "fine">("coarse"); // 渠道粒度：粗 4 / 细 6
   const [skuOpen, setSkuOpen] = useState(false); // SKU 明细默认收起，点击展开
+  const [lightbox, setLightbox] = useState(false); // 主图灯箱（站内弹大图，不开新标签页）
 
-  // body 锁滚 + Esc 关闭（fork Dialog 行为）
+  // body 锁滚（fork Dialog 行为）
   useEffect(() => {
     document.body.style.overflow = "hidden";
-    const onEsc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onEsc);
     return () => {
       document.body.style.overflow = "";
-      window.removeEventListener("keydown", onEsc);
     };
-  }, [onClose]);
+  }, []);
+
+  // Esc：先关灯箱，再关弹窗
+  useEffect(() => {
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (lightbox) setLightbox(false);
+      else onClose();
+    };
+    window.addEventListener("keydown", onEsc);
+    return () => window.removeEventListener("keydown", onEsc);
+  }, [lightbox, onClose]);
 
   // 懒加载：打开时拉详情（渠道 + 各 SKU）
   useEffect(() => {
@@ -1197,11 +1238,11 @@ function ProductDetailDialog({
         {/* 头部：大图（可点开看原图）+ 完整名 + 款号/规格 + 关闭 */}
         <div className="flex items-start gap-3.5 border-b border-border-shallow p-4">
           {showImg ? (
-            <a
-              href={product.image_url}
-              target="_blank"
-              rel="noreferrer"
+            <button
+              type="button"
+              onClick={() => setLightbox(true)}
               title="查看大图"
+              aria-label="查看大图"
               className="group relative size-20 shrink-0 overflow-hidden rounded-xl ring-1 ring-border-shallow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <img
@@ -1213,7 +1254,7 @@ function ProductDetailDialog({
               <span className="absolute inset-0 flex items-center justify-center bg-black/0 text-transparent transition-colors group-hover:bg-black/35 group-hover:text-white">
                 <ZoomIn className="size-5" />
               </span>
-            </a>
+            </button>
           ) : (
             <div className="flex size-20 shrink-0 items-center justify-center rounded-xl bg-fill-default text-foreground-secondary">
               <ShoppingBag size={26} />
@@ -1335,6 +1376,32 @@ function ProductDetailDialog({
           )}
         </div>
       </div>
+
+      {/* 主图灯箱：站内全屏弹大图（点遮罩/X/Esc 关闭，不离开看板） */}
+      {lightbox && showImg && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-6"
+          onClick={() => setLightbox(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="商品大图"
+        >
+          <img
+            src={product.image_url}
+            alt={productLabel(product)}
+            className="max-h-[86vh] max-w-[92vw] rounded-xl object-contain shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            type="button"
+            aria-label="关闭大图"
+            onClick={() => setLightbox(false)}
+            className="absolute right-4 top-4 rounded-full bg-white/15 p-2 text-white backdrop-blur transition-colors hover:bg-white/25"
+          >
+            <X className="size-5" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1509,8 +1576,12 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
           center: ["50%", "44%"],
           avoidLabelOverlap: false,
           itemStyle: { borderRadius: 6, borderColor: t.card, borderWidth: 2 },
-          label: { show: false },
-          emphasis: { disabled: true }, // 同 ChannelPie：避免 hover 时扇区被高亮色推导画没
+          label: { show: false, position: "center" },
+          emphasis: {
+            scale: true,
+            scaleSize: 6,
+            label: { show: true, position: "center", fontSize: 13, fontWeight: "bold", color: t.text },
+          },
           data: [
             { name: "缺货", value: stockout, itemStyle: { color: t.negative } },
             { name: "告急", value: critical, itemStyle: { color: t.warning } },

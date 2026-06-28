@@ -30,10 +30,14 @@ export interface ChartTokens {
 
 function readTokens(): ChartTokens {
   const s = getComputedStyle(document.documentElement);
-  // HSL 通道值（shadcn 基础色）需 hsl() 包裹
+  // HSL 通道值（shadcn 基础色）需 hsl() 包裹。
+  // ⚠️ CSS 变量是 CSS4 空格分隔（如 "158 18% 12%"），但 zrender 的颜色解析只认逗号分隔的
+  // hsl()——空格写法它解析失败 → ECharts 在 hover/emphasis 推导高亮色时得到透明，扇区被画没
+  // （"鼠标指上去这块就不显示"）。故规整成 "158, 18%, 12%"。canvas 两种写法都吃，无副作用。
   const hsl = (n: string) => {
     const raw = s.getPropertyValue(n).trim();
-    return raw ? `hsl(${raw})` : "#888";
+    if (!raw) return "#888";
+    return `hsl(${raw.includes(",") ? raw : raw.replace(/\s+/g, ", ")})`;
   };
   // 半透明真值（StoreClaw 前景/描边）直接取用，不能再包 hsl()
   const raw = (n: string) => s.getPropertyValue(n).trim() || "#888";
