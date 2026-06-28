@@ -100,13 +100,13 @@ export function AppShell() {
       {/* 移动抽屉 */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+          className="fixed inset-0 z-[60] bg-black/40 lg:hidden"
           onClick={() => setMobileOpen(false)}
         />
       )}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-[280px] flex-col border-r border-border-shallow bg-background transition-transform duration-300 lg:hidden",
+          "fixed inset-y-0 left-0 z-[70] flex w-[280px] flex-col border-r border-border-shallow bg-background transition-transform duration-300 lg:hidden",
           mobileOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >

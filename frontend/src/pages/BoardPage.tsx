@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode, type UIEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState, createContext, useContext, type ReactNode, type UIEvent } from "react";
 import {
   ArrowUpDown,
   Calendar,
@@ -47,6 +46,7 @@ import {
   returnsOption,
   trafficOption,
 } from "@/components/board/demo-data";
+import { AskAiSheet } from "@/components/board/AskAiSheet";
 import { cn } from "@/lib/utils";
 
 // 照搬 forkStoreClaw/src/components/Dashboard/* 的版式/卡片/分段 tab/图表观感（1:1）。
@@ -101,6 +101,8 @@ export function BoardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0); // 错误态「重试」手动重触发 fetch
+  // 「问 AI」抽屉：卡片口径疑问经 AskAiContext 上抛到此,就地弹出 AI 解答(不跳转对话页)。
+  const [askQ, setAskQ] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -147,6 +149,7 @@ export function BoardPage() {
   };
 
   return (
+    <AskAiContext.Provider value={setAskQ}>
     <section className="flex h-full flex-col">
       {/* Header（照 fork DashboardPage：h-[68px] + 底边） */}
       <header className="sticky top-0 z-50 flex h-[68px] shrink-0 items-center justify-between gap-2 border-b border-border-shallow bg-background px-4">
@@ -258,6 +261,8 @@ export function BoardPage() {
         </div>
       </div>
     </section>
+    {askQ !== null && <AskAiSheet question={askQ} onClose={() => setAskQ(null)} />}
+    </AskAiContext.Provider>
   );
 }
 
@@ -292,23 +297,31 @@ function BoardCard({ children }: { children: ReactNode }) {
   );
 }
 
-// 「问 AI」入口：把卡片口径疑问带到对话页预填（?ask=），老板可改可补再发。
+// 「问 AI」入口：点击就地在看板弹出 AI 解答抽屉（不再跳转对话页）。
 // AI 端接 ops_business_rules 工具，依 docs/business-rules.md 权威口径作答。
 // 两种形态：link=极小文字链（贴 ⓘ 说明旁，低权重不挤数字区）；button=弹窗底部按钮。
 // 移动端：触控热区放大（-m-1 p-1 / py-1.5），与既有 ⓘ 同处呈现，不新增视觉噪声。
+//
+// 问题经 AskAiContext 上抛到 BoardPage 顶层开抽屉——避免把 onAsk 逐层穿过卡片组件。
+const AskAiContext = createContext<(question: string) => void>(() => {});
+
 function AskAiLink({
   question,
   variant = "link",
   className,
+  onBeforeAsk,
 }: {
   question: string;
   variant?: "link" | "button";
   className?: string;
+  // 打开抽屉前的副作用,如关掉所在的广告弹窗(避免抽屉叠在弹窗之上)。
+  onBeforeAsk?: () => void;
 }) {
-  const navigate = useNavigate();
+  const ask = useContext(AskAiContext);
   const go = (e: React.MouseEvent) => {
     e.stopPropagation(); // 别触发卡片/弹窗自身的点击（如弹窗遮罩关闭）
-    navigate(`/?ask=${encodeURIComponent(question)}`);
+    onBeforeAsk?.();
+    ask(question);
   };
   if (variant === "button") {
     return (
@@ -939,7 +952,7 @@ function AdSpendDialog({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="max-h-[86vh] w-full overflow-y-auto rounded-t-2xl bg-card p-5 shadow-xl sm:max-w-md sm:rounded-2xl"
+        className="max-h-[86vh] w-full overflow-y-auto rounded-t-2xl bg-card p-5 pb-[max(1.25rem,calc(env(safe-area-inset-bottom)+0.75rem))] shadow-xl sm:max-w-md sm:rounded-2xl sm:pb-5"
       >
         <div className="mb-3 flex items-start justify-between">
           <div>
@@ -1002,6 +1015,7 @@ function AdSpendDialog({
         <div className="mt-4 flex justify-end">
           <AskAiLink
             variant="button"
+            onBeforeAsk={onClose}
             question="看板广告卡：付费投放（GMV Max）和达人带货佣金（TAP / 联盟）有什么区别？为什么我的 ROAS 有时显示『结算中』、暂不可比？"
           />
         </div>
