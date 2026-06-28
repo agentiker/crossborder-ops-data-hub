@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { X, ChevronUp } from "lucide-react";
+import { X } from "lucide-react";
 import { sendChat, type Message, type ThinkingStep } from "@/api";
 import { ChatMessage, type ThinkingStep as ForkStep } from "@/components/chat/ChatMessage";
 import { ChatInput } from "@/components/chat/ChatInput";
@@ -49,12 +49,47 @@ export function AskAiSheet({
   const [liveSteps, setLiveSteps] = useState<ThinkingStep[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false); // 移动端上拉铺满
+  // 移动端 sheet 高度（vh）。两个吸附档：75（默认）/ 95（铺满）。拖拽时跟手设连续值，松手吸附。
+  const COLLAPSED = 75;
+  const EXPANDED = 95;
+  const [sheetVh, setSheetVh] = useState(COLLAPSED);
+  const dragRef = useRef<{ startY: number; startVh: number } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const convIdRef = useRef<number | null>(null); // 连续对话续传的会话 id
   const abortRef = useRef<AbortController | null>(null);
   const sentFirstRef = useRef(false); // 防 StrictMode/重渲染重复发首问
+
+  // 顶部 handle 区的拖拽：往上拖 → 高度增大（铺满方向），松手吸附到最近档位。
+  // 用 vh 计算（拖拽位移 / 视口高 * 100），夹紧在 [COLLAPSED, EXPANDED]。
+  // movedRef 区分「拖拽」与「轻点」：拖过则吞掉随后的 click（touchend 后浏览器仍补发 click）。
+  const movedRef = useRef(false);
+  const onDragStart = (y: number) => {
+    dragRef.current = { startY: y, startVh: sheetVh };
+    movedRef.current = false;
+  };
+  const onDragMove = (y: number) => {
+    const d = dragRef.current;
+    if (!d) return;
+    if (Math.abs(y - d.startY) > 4) movedRef.current = true;
+    const deltaVh = ((d.startY - y) / window.innerHeight) * 100; // 上拖为正
+    const next = Math.max(COLLAPSED, Math.min(EXPANDED, d.startVh + deltaVh));
+    setSheetVh(next);
+  };
+  const onDragEnd = () => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    // 吸附到最近档位（中点为界）。
+    setSheetVh((v) => (v >= (COLLAPSED + EXPANDED) / 2 ? EXPANDED : COLLAPSED));
+  };
+  const onHandleClick = () => {
+    if (movedRef.current) {
+      movedRef.current = false;
+      return; // 刚才是拖拽，不当点击处理
+    }
+    setSheetVh((v) => (v >= (COLLAPSED + EXPANDED) / 2 ? COLLAPSED : EXPANDED));
+  };
+  const expanded = sheetVh >= (COLLAPSED + EXPANDED) / 2;
 
   // 发一轮（首问或追问）：复用 sendChat，续传 convIdRef。
   async function send(text: string) {
@@ -155,22 +190,28 @@ export function AskAiSheet({
     >
       <div
         onClick={(e) => e.stopPropagation()}
+        style={{ height: `${sheetVh}vh` }}
         className={cn(
-          "flex w-full flex-col rounded-t-2xl bg-card shadow-xl transition-[height] duration-300",
-          "sm:h-auto sm:max-h-[80vh] sm:max-w-lg sm:rounded-2xl",
-          expanded ? "h-[95vh]" : "h-[75vh]",
+          "flex w-full flex-col rounded-t-2xl bg-card shadow-xl",
+          // 拖拽中不加 transition（跟手）；松手吸附时由 onDragEnd 触发的 state 变化走过渡。
+          dragRef.current ? "" : "transition-[height] duration-300",
+          // 桌面：忽略 sheetVh 高度，回居中弹窗。
+          "sm:!h-auto sm:max-h-[80vh] sm:max-w-lg sm:rounded-2xl",
         )}
       >
-        {/* 顶部条：drag handle（移动端，点击上拉/收起） + 标题 + 关闭 */}
+        {/* 顶部条：drag handle（移动端可拖拽改高度 + 点击切换档位） + 标题 + 关闭 */}
         <div className="shrink-0 border-b border-border-shallow">
-          <button
-            type="button"
+          <div
+            role="button"
             aria-label={expanded ? "收起" : "展开铺满"}
-            onClick={() => setExpanded((v) => !v)}
-            className="mx-auto flex w-full justify-center py-2 sm:hidden"
+            onClick={onHandleClick}
+            onTouchStart={(e) => onDragStart(e.touches[0].clientY)}
+            onTouchMove={(e) => onDragMove(e.touches[0].clientY)}
+            onTouchEnd={onDragEnd}
+            className="mx-auto flex w-full cursor-grab touch-none justify-center py-3 active:cursor-grabbing sm:hidden"
           >
             <span className="h-1 w-10 rounded-full bg-border" />
-          </button>
+          </div>
           <div className="flex items-center justify-between px-5 pb-2.5 pt-1 sm:pt-3">
             <div className="flex items-center gap-2">
               <h3 className="text-base font-semibold text-foreground">AI 解答</h3>
@@ -219,18 +260,6 @@ export function AskAiSheet({
         <div className="shrink-0 border-t border-border-shallow px-3 pt-2 pb-[max(0.5rem,calc(env(safe-area-inset-bottom)+0.25rem))]">
           <ChatInput onSend={send} disabled={streaming} placeholder="继续追问……" />
         </div>
-
-        {/* 移动端展开提示（仅未铺满时，引导可上拉看更多） */}
-        {!expanded && (
-          <button
-            type="button"
-            onClick={() => setExpanded(true)}
-            className="flex shrink-0 items-center justify-center gap-1 border-t border-border-shallow py-1 text-xs text-foreground-tertiary sm:hidden"
-          >
-            <ChevronUp className="h-3.5 w-3.5" />
-            上拉铺满
-          </button>
-        )}
       </div>
     </div>
   );

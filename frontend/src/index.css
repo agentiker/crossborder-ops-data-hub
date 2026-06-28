@@ -112,7 +112,9 @@
    默认灰。放一个不可见的 fixed 诱饵专供采样，背景=页面底色，让底部栏与页面融为一体。
    尺寸阈值（社区实测）：bottom<4px / width>88% / min-height>2px 才能压过 body 被优先采样。
    只在支持 -webkit-touch-callout（≈iOS Safari）时启用，避免影响桌面/安卓。
-   pointer-events:none + 低 z-index：纯采样诱饵，不挡交互、视觉上被内容盖住不可见。 */
+   z-index:-1 沉到页面内容之下：被内容盖住不挡视觉，仅在底部空白处露出（与 body 同色不可见），
+   工具栏收起时也不会浮现成一条可见矩形条；负 z-index 仍在 body 背景之上，不影响 Safari 采样。
+   pointer-events:none：纯采样诱饵，不挡交互。 */
 @supports (-webkit-touch-callout: none) {
   #ios-toolbar-tint {
     position: fixed;
@@ -121,7 +123,7 @@
     width: 90%;
     min-height: 15px;
     background-color: hsl(var(--background));
-    z-index: 0;
+    z-index: -1;
     pointer-events: none;
   }
 }
