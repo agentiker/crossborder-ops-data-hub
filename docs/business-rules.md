@@ -127,6 +127,16 @@
 - **断货风险计数（KPI）**：统一走**销速模型**（库存 ÷ 日均销速 = 可售天数），只算真实风险桶（断货 + 告急 + 预警）。
   - **不用** overview 的静态"库存<10"计数——后者含卖不动的滞销死货，会和"按可售天数"的口径自相矛盾。
 
+#### 看板「近 30 天新品」卡 + 爆单提醒（2026-06-28 上线）
+
+代码：`services/order_metrics.py:get_new_product_trends`（卡片取数）、`get_new_product_ids`（告警标注用）、`web/routes/board.py:/board/new-products`（懒加载端点）、前端 `BoardPage.tsx:NewProducts`。
+
+- **新品口径 = 近 30 天上线**：`Product.source_create_time` 落 `[as_of-29, as_of]` 且 `status='ACTIVATE'`（在售口径，见 §3）。卡片据实命名「近 30 天新品」（客户口头叫「本周新品」，但统计口径是近一个月，命名取口径透明）。
+- **只展示已起量的**：窗口内 `total_units>0` 才进卡（测款未起量的不刷屏）；按「爆单优先 → 总销量降序」排。
+- **销量曲线**：付款口径（`paid_time` 非空）按印尼业务日（`to_business_day`）归日的每日 line_item 条数，与 `get_gmv_trend` 同口径。画布从「上线业务日」（或窗口起，取较晚者）连续补零到 as_of，诚实反映「上线即起跑」。
+- **爆单判定**：曲线峰值单日销量 ≥ `settings.hotsell_daily_units_threshold`（默认 **50**），与飞书爆单告警**同阈同口径**。界面爆单徽章由端点确定性计算、**不依赖告警 timer**（看板打开即算）；飞书侧见 §7 规则 5 的新品标注。
+- 降级：无 `Product` 数据 / 取数异常 → 端点 `available=False`，前端显「新品数据暂不可用」，不阻断看板其它卡。
+
 #### ⚠️ 断货预警「两套口径」（2026-06-21 上线）
 
 销速模型会把**近 N 天零销量的 SKU 整个排除**（`if units == 0: continue`），初衷是"只盯卖得动快断货的、不被滞销死货打扰"。但**低销量店铺**几乎所有 SKU 零销量 → 断货预警表常年空。根因是**零销量 SKU 不参与判断**，**不是阈值**（调 `critical_days`/`warning_days` 对零销量 SKU 无效）。故拆成两套口径，由 `get_stock_risk(include_all=...)` 控制（`services/stock_metrics.py`）：
@@ -169,7 +179,7 @@
 2. **低库存 / 断货**（按可售天数 = 销速模型）。
 3. **扣点率异常（结算口径）**（见 §7.1）。
 4. **及时费率异常（预估口径）**（见 §7.1，B1）。
-5. **爆单**（某商品当日已付款销量破阈值）。
+5. **爆单**（某商品当日已付款销量破阈值）。命中商品若为**近 30 天新品**（`get_new_product_ids`），文案标注 🌟「新品爆发」+ 追单/备货提示——同阈同去重，**不重复推送**（新品爆单已被本规则覆盖，仅加醒目标注，见 §4.4）。
 
 走 Data Hub 确定性判定 + `openclaw message send` 直投（0-LLM），与日报（过 LLM）分离。
 
@@ -240,3 +250,4 @@
 | 2026-06-22 | 商品/库存同步只入库 `ACTIVATE`（源头 status 过滤 + prune 清退非在售，防草稿/僵尸污染），见 §3 | `flows/sync_inventory.py`、`platforms/tiktok_shop/client.py`、`services/{product,inventory}_store.py` |
 | 2026-06-27 | 费率告警业务规则落档（§7.1）：费率定义=官方扣费额÷订单GMV同批订单/含税不含物流、结算+及时双口径、双阈值+护栏、B2分项归因(交集费项·跨口径降级·80%覆盖)、配置参数表、触发vs诊断粒度分离 | 本文 §7.1、`services/fee_rate_{metrics,alerts}.py`、`flows/scan_fulfillment_alerts.py` |
 | 2026-06-27 | §7.1 补「类目轴为何暂缓」决策：真实缺口(单类目调佣被总费率稀释)但当前不做(数据薄/B1B2已覆盖普涨/需先接 get_product)，重启条件 + 届时须诊断展示不得独立触发 | 本文 §7.1 |
+| 2026-06-28 | 看板「近 30 天新品」卡：近30天上线在售品的每日销量曲线 + 单日破阈(=50,同爆单告警)界面提醒；飞书爆单告警(规则5)对新品标注 🌟，同阈不重复推送 | 本文 §4.4/§7、`services/order_metrics.py`、`services/hotsell_alerts.py`、`web/routes/board.py` |

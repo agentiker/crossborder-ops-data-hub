@@ -127,6 +127,33 @@ export interface ProductDetail {
   skus: SkuBreakdown[];
 }
 
+// 近 30 天新品（懒加载）：每个新品带每日销量曲线 + 爆单判定（峰值单日 ≥ threshold）。
+export interface NewProductPoint {
+  date: string;
+  units: number;
+}
+export interface NewProduct {
+  product_id: string;
+  title: string;
+  seller_sku?: string | null;
+  sku_count: number;
+  image_url?: string | null;
+  source_create_time?: string | null;
+  days_online: number;
+  total_units: number;
+  total_gmv: number;
+  series: NewProductPoint[];
+  peak_units: number;
+  peak_date?: string | null;
+  burst: boolean;
+}
+export interface NewProducts {
+  items: NewProduct[];
+  threshold: number;
+  window: { lookback_days: number; as_of: string };
+  available: boolean;
+}
+
 export interface LowStockItem {
   sku_id: string;
   product_name?: string;
@@ -331,6 +358,14 @@ export const api = {
     if (q.platform) params.set("platform", q.platform);
     if (q.country) params.set("country", q.country);
     return getJSON<ProductDetail>(`/board/product-detail?${params.toString()}`);
+  },
+  // 近 30 天新品（懒加载）：窗口/阈值后端固定，仅传范围/平台/区域过滤。看板首载后再请求，不拖慢首屏。
+  newProducts: (q: BoardQuery = {}) => {
+    const params = new URLSearchParams();
+    if (q.scope) params.set("scope", q.scope);
+    if (q.platform) params.set("platform", q.platform);
+    if (q.country) params.set("country", q.country);
+    return getJSON<NewProducts>(`/board/new-products?${params.toString()}`);
   },
   adminRoles: () => getJSON<{ items: RoleRow[] }>("/api/admin/roles"),
   adminScopes: () => getJSON<{ items: AdminScopeOption[] }>("/api/admin/scopes"),

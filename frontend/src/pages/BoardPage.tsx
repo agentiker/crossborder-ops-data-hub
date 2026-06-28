@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   DollarSign,
+  Flame,
   Gauge,
   Globe,
   Info,
@@ -13,6 +14,7 @@ import {
   Search,
   ShoppingBag,
   ShoppingCart,
+  Sparkles,
   Store,
   TrendingUp,
   TriangleAlert,
@@ -24,6 +26,7 @@ import {
   type BoardData,
   type BoardQuery,
   type LowStockItem,
+  type NewProduct,
   type ProductChannels,
   type ProductDetail,
   type TopSku,
@@ -210,6 +213,14 @@ export function BoardPage() {
                 />
                 <InventoryHealth data={data} loading={loading} />
               </div>
+              <NewProducts
+                query={{
+                  scope,
+                  platform: platform || undefined,
+                  country: region || undefined,
+                }}
+                reloadKey={reloadKey}
+              />
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                 <ChannelPie data={data} loading={loading} />
                 <FeeRateMonitor data={data} loading={loading} />
@@ -1497,6 +1508,268 @@ function HotProducts({
           query={query}
           onClose={() => setOpenProduct(null)}
         />
+      )}
+    </BoardCard>
+  );
+}
+
+/* ── 近 30 天新品（懒加载：每个新品日销量曲线 + 单日破阈爆单提醒）────────────────
+   口径见 docs/business-rules §4.4：近 30 天上线在售商品、付款口径销量、爆单阈值与飞书告警同源
+   （settings.hotsell_daily_units_threshold=50）。界面爆单徽章由端点确定性计算，不依赖告警 timer。 */
+
+// 短日期 MM-DD（series.date 为 ISO yyyy-mm-dd）。
+function mmdd(iso: string): string {
+  const p = iso.split("-");
+  return p.length === 3 ? `${p[1]}-${p[2]}` : iso;
+}
+
+// 迷你销量曲线（行内 sparkline，无轴）。爆单品用警示红、峰值打点；常态用主墨绿。
+function NewProductSparkline({ p }: { p: NewProduct }) {
+  const t = useChartTokens();
+  const option = useMemo(() => {
+    const units = p.series.map((s) => s.units);
+    const color = p.burst ? t.negative : t.primary;
+    const peakIdx = p.peak_date ? p.series.findIndex((s) => s.date === p.peak_date) : -1;
+    return {
+      animation: false,
+      grid: { left: 2, right: 2, top: 6, bottom: 4 },
+      xAxis: { type: "category", show: false, data: p.series.map((s) => s.date) },
+      yAxis: { type: "value", show: false, min: 0 },
+      series: [
+        {
+          type: "line",
+          data: units,
+          smooth: true,
+          symbol: "none",
+          lineStyle: { width: 2, color },
+          areaStyle: { color, opacity: 0.1 },
+          markPoint:
+            p.burst && peakIdx >= 0
+              ? {
+                  symbol: "circle",
+                  symbolSize: 7,
+                  itemStyle: { color: t.negative },
+                  label: { show: false },
+                  data: [{ coord: [peakIdx, p.peak_units] }],
+                }
+              : undefined,
+        },
+      ],
+    };
+  }, [p, t]);
+  return <EChart option={option} height={44} />;
+}
+
+// 展开后的完整曲线：带轴 + 爆单阈值虚线 + 峰值打点 + tooltip。
+function NewProductChart({ p, threshold }: { p: NewProduct; threshold: number }) {
+  const t = useChartTokens();
+  const option = useMemo(() => {
+    const peakIdx = p.peak_date ? p.series.findIndex((s) => s.date === p.peak_date) : -1;
+    const color = p.burst ? t.negative : t.primary;
+    return {
+      animation: false,
+      grid: { left: 36, right: 14, top: 24, bottom: 24 },
+      tooltip: {
+        trigger: "axis",
+        backgroundColor: t.card,
+        borderColor: t.grid,
+        textStyle: { color: t.text, fontSize: 12 },
+        formatter: (ps: { dataIndex: number; value: number }[]) => {
+          const i = ps[0]?.dataIndex ?? 0;
+          return `${mmdd(p.series[i].date)}　${p.series[i].units} 件`;
+        },
+      },
+      xAxis: {
+        type: "category",
+        data: p.series.map((s) => mmdd(s.date)),
+        axisLine: { lineStyle: { color: t.grid } },
+        axisLabel: { color: t.sub, fontSize: 10, hideOverlap: true },
+        axisTick: { show: false },
+      },
+      yAxis: {
+        type: "value",
+        min: 0,
+        splitLine: { lineStyle: { color: t.grid, type: "dashed" } },
+        axisLabel: { color: t.sub, fontSize: 10 },
+      },
+      series: [
+        {
+          type: "line",
+          data: p.series.map((s) => s.units),
+          smooth: true,
+          symbol: "circle",
+          symbolSize: 4,
+          lineStyle: { width: 2, color },
+          itemStyle: { color },
+          areaStyle: { color, opacity: 0.08 },
+          markLine: {
+            silent: true,
+            symbol: "none",
+            lineStyle: { color: t.warning, type: "dashed", width: 1 },
+            label: {
+              show: true,
+              position: "insideEndTop",
+              formatter: `爆单线 ${threshold}`,
+              color: t.warning,
+              fontSize: 10,
+            },
+            data: [{ yAxis: threshold }],
+          },
+          markPoint:
+            peakIdx >= 0 && p.burst
+              ? {
+                  symbol: "pin",
+                  symbolSize: 34,
+                  itemStyle: { color: t.negative },
+                  label: { color: "#fff", fontSize: 10, formatter: "{c}" },
+                  data: [{ coord: [peakIdx, p.peak_units], value: p.peak_units }],
+                }
+              : undefined,
+        },
+      ],
+    };
+  }, [p, t, threshold]);
+  return <EChart option={option} height={180} />;
+}
+
+// 爆单徽章：图标 + 文案（不靠纯色传达，色盲友好）。
+function BurstBadge({ peak }: { peak: number }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-negative/10 px-2 py-0.5 text-xs font-medium text-negative">
+      <Flame className="size-3.5" aria-hidden />
+      爆单 · 峰值 {peak}
+    </span>
+  );
+}
+
+function NewProductRow({ p, rank, threshold }: { p: NewProduct; rank: number; threshold: number }) {
+  const [open, setOpen] = useState(false);
+  const code =
+    p.sku_count > 1 ? `${p.sku_count} 个规格` : p.seller_sku ? `款号 ${p.seller_sku}` : null;
+  return (
+    <div className="rounded-lg border border-border-shallow">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-3 rounded-lg p-2 text-left transition-colors hover:bg-fill-shallow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:p-2.5"
+      >
+        <ProductThumb src={p.image_url ?? undefined} rank={rank} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <div className="line-clamp-1 text-sm font-medium leading-snug text-foreground">
+              {p.title}
+            </div>
+            {p.burst && <BurstBadge peak={p.peak_units} />}
+          </div>
+          <div className="mt-0.5 truncate text-xs text-foreground-secondary">
+            上线 {p.days_online} 天{code ? ` · ${code}` : ""}
+          </div>
+        </div>
+        {/* 桌面显行内 sparkline；窄屏（<sm）隐藏让位数字，避免压字 */}
+        <div className="hidden w-[120px] shrink-0 sm:block">
+          <NewProductSparkline p={p} />
+        </div>
+        <div className="shrink-0 text-right">
+          <div className="tabnum text-sm font-semibold text-foreground">{fmtInt(p.total_units)} 件</div>
+          <div className="tabnum text-xs text-foreground-secondary">{fmtMoney(p.total_gmv)}</div>
+        </div>
+        <ChevronRight
+          className={
+            "size-4 shrink-0 text-foreground-tertiary transition-transform " +
+            (open ? "rotate-90" : "")
+          }
+          aria-hidden
+        />
+      </button>
+      {open && (
+        <div className="border-t border-border-shallow p-3">
+          <NewProductChart p={p} threshold={threshold} />
+          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-foreground-secondary">
+            {p.source_create_time && <span>上线日 {mmdd(p.source_create_time.slice(0, 10))}</span>}
+            {p.peak_date && <span>峰值日 {mmdd(p.peak_date)} · {p.peak_units} 件</span>}
+            <span>近 30 天累计 {fmtInt(p.total_units)} 件</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NewProducts({ query, reloadKey }: { query: BoardQuery; reloadKey: number }) {
+  const [data, setData] = useState<NewProduct[] | null>(null);
+  const [threshold, setThreshold] = useState(50);
+  const [loading, setLoading] = useState(true);
+  const [available, setAvailable] = useState(true);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    setLoading(true);
+    api
+      .newProducts(query)
+      .then((res) => {
+        if (ctrl.signal.aborted) return;
+        setData(res.items);
+        setThreshold(res.threshold);
+        setAvailable(res.available);
+      })
+      .catch(() => {
+        if (ctrl.signal.aborted) return;
+        setData([]);
+        setAvailable(false);
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted) setLoading(false);
+      });
+    return () => ctrl.abort();
+    // query 各字段 + reloadKey 变化时重取
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query.scope, query.platform, query.country, reloadKey]);
+
+  const burstCount = useMemo(() => (data ?? []).filter((p) => p.burst).length, [data]);
+
+  return (
+    <BoardCard>
+      <CardHead
+        title={
+          <span className="inline-flex items-center gap-2">
+            <Sparkles className="size-4 text-positive" aria-hidden />
+            近 30 天新品
+          </span>
+        }
+        right={
+          burstCount > 0 ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-negative/10 px-2 py-0.5 text-xs font-medium text-negative">
+              <Flame className="size-3.5" aria-hidden />
+              {burstCount} 款爆单
+            </span>
+          ) : (
+            <span className="text-xs text-foreground-tertiary">单日破 {threshold} 件即提醒</span>
+          )
+        }
+      />
+      {loading ? (
+        <div className="space-y-2" aria-hidden>
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-[60px] animate-pulse rounded-lg bg-fill-shallow" />
+          ))}
+        </div>
+      ) : !available ? (
+        <ChartEmpty loading={false} empty="新品数据暂不可用" height={120} />
+      ) : !data || !data.length ? (
+        <div className="flex flex-col items-center gap-1 py-10 text-center">
+          <Sparkles className="size-6 text-foreground-tertiary" aria-hidden />
+          <div className="text-sm text-foreground-secondary">近 30 天暂无起量的新上线款号</div>
+          <div className="text-xs text-foreground-tertiary">
+            新款上线并产生销量后，会在此追踪曲线并提醒单日爆单
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {data.map((p, i) => (
+            <NewProductRow key={p.product_id} p={p} rank={i + 1} threshold={threshold} />
+          ))}
+        </div>
       )}
     </BoardCard>
   );

@@ -16,6 +16,7 @@ import logging
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from core.config import settings
 from core.tenancy import set_current_account
 from core.timezone import business_now, business_today, previous_window
 from services.ad_metrics import get_ad_spend_summary, get_roas
@@ -24,6 +25,7 @@ from services.fee_rate_metrics import get_fee_rate_monitor
 from services.order_metrics import (
     get_gmv_summary,
     get_gmv_summary_intraday_range,
+    get_new_product_trends,
     get_product_sku_breakdown,
     get_top_products,
 )
@@ -341,6 +343,53 @@ async def board_product_detail(
         shop_ids=filters.shop_ids or None,
     )
     return JSONResponse({"channels": channels, "skus": skus})
+
+
+@router.get("/board/new-products", include_in_schema=False)
+async def board_new_products(
+    perm: UserPermission = Depends(require_web_user),
+    scope: str = Query(""),
+    platform: str | None = Query(None),
+    country: str | None = Query(None),
+):
+    """「近 30 天新品」卡懒加载端点：返回近 30 天上线在售商品 + 每日销量曲线 + 爆单判定。
+
+    口径固定为「近 30 天上线 / 付款口径销量 / 爆单阈值 = settings.hotsell_daily_units_threshold」，
+    与飞书爆单告警同阈（见 docs/business-rules §4.4 / §7）。范围经权限闸夹紧，无数据则 available=False，
+    不阻断看板其它卡。不塞进主 /board/data，保持首载快（与 product-detail 同策略）。
+    """
+    set_current_account(perm.account_id)
+    try:
+        filters = resolve_authorized_scope(
+            perm, requested_scope_key=scope or None,
+            platform=platform or None, country=country or None,
+        )
+    except (ScopeError, AuthzError) as exc:
+        return JSONResponse({"error": "forbidden", "detail": str(exc)}, status_code=403)
+
+    as_of = business_today()
+    lookback_days = 30
+    threshold = settings.hotsell_daily_units_threshold
+    try:
+        items = get_new_product_trends(
+            as_of=as_of,
+            lookback_days=lookback_days,
+            threshold=threshold,
+            platform=filters.platform,
+            country=filters.country,
+            shop_ids=filters.shop_ids or None,
+        )
+        available = True
+    except Exception:  # 取数异常（无 Product 表数据 / DB 抖动）→ 降级，不抛 500
+        logger.exception("new-products query failed")
+        items, available = [], False
+
+    return JSONResponse({
+        "items": items,
+        "threshold": threshold,
+        "window": {"lookback_days": lookback_days, "as_of": as_of.isoformat()},
+        "available": available,
+    })
 
 
 def _render_denied(msg: str) -> str:

@@ -28,7 +28,7 @@ from services import fee_rate_alerts, hotsell_alerts, stock_alerts
 from services.fee_rate_metrics import get_settled_fee_rate, get_unsettled_fee_rate
 from services.fulfillment_alerts import ALERT_TYPE, build_decision
 from services.fulfillment_metrics import get_pending_fulfillments
-from services.order_metrics import get_units_by_product
+from services.order_metrics import get_new_product_ids, get_units_by_product
 from services.metrics_store import (
     get_fee_rate_alert_state,
     get_fulfillment_alert_state,
@@ -396,6 +396,12 @@ def _scan_hotsell(session, *, account, open_id, scope, scope_id, dry_run: bool) 
         platform=scope.platform, country=scope.country, shop_ids=scope.shop_ids or None,
         session=session,
     )
+    # 近 30 天上线的新品集合 → 文案对命中的爆单商品标注 🌟「新品爆发」（同阈不重复推送）
+    new_ids = get_new_product_ids(
+        as_of=today,
+        platform=scope.platform, country=scope.country, shop_ids=scope.shop_ids or None,
+        session=session,
+    )
     prev = get_hotsell_alert_state(
         session, alert_type=hotsell_alerts.ALERT_TYPE, account_id=account, scope_key=scope_id
     )
@@ -407,6 +413,7 @@ def _scan_hotsell(session, *, account, open_id, scope, scope_id, dry_run: bool) 
         prev_reported_ids=prev_ids,
         scope_display=scope.display_text,
         date_label=f"{today.month}/{today.day}",
+        new_product_ids=new_ids,
     )
 
     if decision.should_alert:

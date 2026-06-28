@@ -656,3 +656,160 @@ def get_new_product_performance(
         return items[:limit]
     finally:
         session.close()
+
+
+def get_new_product_ids(
+    *,
+    as_of: date,
+    lookback_days: int = 30,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_id: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
+    session=None,
+) -> set[str]:
+    """近 lookback_days 天上线（Product.source_create_time 落窗口）的在售商品 product_id 集合。
+
+    仅取 ACTIVATE（在售口径，见 docs/business-rules §3）。供爆单告警「标注新品」用——
+    判某个破阈商品是不是新品，无需算曲线，故单独提供轻量集合查询。
+    """
+    start_dt, _ = _paid_window(as_of - timedelta(days=lookback_days - 1), as_of)
+    own_session = session is None
+    session = session or SessionLocal()
+    try:
+        q = session.query(Product.product_id).filter(
+            Product.source_create_time.isnot(None),
+            Product.source_create_time >= start_dt,
+            Product.status == "ACTIVATE",
+        )
+        q = _scope_filters(q, Product, platform, country, shop_id, shop_ids)
+        return {pid for (pid,) in q.all() if pid}
+    finally:
+        if own_session:
+            session.close()
+
+
+def get_new_product_trends(
+    *,
+    as_of: date,
+    lookback_days: int = 30,
+    threshold: int = 50,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_id: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
+    session=None,
+) -> list[dict]:
+    """看板「近 N 天新品」卡取数：近 lookback_days 天上线的在售商品，每个带每日销量曲线 + 爆单判定。
+
+    - 选品：Product.status='ACTIVATE' 且 source_create_time 落 [as_of-(N-1), as_of]（在售口径）。
+    - 销量：付款口径（paid_time 非空），按印尼业务日（to_business_day）归日为每日 line_item 条数，
+      与 get_gmv_trend 同口径。曲线画布从「上线业务日」（或窗口起，取较晚者）到 as_of，前段无单补 0，
+      诚实反映「上线即起跑」。
+    - burst：曲线峰值单日销量 ≥ threshold（默认 50）。爆单的优先排前，其余按总销量降序。
+    - 只纳入窗口内有销量（total_units>0）的新品，避免一堆 0 行刷屏（测款未起量的暂不展示）。
+    """
+    window_start = as_of - timedelta(days=lookback_days - 1)
+    start_dt, end_dt = _paid_window(window_start, as_of)
+    own_session = session is None
+    session = session or SessionLocal()
+    try:
+        # 1) 窗口内上线的在售商品主数据（标题 / 主图 / 上线时间）
+        prod_q = session.query(
+            Product.product_id,
+            Product.title,
+            Product.main_image_url,
+            Product.source_create_time,
+        ).filter(
+            Product.source_create_time.isnot(None),
+            Product.source_create_time >= start_dt,
+            Product.status == "ACTIVATE",
+        )
+        prod_q = _scope_filters(prod_q, Product, platform, country, shop_id, shop_ids)
+        products = {
+            pid: {"title": title, "image_url": img, "created": created}
+            for pid, title, img, created in prod_q.all()
+            if pid
+        }
+        if not products:
+            return []
+
+        # 2) 这些新品在窗口内的已付款 line_item 明细（付款口径），Python 端归印尼业务日聚合
+        rows = (
+            _scope_filters(
+                session.query(
+                    OrderLineItem.product_id,
+                    OrderHeader.paid_time,
+                    OrderLineItem.sale_price,
+                    OrderLineItem.seller_sku,
+                    OrderLineItem.sku_id,
+                )
+                .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
+                .filter(
+                    OrderHeader.paid_time.isnot(None),
+                    OrderHeader.paid_time >= start_dt,
+                    OrderHeader.paid_time <= end_dt,
+                    OrderLineItem.product_id.in_(list(products.keys())),
+                ),
+                OrderHeader,
+                platform,
+                country,
+                shop_id,
+                shop_ids,
+            ).all()
+        )
+
+        # per product 累加：每日销量 / 总销量 / 总 GMV / 款号 / 规格集合
+        agg: dict[str, dict] = {}
+        for pid, paid_time, sale_price, seller_sku, sku_id in rows:
+            a = agg.setdefault(
+                pid, {"by_day": {}, "units": 0, "gmv": 0.0, "seller_sku": None, "skus": set()}
+            )
+            d = to_business_day(paid_time)
+            a["by_day"][d] = a["by_day"].get(d, 0) + 1
+            a["units"] += 1
+            a["gmv"] += _to_float(sale_price)
+            if seller_sku and not a["seller_sku"]:
+                a["seller_sku"] = seller_sku
+            if sku_id:
+                a["skus"].add(sku_id)
+
+        items: list[dict] = []
+        for pid, meta in products.items():
+            a = agg.get(pid)
+            if not a or a["units"] <= 0:
+                continue  # 只展示已起量的新品
+            launch_day = to_business_day(meta["created"])
+            series_start = max(launch_day, window_start)
+            # 连续日序列（含补 0），峰值 / 峰值日
+            series: list[dict] = []
+            peak_units, peak_date = 0, None
+            cursor = series_start
+            while cursor <= as_of:
+                u = int(a["by_day"].get(cursor, 0))
+                series.append({"date": cursor.isoformat(), "units": u})
+                if u > peak_units:
+                    peak_units, peak_date = u, cursor.isoformat()
+                cursor += timedelta(days=1)
+            items.append({
+                "product_id": pid,
+                "title": meta["title"] or pid,
+                "seller_sku": a["seller_sku"],
+                "sku_count": len(a["skus"]),
+                "image_url": meta["image_url"],
+                "source_create_time": meta["created"].isoformat() if meta["created"] else None,
+                "days_online": max((as_of - launch_day).days, 0),
+                "total_units": int(a["units"]),
+                "total_gmv": _to_float(a["gmv"]),
+                "series": series,
+                "peak_units": int(peak_units),
+                "peak_date": peak_date,
+                "burst": peak_units >= threshold,
+            })
+
+        # 爆单优先，其次按总销量降序
+        items.sort(key=lambda it: (it["burst"], it["total_units"]), reverse=True)
+        return items
+    finally:
+        if own_session:
+            session.close()

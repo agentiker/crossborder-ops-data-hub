@@ -38,15 +38,24 @@ def build_decision(
     prev_reported_ids,
     scope_display: str,
     date_label: str,
+    new_product_ids=None,
 ) -> HotsellDecision:
     """判定今日破阈且未报过的爆款。
 
     units_by_product：{product_id: {units, product_name}}（get_units_by_product 返回）。
     prev_reported_ids：今天已报过的商品集合（跨天传空）。
     date_label：业务日展示串（如 "6/23"）。
+    new_product_ids：近 30 天上线的新品 product_id 集合（get_new_product_ids 返回）；命中者文案
+        标注 🌟「新品爆发」。默认空集——存量商品文案不受影响（纯加法，旧文案逐字不变）。
     """
+    new_set = set(new_product_ids or [])
     hot = [
-        {"product_id": pid, "units": int(v.get("units", 0)), "product_name": v.get("product_name")}
+        {
+            "product_id": pid,
+            "units": int(v.get("units", 0)),
+            "product_name": v.get("product_name"),
+            "is_new": pid in new_set,
+        }
         for pid, v in units_by_product.items()
         if int(v.get("units", 0)) >= threshold
     ]
@@ -84,7 +93,8 @@ def _fmt_item(item: dict) -> str:
     name = item.get("product_name") or item.get("product_id") or "未知商品"
     if len(name) > 24:
         name = name[:24] + "…"
-    return f"{name} 今日已售 {item['units']} 件"
+    tag = "🌟 " if item.get("is_new") else ""  # 近 30 天新品爆发，醒目标注
+    return f"{tag}{name} 今日已售 {item['units']} 件"
 
 
 def _format_message(
@@ -101,4 +111,6 @@ def _format_message(
     if len(new_products) > _TOP_ITEMS:
         lines.append(f"  …等共 {len(new_products)} 个")
     lines.append("👉 关注库存与备货，别让爆款断货丢量。")
+    if any(it.get("is_new") for it in new_products):  # 有新品爆发才加图例，存量爆单文案不变
+        lines.append("🌟 = 近 30 天新品爆发，重点追单 / 加大备货，别错过新款窗口。")
     return "\n".join(lines)
