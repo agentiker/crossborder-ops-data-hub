@@ -10,7 +10,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from models.base_models import OrderHeader, OrderLineItem, Product
-from services.order_metrics import get_top_products
+from services.order_metrics import get_product_sku_breakdown, get_top_products
 from services.product_channel_metrics import (
     _segments_from_product,
     get_product_channel_breakdown,
@@ -32,7 +32,7 @@ def _line(session, lid, oid, pid, sku, seller_sku=None, name="商品A", price="1
         platform="tiktok_shop", country="ID", shop_id="shop-1",
         idempotency_key=f"li-{lid}", line_item_id=lid, order_id=oid,
         product_id=pid, sku_id=sku, seller_sku=seller_sku,
-        product_name=name, sale_price=Decimal(price),
+        product_name=name, sku_name=name, sale_price=Decimal(price),
     ))
 
 
@@ -67,6 +67,27 @@ def test_top_products_aggregates_by_product_with_code_and_image(session):
     assert by_id["p2"]["sku_count"] == 1
     assert by_id["p2"]["image_url"] is None
     assert by_id["p2"]["seller_sku"] == "CODE-C"
+
+
+def test_product_sku_breakdown_groups_by_sku(session):
+    _order(session, "o1")
+    _order(session, "o2")
+    # 商品 p1：sku-a 两件、sku-b 一件；商品 p2 的 SKU 不应混入
+    _line(session, "l1", "o1", "p1", "sku-a", "CODE-A", "连衣裙-红", "10")
+    _line(session, "l2", "o2", "p1", "sku-a", "CODE-A", "连衣裙-红", "10")
+    _line(session, "l3", "o2", "p1", "sku-b", "CODE-B", "连衣裙-蓝", "12")
+    _line(session, "l4", "o1", "p2", "sku-c", "CODE-C", "短袖", "20")
+    session.commit()
+
+    rows = get_product_sku_breakdown(
+        product_id="p1", start_date=date(2026, 6, 1), end_date=date(2026, 6, 1),
+        platform="tiktok_shop", country="ID", shop_ids=["shop-1"], session=session,
+    )
+    assert [r["sku_id"] for r in rows] == ["sku-a", "sku-b"]  # 按销量降序
+    assert rows[0]["units_sold"] == 2 and rows[0]["sku_name"] == "连衣裙-红"
+    assert rows[1]["units_sold"] == 1
+    # 不含其它商品的 SKU
+    assert all(r["sku_id"] != "sku-c" for r in rows)
 
 
 # ── Part C：单品渠道 4 分解析 ────────────────────────────────────────────────

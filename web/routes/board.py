@@ -24,6 +24,7 @@ from services.fee_rate_metrics import get_fee_rate_monitor
 from services.order_metrics import (
     get_gmv_summary,
     get_gmv_summary_intraday_range,
+    get_product_sku_breakdown,
     get_top_products,
 )
 from services.product_channel_metrics import get_product_channel_breakdown
@@ -302,8 +303,8 @@ async def board_data(
     return JSONResponse(data)
 
 
-@router.get("/board/product-channels", include_in_schema=False)
-async def board_product_channels(
+@router.get("/board/product-detail", include_in_schema=False)
+async def board_product_detail(
     perm: UserPermission = Depends(require_web_user),
     product_id: str = Query(..., description="商品 product_id"),
     period: str = Query("last_30d"),
@@ -313,10 +314,11 @@ async def board_product_channels(
     platform: str | None = Query(None),
     country: str | None = Query(None),
 ):
-    """单品渠道 4 分（达人/自营素材/商品卡/店铺页）懒加载端点：点击爆款卡某商品时才请求。
+    """商品详情弹窗懒加载端点：点击爆款卡某商品时才请求，返回 {channels, skus}。
 
+    - channels：单品渠道 4 分（达人/自营素材/商品卡/店铺页）；沙箱/无 analytics→available=False。
+    - skus：该商品各 SKU 已付款销量/GMV（前端算占比条）。
     窗口/范围与看板同源（_resolve_window + resolve_authorized_scope 夹紧），不拖慢看板首载。
-    沙箱/无 analytics 数据 → available=False，前端显「该商品暂无渠道数据」。
     """
     set_current_account(perm.account_id)
     try:
@@ -327,12 +329,18 @@ async def board_product_channels(
     except (ScopeError, AuthzError) as exc:
         return JSONResponse({"error": "forbidden", "detail": str(exc)}, status_code=403)
     cur_start, cur_end = _resolve_window(start_date, end_date, period, default_back_days=6)
-    data = get_product_channel_breakdown(
+    channels = get_product_channel_breakdown(
         product_id=product_id,
         start_date=cur_start, end_date=cur_end,
         country=filters.country, shop_ids=filters.shop_ids or None,
     )
-    return JSONResponse(data)
+    skus = get_product_sku_breakdown(
+        product_id=product_id,
+        start_date=cur_start, end_date=cur_end,
+        platform=filters.platform, country=filters.country,
+        shop_ids=filters.shop_ids or None,
+    )
+    return JSONResponse({"channels": channels, "skus": skus})
 
 
 def _render_denied(msg: str) -> str:

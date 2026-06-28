@@ -103,6 +103,21 @@ export interface ProductChannels {
   available: boolean;
 }
 
+// 商品内某 SKU 的已付款销量/GMV（详情弹窗「各 SKU 占比」用）。
+export interface SkuBreakdown {
+  sku_id?: string;
+  sku_name?: string;
+  seller_sku?: string;
+  units_sold: number;
+  gmv: number;
+}
+
+// 商品详情弹窗数据（懒加载）：渠道 4 分 + 各 SKU 销量。
+export interface ProductDetail {
+  channels: ProductChannels;
+  skus: SkuBreakdown[];
+}
+
 export interface LowStockItem {
   sku_id: string;
   product_name?: string;
@@ -296,8 +311,8 @@ export const api = {
     if (q.country) params.set("country", q.country);
     return getJSON<BoardData>(`/board/data?${params.toString()}`);
   },
-  // 单品渠道 4 分（懒加载）：点击爆款卡某商品时才请求。窗口/范围与 boardData 同源。
-  productChannels: (productId: string, q: BoardQuery = {}) => {
+  // 商品详情（懒加载）：点击爆款卡某商品时才请求，返回渠道 4 分 + 各 SKU 销量。窗口/范围与 boardData 同源。
+  productDetail: (productId: string, q: BoardQuery = {}) => {
     const params = new URLSearchParams();
     params.set("product_id", productId);
     if (q.start) params.set("start_date", q.start);
@@ -306,7 +321,7 @@ export const api = {
     if (q.scope) params.set("scope", q.scope);
     if (q.platform) params.set("platform", q.platform);
     if (q.country) params.set("country", q.country);
-    return getJSON<ProductChannels>(`/board/product-channels?${params.toString()}`);
+    return getJSON<ProductDetail>(`/board/product-detail?${params.toString()}`);
   },
   adminRoles: () => getJSON<{ items: RoleRow[] }>("/api/admin/roles"),
   adminScopes: () => getJSON<{ items: AdminScopeOption[] }>("/api/admin/scopes"),

@@ -3,6 +3,7 @@ import {
   ArrowUpDown,
   Calendar,
   ChevronDown,
+  ChevronRight,
   DollarSign,
   Gauge,
   Globe,
@@ -15,6 +16,7 @@ import {
   Store,
   TrendingUp,
   TriangleAlert,
+  X,
 } from "lucide-react";
 import {
   api,
@@ -22,6 +24,7 @@ import {
   type BoardQuery,
   type LowStockItem,
   type ProductChannels,
+  type ProductDetail,
   type TopSku,
 } from "@/api";
 import { DateRangePicker, type DateRangeValue } from "@/components/board/DateRangePicker";
@@ -1012,10 +1015,11 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
   );
 }
 
-/* ── 爆款商品（商品级：小图 + 标题 + 款号 + 单量，点击展开单品渠道 4 分饼）────────
+/* ── 爆款商品（商品级：小图 + 标题 + 款号 + 单量，点击行弹出商品详情弹窗）────────
    客户诉求落地：① 小图(image_url，缺图→序号色块) ② 标题(长名 2 行截断) ③ 款号(seller_sku，
-   次要灰字；多规格显「N 个规格」) ④ 单量/GMV ⑤ 点击行内联展开渠道饼(达人/自营素材/商品卡/
-   店铺页，懒加载 /board/product-channels)。移动端：展开块堆在行下满宽，触控区加大。 */
+   次要灰字；多规格显「N 个规格」) ④ 单量/GMV ⑤ 点击行弹出轻量弹窗：大图 + 完整商品名 +
+   各 SKU 销量占比 + 渠道 4 分饼(达人/自营素材/商品卡/店铺页)，懒加载 /board/product-detail。
+   弹窗整合所有详情(空间大、移动端体验好)，不再行内展开。 */
 
 type RankBy = "sales" | "gmv";
 
@@ -1078,28 +1082,9 @@ const CHANNEL_COLORS: Record<string, keyof ReturnType<typeof useChartTokens>> = 
   shop_tab: "sub",
 };
 
-// 单品渠道 4 分饼（懒加载）：点击某商品时挂载，请求 /board/product-channels 再渲染环图 + 图例。
-function ProductChannelPanel({ productId, query }: { productId: string; query: BoardQuery }) {
+// 渠道 4 分环图（纯渲染，数据由弹窗 fetch 后传入）。无可显示切片 → 上层不渲染。
+function ChannelDonut({ channels }: { channels: ProductChannels["channels"] }) {
   const t = useChartTokens();
-  const [state, setState] = useState<{ loading: boolean; data: ProductChannels | null; error: string | null }>(
-    { loading: true, data: null, error: null },
-  );
-  const queryKey = JSON.stringify(query);
-
-  useEffect(() => {
-    let alive = true;
-    setState({ loading: true, data: null, error: null });
-    api
-      .productChannels(productId, query)
-      .then((d) => alive && setState({ loading: false, data: d, error: null }))
-      .catch((e) => alive && setState({ loading: false, data: null, error: String(e) }));
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productId, queryKey]);
-
-  const cb = state.data;
   const option = useMemo(
     () => ({
       tooltip: {
@@ -1115,7 +1100,7 @@ function ProductChannelPanel({ productId, query }: { productId: string; query: B
           center: ["50%", "42%"],
           itemStyle: { borderRadius: 5, borderColor: t.card, borderWidth: 2 },
           label: { show: false },
-          data: (cb?.channels || [])
+          data: channels
             .filter((c) => c.gmv > 0)
             .map((c) => ({
               name: c.label,
@@ -1125,26 +1110,158 @@ function ProductChannelPanel({ productId, query }: { productId: string; query: B
         },
       ],
     }),
-    [cb, t],
+    [channels, t],
   );
+  return <EChart option={option} height={220} />;
+}
 
-  if (state.loading)
-    return (
-      <div className="flex items-center justify-center gap-2 py-8 text-sm text-foreground-secondary">
-        <span className="size-3.5 animate-spin rounded-full border-2 border-border border-t-foreground" />
-        渠道数据加载中…
-      </div>
-    );
-  if (state.error || !cb?.available)
-    return (
-      <div className="py-6 text-center text-sm text-foreground-secondary">
-        {state.error ? "渠道数据加载失败" : "该商品暂无渠道数据"}
-      </div>
-    );
+// 商品详情弹窗（轻量，照 forkStoreClaw Dialog：backdrop + Esc + body 锁滚 + fade-up）。
+// 点击爆款行打开：大图 + 完整商品名 + 各 SKU 销量占比条 + 渠道 4 分饼（懒加载 /board/product-detail）。
+function ProductDetailDialog({
+  product,
+  query,
+  onClose,
+}: {
+  product: TopSku;
+  query: BoardQuery;
+  onClose: () => void;
+}) {
+  const [state, setState] = useState<{ loading: boolean; data: ProductDetail | null; error: string | null }>(
+    { loading: true, data: null, error: null },
+  );
+  const [imgFailed, setImgFailed] = useState(false);
+
+  // body 锁滚 + Esc 关闭（fork Dialog 行为）
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    const onEsc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onEsc);
+    return () => {
+      document.body.style.overflow = "";
+      window.removeEventListener("keydown", onEsc);
+    };
+  }, [onClose]);
+
+  // 懒加载：打开时拉详情（渠道 + 各 SKU）
+  useEffect(() => {
+    if (!product.product_id) return;
+    let alive = true;
+    setState({ loading: true, data: null, error: null });
+    api
+      .productDetail(product.product_id, query)
+      .then((d) => alive && setState({ loading: false, data: d, error: null }))
+      .catch((e) => alive && setState({ loading: false, data: null, error: String(e) }));
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [product.product_id, JSON.stringify(query)]);
+
+  const code = styleCodeLabel(product);
+  const skus = state.data?.skus ?? [];
+  const skuTotal = skus.reduce((s, k) => s + (k.units_sold || 0), 0);
+  const channels = state.data?.channels;
+  const showImg = product.image_url && !imgFailed;
+
   return (
-    <div>
-      <div className="mb-1 text-xs text-foreground-secondary">渠道构成（按 GMV）</div>
-      <EChart option={option} height={220} />
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="relative flex max-h-[88vh] w-full max-w-md animate-fade-up flex-col rounded-2xl border border-border-shallow bg-background shadow-lg"
+      >
+        {/* 头部：大图 + 完整名 + 款号/规格 + 关闭 */}
+        <div className="flex items-start gap-3 border-b border-border-shallow p-4">
+          <div className="size-16 shrink-0 overflow-hidden rounded-xl">
+            {showImg ? (
+              <img
+                src={product.image_url}
+                alt=""
+                onError={() => setImgFailed(true)}
+                className="size-full object-cover"
+              />
+            ) : (
+              <div className="flex size-full items-center justify-center bg-fill-default text-foreground-secondary">
+                <ShoppingBag size={22} />
+              </div>
+            )}
+          </div>
+          <div className="min-w-0 flex-1">
+            {/* 完整商品名（不截断） */}
+            <div className="text-sm font-semibold leading-snug text-foreground">{productLabel(product)}</div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-foreground-secondary">
+              {code && <span>{code}</span>}
+              <span className="tabnum">{fmtInt(product.units_sold)} 件</span>
+              <span className="tabnum">{fmtMoney(product.gmv)}</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="关闭"
+            className="-mr-1 -mt-1 shrink-0 rounded-lg p-1.5 text-foreground-tertiary transition-colors hover:bg-fill hover:text-foreground"
+          >
+            <X className="size-5" />
+          </button>
+        </div>
+
+        {/* 内容：各 SKU 占比 + 渠道饼 */}
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
+          {state.loading ? (
+            <div className="flex items-center justify-center gap-2 py-10 text-sm text-foreground-secondary">
+              <span className="size-3.5 animate-spin rounded-full border-2 border-border border-t-foreground" />
+              加载中…
+            </div>
+          ) : state.error ? (
+            <div className="py-8 text-center text-sm text-foreground-secondary">详情加载失败</div>
+          ) : (
+            <>
+              {/* 各 SKU 销量占比 */}
+              <div>
+                <div className="mb-2 text-xs font-medium text-foreground-secondary">各 SKU 销量占比</div>
+                {skus.length === 0 ? (
+                  <div className="py-3 text-center text-xs text-foreground-tertiary">无 SKU 明细</div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {skus.map((k, i) => {
+                      const pct = skuTotal ? (k.units_sold / skuTotal) * 100 : 0;
+                      return (
+                        <div key={(k.sku_id || "") + i} className="relative rounded-md">
+                          <div className="absolute inset-0 overflow-hidden rounded-md" aria-hidden>
+                            <div className="absolute inset-y-0 left-0 bg-fill-shallow" style={{ width: `${pct}%` }} />
+                          </div>
+                          <div className="relative flex items-center justify-between gap-2 px-2 py-1.5">
+                            <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                              {k.sku_name || k.seller_sku || k.sku_id || "—"}
+                            </span>
+                            <span className="flex shrink-0 items-baseline gap-2.5">
+                              <span className="tabnum text-sm text-foreground">{fmtInt(k.units_sold)} 件</span>
+                              <span className="tabnum w-9 text-right text-xs text-foreground-tertiary">
+                                {pct.toFixed(0)}%
+                              </span>
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* 渠道 4 分饼 */}
+              <div>
+                <div className="mb-1 text-xs font-medium text-foreground-secondary">渠道构成（按 GMV）</div>
+                {channels?.available ? (
+                  <ChannelDonut channels={channels.channels} />
+                ) : (
+                  <div className="py-6 text-center text-xs text-foreground-tertiary">该商品暂无渠道数据</div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1159,7 +1276,7 @@ function HotProducts({
   query: BoardQuery;
 }) {
   const [rankBy, setRankBy] = useState<RankBy>("sales");
-  const [openKey, setOpenKey] = useState<string | null>(null); // 展开渠道饼的商品（product_id|index）
+  const [openProduct, setOpenProduct] = useState<TopSku | null>(null); // 详情弹窗当前商品
   const raw = data?.top.items ?? [];
 
   const items = useMemo(() => {
@@ -1190,57 +1307,52 @@ function HotProducts({
         <div className="space-y-1">
           {items.map((p, index) => {
             const rowKey = (p.product_id || p.sku_id || "") + index;
-            const isOpen = openKey === rowKey;
             const code = styleCodeLabel(p);
-            const canExpand = !!p.product_id;
+            const canOpen = !!p.product_id;
             return (
-              <div key={rowKey} className="rounded-lg">
-                <button
-                  type="button"
-                  onClick={() => canExpand && setOpenKey(isOpen ? null : rowKey)}
-                  aria-expanded={isOpen}
-                  disabled={!canExpand}
-                  className={
-                    "flex w-full items-center gap-3 rounded-lg p-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:p-2.5 " +
-                    (isOpen ? "bg-fill-default" : "hover:bg-fill-shallow") +
-                    (canExpand ? " cursor-pointer" : " cursor-default")
-                  }
-                >
-                  <ProductThumb src={p.image_url} rank={index + 1} />
-                  <div className="min-w-0 flex-1">
-                    <div className="line-clamp-2 text-sm font-medium leading-snug text-foreground">
-                      {productLabel(p)}
-                    </div>
-                    {code && (
-                      <div className="mt-0.5 truncate text-xs text-foreground-secondary">{code}</div>
-                    )}
+              <button
+                type="button"
+                key={rowKey}
+                onClick={() => canOpen && setOpenProduct(p)}
+                disabled={!canOpen}
+                title={canOpen ? "查看商品详情" : undefined}
+                className={
+                  "flex w-full items-center gap-3 rounded-lg p-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:p-2.5 " +
+                  (canOpen ? "cursor-pointer hover:bg-fill-shallow" : "cursor-default")
+                }
+              >
+                <ProductThumb src={p.image_url} rank={index + 1} />
+                <div className="min-w-0 flex-1">
+                  <div className="line-clamp-2 text-sm font-medium leading-snug text-foreground">
+                    {productLabel(p)}
                   </div>
-                  <div className="shrink-0 text-right">
-                    <div className="tabnum text-sm font-semibold text-foreground">
-                      {rankBy === "gmv" ? fmtMoney(p.gmv) : `${fmtInt(p.units_sold)} 件`}
-                    </div>
-                    <div className="tabnum text-xs text-foreground-secondary">
-                      {rankBy === "gmv" ? `${fmtInt(p.units_sold)} 件` : fmtMoney(p.gmv)}
-                    </div>
-                  </div>
-                  {canExpand && (
-                    <ChevronDown
-                      className={
-                        "size-4 shrink-0 text-foreground-tertiary transition-transform " +
-                        (isOpen ? "rotate-180" : "")
-                      }
-                    />
+                  {code && (
+                    <div className="mt-0.5 truncate text-xs text-foreground-secondary">{code}</div>
                   )}
-                </button>
-                {isOpen && p.product_id && (
-                  <div className="border-t border-border-shallow px-2 pb-2 pt-3">
-                    <ProductChannelPanel productId={p.product_id} query={query} />
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="tabnum text-sm font-semibold text-foreground">
+                    {rankBy === "gmv" ? fmtMoney(p.gmv) : `${fmtInt(p.units_sold)} 件`}
                   </div>
+                  <div className="tabnum text-xs text-foreground-secondary">
+                    {rankBy === "gmv" ? `${fmtInt(p.units_sold)} 件` : fmtMoney(p.gmv)}
+                  </div>
+                </div>
+                {canOpen && (
+                  <ChevronRight className="size-4 shrink-0 text-foreground-tertiary" />
                 )}
-              </div>
+              </button>
             );
           })}
         </div>
+      )}
+
+      {openProduct && (
+        <ProductDetailDialog
+          product={openProduct}
+          query={query}
+          onClose={() => setOpenProduct(null)}
+        />
       )}
     </BoardCard>
   );

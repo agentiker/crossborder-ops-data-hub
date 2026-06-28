@@ -283,6 +283,62 @@ def get_top_products(
             session.close()
 
 
+def get_product_sku_breakdown(
+    *,
+    product_id: str,
+    start_date: date,
+    end_date: date,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_id: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
+    session=None,
+) -> list[dict]:
+    """某商品内各 SKU 的已付款销量/GMV（商品详情弹窗「各 SKU 占比」用）。
+
+    按 sku_id 聚合该 product_id 下的 line_item（付款口径，同 get_top_products），返回
+    [{sku_id, sku_name, seller_sku, units_sold, gmv}]，按销量降序。前端据此算占比条。
+    """
+    start_dt, end_dt = _paid_window(start_date, end_date)
+    own_session = session is None
+    session = session or SessionLocal()
+    try:
+        query = (
+            session.query(
+                OrderLineItem.sku_id,
+                func.max(OrderLineItem.sku_name),
+                func.max(OrderLineItem.seller_sku),
+                func.count(OrderLineItem.line_item_id),
+                func.coalesce(func.sum(OrderLineItem.sale_price), 0),
+            )
+            .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
+            .filter(
+                OrderLineItem.product_id == product_id,
+                OrderHeader.paid_time.isnot(None),
+                OrderHeader.paid_time >= start_dt,
+                OrderHeader.paid_time <= end_dt,
+            )
+        )
+        query = _scope_filters(query, OrderHeader, platform, country, shop_id, shop_ids)
+        query = (
+            query.group_by(OrderLineItem.sku_id)
+            .order_by(func.count(OrderLineItem.line_item_id).desc())
+        )
+        return [
+            {
+                "sku_id": sku_id,
+                "sku_name": sku_name,
+                "seller_sku": seller_sku,
+                "units_sold": int(units or 0),
+                "gmv": _to_float(gmv),
+            }
+            for sku_id, sku_name, seller_sku, units, gmv in query.all()
+        ]
+    finally:
+        if own_session:
+            session.close()
+
+
 def get_units_by_sku(
     *,
     start_date: date,
