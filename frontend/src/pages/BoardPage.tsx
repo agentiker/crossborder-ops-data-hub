@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode, type UIEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   ArrowUpDown,
   Calendar,
@@ -10,6 +11,7 @@ import {
   Globe,
   Info,
   Megaphone,
+  MessageCircleQuestion,
   Percent,
   Search,
   ShoppingBag,
@@ -45,6 +47,7 @@ import {
   returnsOption,
   trafficOption,
 } from "@/components/board/demo-data";
+import { cn } from "@/lib/utils";
 
 // 照搬 forkStoreClaw/src/components/Dashboard/* 的版式/卡片/分段 tab/图表观感（1:1）。
 // 三处按本项目落差替换并注释：
@@ -286,6 +289,55 @@ function NoDataBanner({ data, loading }: { data: BoardData | null; loading: bool
 function BoardCard({ children }: { children: ReactNode }) {
   return (
     <div className="rounded-2xl border border-border-shallow bg-card p-5">{children}</div>
+  );
+}
+
+// 「问 AI」入口：把卡片口径疑问带到对话页预填（?ask=），老板可改可补再发。
+// AI 端接 ops_business_rules 工具，依 docs/business-rules.md 权威口径作答。
+// 两种形态：link=极小文字链（贴 ⓘ 说明旁，低权重不挤数字区）；button=弹窗底部按钮。
+// 移动端：触控热区放大（-m-1 p-1 / py-1.5），与既有 ⓘ 同处呈现，不新增视觉噪声。
+function AskAiLink({
+  question,
+  variant = "link",
+  className,
+}: {
+  question: string;
+  variant?: "link" | "button";
+  className?: string;
+}) {
+  const navigate = useNavigate();
+  const go = (e: React.MouseEvent) => {
+    e.stopPropagation(); // 别触发卡片/弹窗自身的点击（如弹窗遮罩关闭）
+    navigate(`/?ask=${encodeURIComponent(question)}`);
+  };
+  if (variant === "button") {
+    return (
+      <button
+        type="button"
+        onClick={go}
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-lg border border-border-shallow px-3 py-1.5 text-xs font-medium text-info transition-colors hover:bg-info/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          className,
+        )}
+      >
+        <MessageCircleQuestion className="h-3.5 w-3.5" />
+        还有疑问？问 AI
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={go}
+      aria-label="就此口径问 AI"
+      className={cn(
+        "-m-1 inline-flex items-center gap-0.5 p-1 text-xs text-info transition-colors hover:text-info/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:p-1.5",
+        className,
+      )}
+    >
+      <MessageCircleQuestion className="h-3.5 w-3.5" />
+      问 AI
+    </button>
   );
 }
 
@@ -810,12 +862,15 @@ function ProfitCard({
               pct={100}
               tone="base"
               info={
-                <InfoTooltip
-                  align="start"
-                  content="按下单时间统计，含货到付款（COD）尚未付款的在途订单，所以会比上方「经营概览」里只算已付款的 GMV 大。"
-                >
-                  <Info className="h-3.5 w-3.5" />
-                </InfoTooltip>
+                <span className="inline-flex items-center">
+                  <InfoTooltip
+                    align="start"
+                    content="按下单时间统计，含货到付款（COD）尚未付款的在途订单，所以会比上方「经营概览」里只算已付款的 GMV 大。"
+                  >
+                    <Info className="h-3.5 w-3.5" />
+                  </InfoTooltip>
+                  <AskAiLink question="看板「预估利润卡」的 GMV 为什么比「经营概览」的 GMV 大？两者口径有什么区别？" />
+                </span>
               }
             />
             {deductions.map((d) => (
@@ -942,6 +997,13 @@ function AdSpendDialog({
                   asOf ? `（数据截至 ${asOf}）` : ""
                 }，故数字偏低、ROAS 暂不可比。`}
           </p>
+        </div>
+
+        <div className="mt-4 flex justify-end">
+          <AskAiLink
+            variant="button"
+            question="看板广告卡：付费投放（GMV Max）和达人带货佣金（TAP / 联盟）有什么区别？为什么我的 ROAS 有时显示『结算中』、暂不可比？"
+          />
         </div>
       </div>
     </div>

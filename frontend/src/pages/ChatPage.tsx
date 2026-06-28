@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, sendChat, type Message, type ThinkingStep } from "@/api";
 import { useMe, useShell } from "@/components/shell/AppShell";
 import { WelcomeScreen } from "@/components/chat/WelcomeScreen";
@@ -15,6 +15,7 @@ const TOOL_LABELS: Record<string, string> = {
   ops_top_skus: "爆款榜",
   ops_low_stock: "断货风险",
   ops_fulfillments_pending: "待发货",
+  ops_business_rules: "业务规则",
 };
 
 // 建议 chips（首页命令栏，横滚）。
@@ -71,9 +72,23 @@ function nowTs(): string {
 export function ChatPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const me = useMe();
   const { refreshConversations } = useShell();
   const convId = id ? Number(id) : null;
+
+  // 看板「问 AI」深链：?ask=<问题> 预填进输入框（不自动发，老板可改可补）。
+  // 读后即清掉 query（replace，不留历史），避免刷新/返回重复预填。
+  const [prefill, setPrefill] = useState<string>("");
+  useEffect(() => {
+    const ask = searchParams.get("ask");
+    if (ask) {
+      setPrefill(ask);
+      const next = new URLSearchParams(searchParams);
+      next.delete("ask");
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [metas, setMetas] = useState<MsgMeta[]>([]);
@@ -190,7 +205,12 @@ export function ChatPage() {
         <div className="flex-1 flex flex-col items-center justify-center pb-24 px-4 sm:px-6 md:px-8">
           <div className="w-full max-w-[1038px] flex flex-col items-center">
             <WelcomeScreen userName={who} />
-            <ChatInput onSend={send} disabled={streaming} />
+            <ChatInput
+              onSend={send}
+              disabled={streaming}
+              initialValue={prefill}
+              onInitialValueConsumed={() => setPrefill("")}
+            />
             <QuickActions presets={PRESETS} onPick={send} />
             {error && <p className="mt-4 text-sm text-destructive">⚠️ {error}</p>}
           </div>

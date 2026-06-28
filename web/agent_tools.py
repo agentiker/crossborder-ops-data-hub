@@ -15,6 +15,7 @@ import logging
 from typing import Any
 
 from core.tenancy import set_current_account
+from services import business_rules
 from services.llm import ToolSpec
 from services.user_authz import UserPermission, resolve_authorized_scope
 from web.routes.data import (
@@ -105,6 +106,30 @@ TOOL_SPECS: list[ToolSpec] = [
             "required": [],
         },
     ),
+    ToolSpec(
+        name="ops_business_rules",
+        description=(
+            "业务规则 / 数据口径知识库（来自仓库 docs/business-rules.md）。"
+            "回答**概念性口径问题**时调用：『为什么这个数这么算 / 两个 GMV 为何不一致 / "
+            "结算滞后是什么 / 爆单·断货阈值多少 / 时区怎么归日 / 广告 ROAS 口径』等。"
+            "本工具不读实时数据，只给权威口径出处——遇到规则/为什么类问题先调它，按返回原文作答，不要凭记忆编规则。"
+            "可选 section 指定章节：1=时区与时间口径，2=GMV口径，3=订单/商品同步，"
+            "4=经营报告口径(版型/环比/低单量护栏/爆款断货阈值)，5=发货SLA字段，"
+            "6=广告/ROAS口径(付费投放vs达人佣金/结算滞后护栏)，7=告警规则(含费率异常)。"
+            "不传 section 则返回目录，可据目录再次按 section 取细则。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "section": {
+                    "type": "string",
+                    "description": "章节编号；不传则返回引言+目录。",
+                    "enum": ["1", "2", "3", "4", "5", "6", "7"],
+                },
+            },
+            "required": [],
+        },
+    ),
 ]
 
 TOOL_NAMES = {t.name for t in TOOL_SPECS}
@@ -135,6 +160,11 @@ def run_tool(name: str, arguments: dict, perm: UserPermission) -> dict:
     # 多租户：WebUI 对话路径不经 /api/data 的 bind_account_context，按登录身份的 account
     # 设请求级 contextvar，下游显式店校验/链接签发据此隔离（否则落默认 ecom-app 误拒 gtl 店）。
     set_current_account(perm.account_id)
+
+    # 业务规则知识库：纯文档检索，与范围/权限无关，提前返回（不必夹紧 scope）。
+    if name == "ops_business_rules":
+        section = (arguments or {}).get("section")
+        return business_rules.get_rules(section)
 
     # 按登录身份夹紧范围：boss=全部、operator=其 allowed_scope（不可越界）
     filters = resolve_authorized_scope(perm)
