@@ -95,9 +95,18 @@ export interface TopSku {
   image_url?: string; // 主图缩略图（爆款小图，可空 → 前端占位）
 }
 
-// 单品渠道 4 分（达人/自营素材/商品卡/店铺页）。available=false → 该商品暂无渠道数据。
+// 单品渠道分布。channels=粗分 4（达人/自营素材/商品卡/店铺页）；
+// fine=细分 6（达人直播/达人视频/自营直播/自营视频/商品卡/店铺页），两粒度总额一致，前端可切换。
+// available=false → 该商品暂无渠道数据。
+export interface ChannelSlice {
+  key: string;
+  label: string;
+  gmv: number;
+  pct: number;
+}
 export interface ProductChannels {
-  channels: { key: string; label: string; gmv: number; pct: number }[];
+  channels: ChannelSlice[];
+  fine?: ChannelSlice[];
   total_gmv: number;
   currency: string | null;
   available: boolean;

@@ -96,30 +96,42 @@ def _perf(amount):
     return {"attributed_gmv": {"amount": str(amount), "currency": "IDR"}}
 
 
-def test_segments_four_way_sum_equals_total():
+def test_segments_real_block_gmv_field_names():
+    """回归锁：真打(prod)揭示各块 GMV 字段名不统一——affiliate_live=live_attributed_gmv、
+    affiliate_video=attributed_video_gmv、shop_tab=shop_tab_gmv，其余=attributed_gmv。
+    曾因统一读 attributed_gmv 把 店铺页/达人直播/达人视频 读成 0。"""
     p = {
         "id": "X",
-        "affiliate_total_performance": _perf(30),
+        "affiliate_live_performance": {"live_attributed_gmv": {"amount": "5", "currency": "IDR"}},
+        "affiliate_video_performance": {"attributed_video_gmv": {"amount": "20", "currency": "IDR"}},
+        "affiliate_total_performance": _perf(30),  # 30 > live+video=25 → 残差 5 计入达人其它
         "seller_live_performance": _perf(10),
         "seller_video_performance": _perf(20),
         "seller_product_card_performance": _perf(25),
-        "shop_tab_performance": _perf(15),
+        "shop_tab_performance": {"shop_tab_gmv": {"amount": "15", "currency": "IDR"}},
     }
     seg, cur = _segments_from_product(p)
     assert cur == "IDR"
-    assert seg == {"affiliate": 30.0, "seller_content": 30.0, "product_card": 25.0, "shop_tab": 15.0}
-    assert sum(seg.values()) == 100.0
+    assert seg["affiliate_live"] == 5.0
+    assert seg["affiliate_video"] == 20.0
+    assert seg["affiliate_other"] == 5.0      # 30 - 5 - 20
+    assert seg["shop_tab"] == 15.0            # 读到 shop_tab_gmv（非 attributed_gmv）
+    # 达人三项之和 == affiliate_total（粗细一致）
+    assert seg["affiliate_live"] + seg["affiliate_video"] + seg["affiliate_other"] == 30.0
 
 
-def test_segments_affiliate_falls_back_to_live_plus_video():
-    # 无 affiliate_total → 用 affiliate_live + affiliate_video 兜
+def test_segments_affiliate_total_only_becomes_other():
+    # 只回 affiliate_total（无 live/video 拆分）→ 整体计入「达人其它」残差，保细分之和=粗分达人
     p = {
         "id": "Y",
-        "affiliate_live_performance": _perf(5),
-        "affiliate_video_performance": _perf(7),
+        "affiliate_total_performance": _perf(40),
+        "seller_video_performance": _perf(60),
     }
     seg, _ = _segments_from_product(p)
-    assert seg["affiliate"] == 12.0
+    assert seg["affiliate_other"] == 40.0
+    assert seg["affiliate_live"] == 0.0
+    assert seg["affiliate_video"] == 0.0
+    assert sum(seg.values()) == 100.0
 
 
 def test_product_channel_breakdown_available_and_pct(monkeypatch):
@@ -151,6 +163,14 @@ def test_product_channel_breakdown_available_and_pct(monkeypatch):
     assert res["total_gmv"] == 100.0
     pct = {c["key"]: c["pct"] for c in res["channels"]}
     assert pct == {"affiliate": 40.0, "seller_content": 40.0, "product_card": 15.0, "shop_tab": 5.0}
+    # 细分：达人仅有 total（无 live/video 拆分）→ 整体落「达人其它」；自营 live/video 各 20
+    fine = {c["key"]: c["gmv"] for c in res["fine"]}
+    assert fine == {
+        "affiliate_live": 0.0, "affiliate_video": 0.0, "affiliate_other": 40.0,
+        "seller_live": 20.0, "seller_video": 20.0,
+        "product_card": 15.0, "shop_tab": 5.0,
+    }
+    assert sum(fine.values()) == res["total_gmv"]
 
 
 def test_product_channel_breakdown_degrades_when_no_data(monkeypatch):

@@ -17,6 +17,7 @@ import {
   TrendingUp,
   TriangleAlert,
   X,
+  ZoomIn,
 } from "lucide-react";
 import {
   api,
@@ -401,6 +402,9 @@ function ChannelPie({ data, loading }: { data: BoardData | null; loading: boolea
           center: ["50%", "44%"],
           itemStyle: { borderRadius: 6, borderColor: t.card, borderWidth: 2 },
           label: { show: false },
+          // hover 时禁用 emphasis：token 颜色是 CSS4 空格分隔 hsl()，zrender 推导高亮色解析失败
+          // 会把扇区画没（"鼠标指上去这块就不显示"）。tooltip 由 trigger:item 独立驱动，不受影响。
+          emphasis: { disabled: true },
           data: (cb?.channels || []).map((c) => ({
             name: c.label,
             value: c.gmv,
@@ -1075,14 +1079,23 @@ function ProductThumb({ src, rank }: { src?: string; rank: number }) {
   );
 }
 
-const CHANNEL_COLORS: Record<string, keyof ReturnType<typeof useChartTokens>> = {
-  affiliate: "primary",
-  seller_content: "positive",
-  product_card: "warning",
-  shop_tab: "sub",
+// 渠道配色。粗分 4 键各占一色；细分 6 键沿用所属粗分的色系（达人=primary 家族、自营=positive
+// 家族），video 子项降透明度区分 live，使「细分」视觉上仍能归到「粗分」的组里。
+const CHANNEL_COLORS: Record<string, { tok: keyof ReturnType<typeof useChartTokens>; opacity?: number }> = {
+  // 粗分
+  affiliate: { tok: "primary" },
+  seller_content: { tok: "positive" },
+  product_card: { tok: "warning" },
+  shop_tab: { tok: "sub" },
+  // 细分（同色系区分子项：达人=primary 家族、自营=positive 家族）
+  affiliate_live: { tok: "primary" },
+  affiliate_video: { tok: "primary", opacity: 0.6 },
+  affiliate_other: { tok: "primary", opacity: 0.32 },
+  seller_live: { tok: "positive" },
+  seller_video: { tok: "positive", opacity: 0.55 },
 };
 
-// 渠道 4 分环图（纯渲染，数据由弹窗 fetch 后传入）。无可显示切片 → 上层不渲染。
+// 渠道环图（纯渲染，数据由弹窗 fetch 后传入）。channels 可为粗分 4 或细分 6。
 function ChannelDonut({ channels }: { channels: ProductChannels["channels"] }) {
   const t = useChartTokens();
   const option = useMemo(
@@ -1100,13 +1113,17 @@ function ChannelDonut({ channels }: { channels: ProductChannels["channels"] }) {
           center: ["50%", "42%"],
           itemStyle: { borderRadius: 5, borderColor: t.card, borderWidth: 2 },
           label: { show: false },
+          emphasis: { disabled: true }, // 同 ChannelPie：避免 hover 时扇区被高亮色推导画没
           data: channels
             .filter((c) => c.gmv > 0)
-            .map((c) => ({
-              name: c.label,
-              value: c.gmv,
-              itemStyle: { color: t[CHANNEL_COLORS[c.key] ?? "sub"] as string },
-            })),
+            .map((c) => {
+              const cfg = CHANNEL_COLORS[c.key] ?? { tok: "sub" as const };
+              return {
+                name: c.label,
+                value: c.gmv,
+                itemStyle: { color: t[cfg.tok] as string, opacity: cfg.opacity ?? 1 },
+              };
+            }),
         },
       ],
     }),
@@ -1130,6 +1147,8 @@ function ProductDetailDialog({
     { loading: true, data: null, error: null },
   );
   const [imgFailed, setImgFailed] = useState(false);
+  const [granularity, setGranularity] = useState<"coarse" | "fine">("coarse"); // 渠道粒度：粗 4 / 细 6
+  const [skuOpen, setSkuOpen] = useState(false); // SKU 明细默认收起，点击展开
 
   // body 锁滚 + Esc 关闭（fork Dialog 行为）
   useEffect(() => {
@@ -1162,6 +1181,10 @@ function ProductDetailDialog({
   const skuTotal = skus.reduce((s, k) => s + (k.units_sold || 0), 0);
   const channels = state.data?.channels;
   const showImg = product.image_url && !imgFailed;
+  const hasFine = !!(channels?.available && channels.fine && channels.fine.length > 0);
+  const donutData = granularity === "fine" && channels?.fine ? channels.fine : channels?.channels ?? [];
+  const PREVIEW = 3; // 收起态预览前 3 个规格
+  const skusShown = skuOpen ? skus : skus.slice(0, PREVIEW);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -1171,26 +1194,35 @@ function ProductDetailDialog({
         aria-modal="true"
         className="relative flex max-h-[88vh] w-full max-w-md animate-fade-up flex-col rounded-2xl border border-border-shallow bg-background shadow-lg"
       >
-        {/* 头部：大图 + 完整名 + 款号/规格 + 关闭 */}
-        <div className="flex items-start gap-3 border-b border-border-shallow p-4">
-          <div className="size-16 shrink-0 overflow-hidden rounded-xl">
-            {showImg ? (
+        {/* 头部：大图（可点开看原图）+ 完整名 + 款号/规格 + 关闭 */}
+        <div className="flex items-start gap-3.5 border-b border-border-shallow p-4">
+          {showImg ? (
+            <a
+              href={product.image_url}
+              target="_blank"
+              rel="noreferrer"
+              title="查看大图"
+              className="group relative size-20 shrink-0 overflow-hidden rounded-xl ring-1 ring-border-shallow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
               <img
                 src={product.image_url}
                 alt=""
                 onError={() => setImgFailed(true)}
-                className="size-full object-cover"
+                className="size-full object-cover transition-transform group-hover:scale-105"
               />
-            ) : (
-              <div className="flex size-full items-center justify-center bg-fill-default text-foreground-secondary">
-                <ShoppingBag size={22} />
-              </div>
-            )}
-          </div>
+              <span className="absolute inset-0 flex items-center justify-center bg-black/0 text-transparent transition-colors group-hover:bg-black/35 group-hover:text-white">
+                <ZoomIn className="size-5" />
+              </span>
+            </a>
+          ) : (
+            <div className="flex size-20 shrink-0 items-center justify-center rounded-xl bg-fill-default text-foreground-secondary">
+              <ShoppingBag size={26} />
+            </div>
+          )}
           <div className="min-w-0 flex-1">
             {/* 完整商品名（不截断） */}
             <div className="text-sm font-semibold leading-snug text-foreground">{productLabel(product)}</div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-foreground-secondary">
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-foreground-secondary">
               {code && <span>{code}</span>}
               <span className="tabnum">{fmtInt(product.units_sold)} 件</span>
               <span className="tabnum">{fmtMoney(product.gmv)}</span>
@@ -1206,7 +1238,7 @@ function ProductDetailDialog({
           </button>
         </div>
 
-        {/* 内容：各 SKU 占比 + 渠道饼 */}
+        {/* 内容：渠道饼（提到顶部，可切粗/细）→ 各 SKU 明细（默认收起，点击展开） */}
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
           {state.loading ? (
             <div className="flex items-center justify-center gap-2 py-10 text-sm text-foreground-secondary">
@@ -1217,14 +1249,56 @@ function ProductDetailDialog({
             <div className="py-8 text-center text-sm text-foreground-secondary">详情加载失败</div>
           ) : (
             <>
-              {/* 各 SKU 销量占比 */}
+              {/* 渠道构成（顶部）+ 粗/细 切换 */}
               <div>
-                <div className="mb-2 text-xs font-medium text-foreground-secondary">各 SKU 销量占比</div>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <div className="text-xs font-medium text-foreground-secondary">渠道构成（按 GMV）</div>
+                  {hasFine && (
+                    <TabPills
+                      tabs={[
+                        { id: "coarse", label: "粗分" },
+                        { id: "fine", label: "细分" },
+                      ]}
+                      value={granularity}
+                      onChange={setGranularity}
+                    />
+                  )}
+                </div>
+                {channels?.available ? (
+                  <ChannelDonut channels={donutData} />
+                ) : (
+                  <div className="py-6 text-center text-xs text-foreground-tertiary">该商品暂无渠道数据</div>
+                )}
+              </div>
+
+              {/* 各 SKU 销量占比（默认收起；点击展开全部） */}
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setSkuOpen((v) => !v)}
+                  aria-expanded={skuOpen}
+                  className="flex w-full items-center justify-between gap-2 rounded-md py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <span className="text-xs font-medium text-foreground-secondary">
+                    各 SKU 销量占比
+                    {skus.length > 0 && (
+                      <span className="ml-1.5 text-foreground-tertiary">{skus.length} 个规格</span>
+                    )}
+                  </span>
+                  {skus.length > PREVIEW && (
+                    <span className="flex shrink-0 items-center gap-0.5 text-xs text-foreground-tertiary">
+                      {skuOpen ? "收起" : "展开全部"}
+                      <ChevronDown
+                        className={"size-3.5 transition-transform " + (skuOpen ? "rotate-180" : "")}
+                      />
+                    </span>
+                  )}
+                </button>
                 {skus.length === 0 ? (
                   <div className="py-3 text-center text-xs text-foreground-tertiary">无 SKU 明细</div>
                 ) : (
-                  <div className="space-y-1.5">
-                    {skus.map((k, i) => {
+                  <div className="mt-1.5 space-y-1.5">
+                    {skusShown.map((k, i) => {
                       const pct = skuTotal ? (k.units_sold / skuTotal) * 100 : 0;
                       return (
                         <div key={(k.sku_id || "") + i} className="relative rounded-md">
@@ -1245,17 +1319,16 @@ function ProductDetailDialog({
                         </div>
                       );
                     })}
+                    {!skuOpen && skus.length > PREVIEW && (
+                      <button
+                        type="button"
+                        onClick={() => setSkuOpen(true)}
+                        className="w-full rounded-md py-1.5 text-center text-xs text-foreground-secondary transition-colors hover:bg-fill-shallow"
+                      >
+                        还有 {skus.length - PREVIEW} 个规格，点击展开
+                      </button>
+                    )}
                   </div>
-                )}
-              </div>
-
-              {/* 渠道 4 分饼 */}
-              <div>
-                <div className="mb-1 text-xs font-medium text-foreground-secondary">渠道构成（按 GMV）</div>
-                {channels?.available ? (
-                  <ChannelDonut channels={channels.channels} />
-                ) : (
-                  <div className="py-6 text-center text-xs text-foreground-tertiary">该商品暂无渠道数据</div>
                 )}
               </div>
             </>
@@ -1437,6 +1510,7 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
           avoidLabelOverlap: false,
           itemStyle: { borderRadius: 6, borderColor: t.card, borderWidth: 2 },
           label: { show: false },
+          emphasis: { disabled: true }, // 同 ChannelPie：避免 hover 时扇区被高亮色推导画没
           data: [
             { name: "缺货", value: stockout, itemStyle: { color: t.negative } },
             { name: "告急", value: critical, itemStyle: { color: t.warning } },
