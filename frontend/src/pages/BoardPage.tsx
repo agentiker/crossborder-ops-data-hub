@@ -1102,7 +1102,11 @@ const channelHex = (key: string) => CHANNEL_HEX[key] ?? "#94a3b8";
 // 渠道环图（数据由弹窗 fetch 后传入）。channels 可为粗分 4 或细分 7。
 // hover：扇区放大 + 中心显名称/占比；下方常驻图例列出 色点·名称·占比%（比纯 hover 直观）。
 function ChannelDonut({ channels }: { channels: ProductChannels["channels"] }) {
-  const slices = useMemo(() => channels.filter((c) => c.gmv > 0), [channels]);
+  // 按占比降序：占比越高越靠前。饼图扇区与下方常驻图例同源此数组，一处排序两处生效。
+  const slices = useMemo(
+    () => channels.filter((c) => c.gmv > 0).sort((a, b) => b.gmv - a.gmv),
+    [channels],
+  );
   const option = useMemo(
     () => ({
       tooltip: {
