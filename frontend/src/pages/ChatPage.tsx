@@ -236,31 +236,34 @@ export function ChatPage() {
       {/* Messages（文档级滚动：去内层 overflow，随 body 滚动） */}
       <div className="flex-1">
         <div className="mx-auto w-full max-w-4xl px-0 py-3 pb-24 md:py-6 md:px-4 md:pb-32">
-          <div className="px-1.5 md:px-6">
+          <div className="px-3 md:px-6">
             <div className="flex flex-col gap-9 pb-20 pt-2 transition-[min-height] duration-500 ease-out mx-auto w-full max-w-4xl">
               {messages.map((m, i) => (
-                <ChatMessage
-                  key={m.id ?? i}
-                  role={m.role === "user" ? "user" : "assistant"}
-                  content={m.content}
-                  timestamp={metas[i]?.ts}
-                  workingTime={
-                    m.role === "user" ? undefined : workingLabel(m.steps, metas[i]?.workedMs)
-                  }
-                  thinkingSteps={m.role === "user" ? undefined : adaptSteps(m.steps)}
-                />
+                <div key={m.id ?? i} className="animate-fade-up">
+                  <ChatMessage
+                    role={m.role === "user" ? "user" : "assistant"}
+                    content={m.content}
+                    timestamp={metas[i]?.ts}
+                    workingTime={
+                      m.role === "user" ? undefined : workingLabel(m.steps, metas[i]?.workedMs)
+                    }
+                    thinkingSteps={m.role === "user" ? undefined : adaptSteps(m.steps)}
+                  />
+                </div>
               ))}
 
               {/* 流式进行中的助手回合 */}
               {streaming && (
-                <ChatMessage
-                  role="assistant"
-                  content={liveText}
-                  workingTime={liveSteps.length ? "运行中…" : "思考中…"}
-                  thinkingSteps={adaptSteps(liveSteps)}
-                  isStreaming
-                  defaultThinkingOpen
-                />
+                <div className="animate-fade-up">
+                  <ChatMessage
+                    role="assistant"
+                    content={liveText}
+                    workingTime={liveSteps.length ? "运行中…" : "思考中…"}
+                    thinkingSteps={adaptSteps(liveSteps)}
+                    isStreaming
+                    defaultThinkingOpen
+                  />
+                </div>
               )}
 
               {error && <div className="px-2 text-sm text-destructive">⚠️ {error}</div>}

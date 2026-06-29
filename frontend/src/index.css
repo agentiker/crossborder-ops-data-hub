@@ -151,6 +151,33 @@
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
   }
+  /* 思考中流光：一道亮光在墨绿文字上左右扫过，作 AI 工作中的功能性加载反馈
+     （非装饰性渐变文字——是 loading 态的状态指示，公认例外）。减少动态效果时降为静态前景色。 */
+  .text-shimmer {
+    background: linear-gradient(
+      100deg,
+      var(--foreground-secondary) 30%,
+      var(--foreground) 48%,
+      var(--foreground-secondary) 66%
+    );
+    background-size: 220% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    animation: text-shimmer 1.8s ease-in-out infinite;
+  }
+  @keyframes text-shimmer {
+    0% { background-position: 180% 0; }
+    100% { background-position: -80% 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .text-shimmer {
+      animation: none;
+      -webkit-text-fill-color: var(--foreground-secondary);
+      color: var(--foreground-secondary);
+    }
+  }
 }
 
 /* assistant Markdown 渲染（marked 输出，无法用 Tailwind 类，故走 token 化裸样式） */

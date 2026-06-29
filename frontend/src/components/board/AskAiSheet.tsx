@@ -49,45 +49,47 @@ export function AskAiSheet({
   const [liveSteps, setLiveSteps] = useState<ThinkingStep[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // 移动端 sheet 高度（vh）。吸附档：75（默认）/ 95（铺满）；从 75 继续下拖到 CLOSE_AT 以下松手则关闭。
-  const COLLAPSED = 75;
-  const EXPANDED = 95;
-  const CLOSE_AT = 55; // 下拖低于此高度松手 → 关闭抽屉
-  const MIN_DRAG = 40; // 拖拽时允许的最低高度（给“下滑关闭”留出可视行程）
-  const [sheetVh, setSheetVh] = useState(COLLAPSED);
-  const dragRef = useRef<{ startY: number; startVh: number } | null>(null);
+  // 移动端 sheet：固定高度 EXPANDED_VH，靠 translateY 整体平移做到「上滑下滑都跟手」。
+  // 两个吸附档：收起（露出 COLLAPSED_VH 高度，下半截平移出视口外）/ 铺满（translateY=0）。
+  // 下拖越过 CLOSE_DRAG 行程松手 → 关闭。translateY 单位用 vh，正值=向下移出。
+  const EXPANDED_VH = 95; // sheet 实际高度（铺满档）
+  const COLLAPSED_VH = 72; // 收起档可见高度
+  const COLLAPSED_OFFSET = EXPANDED_VH - COLLAPSED_VH; // 收起时下移的 vh（露出 72，藏 23）
+  const CLOSE_OFFSET = COLLAPSED_OFFSET + 18; // 从收起档再下拖这么多 vh 松手 → 关闭
+  const [offsetVh, setOffsetVh] = useState(COLLAPSED_OFFSET); // 当前下移量（0=铺满）
+  const dragRef = useRef<{ startY: number; startOffset: number } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const convIdRef = useRef<number | null>(null); // 连续对话续传的会话 id
   const abortRef = useRef<AbortController | null>(null);
   const sentFirstRef = useRef(false); // 防 StrictMode/重渲染重复发首问
 
-  // 顶部 handle 区的拖拽：上拖 → 增高（铺满）；从默认档继续下拖 → 降低，松手低于 CLOSE_AT 则关闭。
-  // 用 vh 计算（拖拽位移 / 视口高 * 100），夹紧在 [MIN_DRAG, EXPANDED]。
+  // 顶部 handle 拖拽：上拖 → offset 减小（整体上移、铺满）；下拖 → offset 增大（整体下移）；
+  // 松手低于 CLOSE_OFFSET 则关闭，否则吸附到最近档（收起/铺满）。整段抽屉随手平移，不是只长顶部。
   // movedRef 区分「拖拽」与「轻点」：拖过则吞掉随后的 click（touchend 后浏览器仍补发 click）。
   const movedRef = useRef(false);
   const onDragStart = (y: number) => {
-    dragRef.current = { startY: y, startVh: sheetVh };
+    dragRef.current = { startY: y, startOffset: offsetVh };
     movedRef.current = false;
   };
   const onDragMove = (y: number) => {
     const d = dragRef.current;
     if (!d) return;
     if (Math.abs(y - d.startY) > 4) movedRef.current = true;
-    const deltaVh = ((d.startY - y) / window.innerHeight) * 100; // 上拖为正
-    const next = Math.max(MIN_DRAG, Math.min(EXPANDED, d.startVh + deltaVh));
-    setSheetVh(next);
+    const deltaVh = ((y - d.startY) / window.innerHeight) * 100; // 下拖为正
+    const next = Math.max(0, Math.min(CLOSE_OFFSET, d.startOffset + deltaVh));
+    setOffsetVh(next);
   };
   const onDragEnd = () => {
     if (!dragRef.current) return;
     dragRef.current = null;
-    setSheetVh((v) => {
-      if (v < CLOSE_AT) {
+    setOffsetVh((v) => {
+      if (v > (COLLAPSED_OFFSET + CLOSE_OFFSET) / 2) {
         onClose(); // 下拖足够低 → 关闭
         return v;
       }
-      // 否则吸附到最近档位（75/95 中点为界）。
-      return v >= (COLLAPSED + EXPANDED) / 2 ? EXPANDED : COLLAPSED;
+      // 否则吸附到最近档：铺满(0) / 收起(COLLAPSED_OFFSET)，以中点为界。
+      return v <= COLLAPSED_OFFSET / 2 ? 0 : COLLAPSED_OFFSET;
     });
   };
   const onHandleClick = () => {
@@ -95,9 +97,9 @@ export function AskAiSheet({
       movedRef.current = false;
       return; // 刚才是拖拽，不当点击处理
     }
-    setSheetVh((v) => (v >= (COLLAPSED + EXPANDED) / 2 ? COLLAPSED : EXPANDED));
+    setOffsetVh((v) => (v <= COLLAPSED_OFFSET / 2 ? COLLAPSED_OFFSET : 0));
   };
-  const expanded = sheetVh >= (COLLAPSED + EXPANDED) / 2;
+  const expanded = offsetVh <= COLLAPSED_OFFSET / 2;
 
   // 发一轮（首问或追问）：复用 sendChat，续传 convIdRef。
   async function send(text: string) {
@@ -198,13 +200,16 @@ export function AskAiSheet({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{ height: `${sheetVh}vh` }}
+        style={{
+          height: `${EXPANDED_VH}vh`,
+          transform: `translateY(${offsetVh}vh)`,
+        }}
         className={cn(
-          "flex w-full flex-col rounded-t-2xl bg-card shadow-lg",
-          // 拖拽中不加 transition（跟手）；松手吸附时由 onDragEnd 触发的 state 变化走过渡。
-          dragRef.current ? "" : "transition-[height] duration-300",
-          // 桌面：忽略 sheetVh 高度，回居中弹窗。
-          "sm:!h-auto sm:max-h-[80vh] sm:max-w-lg sm:rounded-2xl",
+          "flex w-full flex-col rounded-t-2xl bg-card shadow-lg will-change-transform",
+          // 拖拽中不加 transition（跟手平移）；松手吸附时由 onDragEnd 触发的 state 变化走过渡。
+          dragRef.current ? "" : "transition-transform duration-300 ease-out",
+          // 桌面：忽略平移与高度，回居中弹窗。
+          "sm:!h-auto sm:!translate-y-0 sm:max-h-[80vh] sm:max-w-lg sm:rounded-2xl",
         )}
       >
         {/* 顶部条：drag handle（移动端可拖拽改高度 + 点击切换档位） + 标题 + 关闭 */}

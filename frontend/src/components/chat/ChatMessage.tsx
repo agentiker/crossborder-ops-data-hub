@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Copy, Check, ChevronDown, ChevronRight, FileCode, Zap, Terminal, Database, Upload, Send } from "lucide-react";
+import { Copy, Check, ChevronDown, ChevronRight, FileCode, Zap, Terminal, Database, Upload, Send, Loader2 } from "lucide-react";
 import { Markdown } from "@/components/Markdown";
 
 // 照搬 forkStoreClaw/src/components/Chat/ChatMessage.tsx：
@@ -82,12 +82,22 @@ export function ChatMessage({
 
   const steps = thinkingSteps || [];
   const visibleSteps = showMore ? steps : steps.slice(0, 3);
+  // 思考阶段：流式中、正文尚未到达 → 用流光文字 + 转动图标，让用户明确知道 AI 在思考/工作。
+  const thinking = isStreaming && content.length === 0;
 
   return (
     <div className="space-y-1 group" style={{ contain: "paint", opacity: 1, transform: "none" }}>
       <div className="group/assistant-content min-w-0 px-2 space-y-2 text-[15px] leading-7 text-[#0A0F1A]">
-        {/* Working time indicator */}
-        {workingTime && (
+        {/* 思考中：流光「思考中…」+ 转动小图标（流式无正文阶段） */}
+        {thinking && (
+          <div className="flex flex-col items-start gap-1.5 py-1">
+            <span className="text-shimmer text-sm font-medium">{workingTime || "思考中…"}</span>
+            <Loader2 className="h-4 w-4 animate-spin text-foreground-tertiary" />
+          </div>
+        )}
+
+        {/* Working time indicator（折叠区，思考阶段不显示、改由上方流光替代） */}
+        {workingTime && !thinking && (
           <div className="space-y-2">
             <div className="flex items-center gap-2 group/working-header -mb-3">
               <button
