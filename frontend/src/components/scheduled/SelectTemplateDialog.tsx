@@ -12,7 +12,7 @@ export function SelectTemplateDialog({ onClose, onPick }: Props) {
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
 
-      <div className="relative flex max-h-[90vh] w-[713px] max-w-[90vw] animate-fade-up flex-col rounded-2xl bg-white shadow-lg">
+      <div className="relative flex max-h-[90vh] w-[713px] max-w-[90vw] animate-fade-up flex-col rounded-2xl bg-card shadow-lg">
         {/* Header */}
         <div className="flex min-h-[72px] items-center justify-between px-6 py-3">
           <div className="text-lg font-semibold leading-6 text-foreground">选择模板</div>

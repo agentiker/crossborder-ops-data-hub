@@ -70,7 +70,7 @@ export function ScheduledPage() {
       <header className="z-40 flex h-[68px] shrink-0 items-center justify-between gap-2 border-b border-border-shallow bg-background px-4 sm:px-6 lg:sticky lg:top-0">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <h1 className="truncate text-lg font-semibold tracking-tight text-foreground">定时任务</h1>
-          <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+          <span className="shrink-0 rounded-full bg-caution/15 px-2 py-0.5 text-xs font-medium text-caution">
             待开发
           </span>
           {tasks.length > 0 && (

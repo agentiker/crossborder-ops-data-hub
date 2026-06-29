@@ -17,7 +17,7 @@ export function SkillDetailDialog({ skill, enabled, onToggle, onClose }: Props) 
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
 
       {/* Dialog */}
-      <div className="relative flex max-h-[90vh] w-[640px] max-w-[90vw] animate-fade-up flex-col rounded-2xl bg-white shadow-lg">
+      <div className="relative flex max-h-[90vh] w-[640px] max-w-[90vw] animate-fade-up flex-col rounded-2xl bg-card shadow-lg">
         {/* Header */}
         <div className="flex min-h-[72px] items-center justify-between px-6 py-3">
           <div className="text-lg font-semibold leading-6 text-foreground">{skill.label}</div>
@@ -52,7 +52,7 @@ export function SkillDetailDialog({ skill, enabled, onToggle, onClose }: Props) 
                   "inline-flex self-start items-center rounded px-2 py-0.5 text-xs font-medium",
                   skill.badge === "官方"
                     ? "bg-foreground/10 text-foreground"
-                    : "bg-orange-100 text-orange-700",
+                    : "bg-caution/15 text-caution",
                 )}
               >
                 {skill.badge}

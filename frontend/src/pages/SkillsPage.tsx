@@ -41,7 +41,7 @@ export function SkillsPage() {
           </TabButton>
         </div>
         <div className="flex items-center gap-2">
-          <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+          <span className="shrink-0 rounded-full bg-caution/15 px-2 py-0.5 text-xs font-medium text-caution">
             待开发
           </span>
           <p className="hidden text-xs text-foreground-tertiary sm:block">

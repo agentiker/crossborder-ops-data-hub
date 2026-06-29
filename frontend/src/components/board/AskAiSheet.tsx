@@ -200,7 +200,7 @@ export function AskAiSheet({
         onClick={(e) => e.stopPropagation()}
         style={{ height: `${sheetVh}vh` }}
         className={cn(
-          "flex w-full flex-col rounded-t-2xl bg-card shadow-xl",
+          "flex w-full flex-col rounded-t-2xl bg-card shadow-lg",
           // 拖拽中不加 transition（跟手）；松手吸附时由 onDragEnd 触发的 state 变化走过渡。
           dragRef.current ? "" : "transition-[height] duration-300",
           // 桌面：忽略 sheetVh 高度，回居中弹窗。

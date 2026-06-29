@@ -39,7 +39,7 @@ export function WelcomeScreen({ userName = "老板" }: WelcomeScreenProps) {
         className="inline-flex items-center gap-1.5 bg-fill-default rounded-full px-3 py-1 text-xs text-foreground-tertiary mb-3.5 tracking-[0.02em] animate-fade-up"
         style={{ animationDelay: "0.3s" }}
       >
-        <span className="size-1.5 rounded-full bg-green-500 inline-block animate-pulse-slow"></span>
+        <span className="size-1.5 rounded-full bg-positive inline-block animate-pulse-slow"></span>
         {greeting.period}
       </div>
 

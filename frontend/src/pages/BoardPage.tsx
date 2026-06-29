@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, createContext, useContext, type ReactNode
 import {
   ArrowUpDown,
   Calendar,
+  Clock,
   ChevronDown,
   ChevronRight,
   DollarSign,
@@ -9,9 +10,9 @@ import {
   Gauge,
   Globe,
   Info,
+  MapPin,
   Megaphone,
   MessageCircleQuestion,
-  Percent,
   Search,
   ShoppingBag,
   ShoppingCart,
@@ -19,6 +20,7 @@ import {
   Store,
   TrendingUp,
   TriangleAlert,
+  Wrench,
   X,
   ZoomIn,
 } from "lucide-react";
@@ -35,18 +37,8 @@ import {
 import { DateRangePicker, type DateRangeValue } from "@/components/board/DateRangePicker";
 import { InfoTooltip } from "@/components/ui/tooltip";
 import { EChart, useChartTokens } from "@/components/EChart";
-import {
-  DEMO_ORDERS,
-  DEMO_REFUNDS,
-  DEMO_RETURNS,
-  funnelOption,
-  ordersStackOption,
-  refundsOption,
-  returnReasonsOption,
-  returnsOption,
-  trafficOption,
-} from "@/components/board/demo-data";
 import { AskAiSheet } from "@/components/board/AskAiSheet";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 // 照搬 forkStoreClaw/src/components/Dashboard/* 的版式/卡片/分段 tab/图表观感（1:1）。
@@ -280,7 +272,7 @@ function NoDataBanner({ data, loading }: { data: BoardData | null; loading: bool
   const win = data.trend.window_label || `${data.trend.start_date ?? ""} ~ ${data.trend.end_date ?? ""}`;
   return (
     <div className="flex items-start gap-3 rounded-2xl border border-border-shallow bg-fill-shallow p-4 text-sm">
-      <span className="text-base leading-5">📅</span>
+      <Calendar className="mt-0.5 h-4 w-4 shrink-0 text-foreground-tertiary" />
       <div>
         <div className="font-medium text-foreground">所选时间范围暂无订单数据</div>
         <div className="mt-0.5 text-foreground-secondary">
@@ -359,8 +351,9 @@ function AskAiLink({
 }
 
 // 版面分区区头（区1 按所选日期 / 区2 实时·固定口径）。轻量、非卡片，贴 space-y-6 节奏
-// 浮在卡片之上。accent=true（区2）：左侧 info 蓝色条 + 极淡蓝底，克制地暗示「不随筛选」
-// （蓝在本项目 token 语义=监控/信息，非告警，正贴合固定口径的"实时监控"含义）。
+// 浮在卡片之上。accent=true（区2）：整块极淡蓝底 + 前导 info 图标，克制地暗示「不随筛选」
+// （蓝在本项目 token 语义=监控/信息，非告警，正贴合固定口径的"实时监控"含义）。浅底+图标
+// 已承载语义，不用左侧色条（项目 DESIGN.md 头号禁令：>1px 彩色 border-left/right）。
 function SectionHeader({
   title,
   hint,
@@ -371,13 +364,11 @@ function SectionHeader({
   accent?: boolean;
 }) {
   return (
-    <div
-      className={
-        "rounded-lg px-3 py-2 " +
-        (accent ? "border-l-[3px] border-info bg-info/5" : "border-l-[3px] border-border-shallow")
-      }
-    >
-      <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+    <div className={"rounded-lg px-3 py-2 " + (accent ? "bg-info/5" : "")}>
+      <div className="flex items-center gap-1.5">
+        {accent && <Info className="h-3.5 w-3.5 shrink-0 text-info" />}
+        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+      </div>
       {hint && <p className="mt-0.5 text-xs text-foreground-secondary">{hint}</p>}
     </div>
   );
@@ -404,8 +395,23 @@ function CardHead({
 function DemoBadge() {
   return (
     <span className="rounded bg-caution/15 px-1.5 py-0.5 text-[11px] font-medium text-caution">
-      演示数据
+      数据源开发中
     </span>
+  );
+}
+
+// 数据源未接通的维度占位卡：不再渲染假数据图表（守「数据可信即设计」），改诚实空状态——
+// 说明该维度规划中、数据源开发中，避免老板把演示数字误当真实经营数据。
+function DemoPlaceholder({ title, desc, height = 220 }: { title: string; desc: string; height?: number }) {
+  return (
+    <div
+      className="flex flex-col items-center justify-center gap-2 rounded-lg bg-fill-shallow px-6 text-center"
+      style={{ minHeight: height }}
+    >
+      <Wrench className="h-6 w-6 text-foreground-tertiary" />
+      <div className="text-sm font-medium text-foreground-secondary">{title}</div>
+      <p className="max-w-sm text-xs leading-relaxed text-foreground-tertiary">{desc}</p>
+    </div>
   );
 }
 
@@ -684,8 +690,9 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
             </div>
           </div>
           {baselinePending && (
-            <div className="rounded-lg bg-info/10 px-3 py-2 text-xs text-info">
-              ⏳ 已结算基准积累中（需 ~2 周结算历史），暂无法判定异常，先展示当前费率水平与构成。
+            <div className="flex items-start gap-1.5 rounded-lg bg-info/10 px-3 py-2 text-xs text-info">
+              <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>已结算基准积累中（需 ~2 周结算历史），暂无法判定异常，先展示当前费率水平与构成。</span>
             </div>
           )}
           {/* 趋势 */}
@@ -693,7 +700,9 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
           {/* 异常时点名分项归因 */}
           {status === "alert" && fr?.attributions?.length ? (
             <div className="rounded-xl bg-negative/10 p-3 text-sm">
-              <div className="mb-1 font-medium text-negative">📍 主要涨幅来自</div>
+              <div className="mb-1 flex items-center gap-1.5 font-medium text-negative">
+                <MapPin className="h-3.5 w-3.5 shrink-0" />主要涨幅来自
+              </div>
               {fr.attributions.map((a) => (
                 <div key={a.key} className="flex justify-between text-foreground">
                   <span>{a.name}</span>
@@ -960,7 +969,7 @@ function AdSpendDialog({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="max-h-[86vh] w-full overflow-y-auto rounded-t-2xl bg-card p-5 pb-[max(1.25rem,calc(env(safe-area-inset-bottom)+0.75rem))] shadow-xl sm:max-w-md sm:rounded-2xl sm:pb-5"
+        className="max-h-[86vh] w-full overflow-y-auto rounded-t-2xl bg-card p-5 pb-[max(1.25rem,calc(env(safe-area-inset-bottom)+0.75rem))] shadow-lg sm:max-w-md sm:rounded-2xl sm:pb-5"
       >
         <div className="mb-3 flex items-start justify-between">
           <div>
@@ -1041,6 +1050,7 @@ function MetricCard({
   loading,
   subtitle,
   info,
+  className,
 }: {
   title: string;
   value: string;
@@ -1051,16 +1061,22 @@ function MetricCard({
   subtitle?: string;
   // 可选标题旁信息气泡（口径说明），如广告卡拆分付费投放/达人佣金。
   info?: ReactNode;
+  // 可选额外类名（如 col-span-2 让综合指标占满整行）。
+  className?: string;
 }) {
   const dir = change == null ? null : change > 0 ? "up" : change < 0 ? "down" : "flat";
   return (
-    <div className="flex flex-col gap-1 rounded-xl bg-fill-shallow p-4">
+    <div className={cn("flex flex-col gap-1 rounded-xl bg-fill-shallow p-4", className)}>
       <div className="flex items-center gap-2 text-foreground-secondary">
         {icon}
         <span className="text-xs">{title}</span>
         {info}
       </div>
-      <div className="tabnum text-2xl font-bold text-foreground">{loading ? "…" : value}</div>
+      {loading ? (
+        <Skeleton className="my-1 h-7 w-24" />
+      ) : (
+        <div className="tabnum text-2xl font-bold text-foreground">{value}</div>
+      )}
       {!loading && subtitle && (
         <div className="text-xs text-foreground-secondary">{subtitle}</div>
       )}
@@ -1214,7 +1230,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
     { id: "traffic", label: "流量趋势" },
     { id: "funnel", label: "转化漏斗" },
   ];
-  // traffic/funnel 为演示数据 tab（后端无源），选中时标注徽章、走 demo-data 的 option。
+  // traffic/funnel 暂无后端数据源，选中时标注「数据源开发中」徽章 + 诚实空状态（不渲染假数据）。
   const isDemo = activeTab === "traffic" || activeTab === "funnel";
 
   // 窗口含今日：当期含半天今天,环比已在后端按 intraday 公平比较（不再假暴跌），此处再显眼
@@ -1236,7 +1252,8 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
         }
       />
 
-      {/* KPI 固定 2 列：第一行 GMV/广告消耗、第二行 订单/销量、第三行 ROI/ROAS（客单价暂去） */}
+      {/* KPI 固定 2 列：第一行 GMV/广告消耗、第二行 订单/销量；ROAS 综合指标独占整行。
+          ROI 口径未定，不在英雄行留占位死格（定口径后再加），避免一瞥落在空值上。 */}
       <div className="mb-4 grid grid-cols-2 gap-3">
         <MetricCard loading={loading} change={ch?.gmv} title="GMV（已付款）" value={fmtMoney(o?.gmv)} icon={<DollarSign size={14} />} />
         <MetricCard
@@ -1250,9 +1267,8 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
         />
         <MetricCard loading={loading} change={ch?.order_count} title="订单数" value={fmtInt(o?.order_count)} icon={<ShoppingCart size={14} />} />
         <MetricCard loading={loading} change={ch?.units_sold} title="销量" value={fmtInt(o?.units_sold)} icon={<TrendingUp size={14} />} />
-        {/* ROI：口径待定，先占位（与 ROAS 并列第三行）。定口径后填值。 */}
-        <MetricCard loading={loading} title="ROI" value="—" subtitle="口径待定" icon={<Percent size={14} />} />
         <MetricCard
+          className="col-span-2"
           loading={loading}
           change={noPaidSpend || !adComplete ? undefined : ch?.roas}
           title="ROAS"
@@ -1278,15 +1294,17 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
         <TabPills tabs={tabs} value={activeTab} onChange={setActiveTab} />
       </div>
 
-      {/* 演示 tab（流量/转化）走前端内置 demo 数据，不依赖后端 pts；真实 tab 仍按 pts 空态降级。 */}
+      {/* 流量/转化漏斗：后端暂无数据源，改诚实空状态（不渲染假数据），守「数据可信即设计」。 */}
       {activeTab === "traffic" ? (
-        <div className="h-[220px]">
-          <EChart option={trafficOption(t)} height={220} />
-        </div>
+        <DemoPlaceholder
+          title="流量趋势 · 数据源开发中"
+          desc="店铺访客与流量构成的数据接入开发中，接通后将在此展示真实趋势，不用演示数据充数。"
+        />
       ) : activeTab === "funnel" ? (
-        <div className="h-[220px]">
-          <EChart option={funnelOption(t)} height={220} />
-        </div>
+        <DemoPlaceholder
+          title="转化漏斗 · 数据源开发中"
+          desc="曝光→点击→下单→支付的转化漏斗数据接入开发中，接通后将在此展示真实转化路径。"
+        />
       ) : loading || !pts.length ? (
         <ChartEmpty loading={loading} empty="该时段暂无趋势数据" height={220} />
       ) : (
@@ -2395,15 +2413,11 @@ const ORDER_TABS: { id: OrderTab; label: string }[] = [
   { id: "refunds", label: "退款分析" },
 ];
 
-const sum = (a: number[]) => a.reduce((x, y) => x + y, 0);
-
 function OrderSection({ data, loading }: { data: BoardData | null; loading: boolean }) {
-  const t = useChartTokens();
   const [tab, setTab] = useState<OrderTab>("fulfillment");
   const b = data?.fulfillment.buckets;
   const items = data?.fulfillment.items ?? [];
   const isDemo = tab !== "fulfillment";
-  const returnRate = (sum(DEMO_RETURNS.rate) / DEMO_RETURNS.rate.length).toFixed(1);
 
   return (
     <BoardCard>
@@ -2496,51 +2510,28 @@ function OrderSection({ data, loading }: { data: BoardData | null; loading: bool
         </>
       )}
 
-      {/* 下单趋势：演示（按平台堆叠柱） */}
+      {/* 下单趋势：后端暂无数据源，诚实空状态（不渲染假数据）。 */}
       {tab === "orders" && (
-        <>
-          <div className="mb-4 flex flex-wrap gap-x-8 gap-y-3">
-            <Stat label="合计下单" value={fmtInt(sum(DEMO_ORDERS.shopify) + sum(DEMO_ORDERS.amazon) + sum(DEMO_ORDERS.tiktok))} />
-            <Stat label="Shopify" value={fmtInt(sum(DEMO_ORDERS.shopify))} />
-            <Stat label="Amazon" value={fmtInt(sum(DEMO_ORDERS.amazon))} />
-            <Stat label="TikTok Shop" value={fmtInt(sum(DEMO_ORDERS.tiktok))} />
-          </div>
-          <div className="h-[220px]">
-            <EChart option={ordersStackOption(t)} height={220} />
-          </div>
-        </>
+        <DemoPlaceholder
+          title="下单趋势 · 数据源开发中"
+          desc="按平台拆分的下单趋势数据接入开发中，接通后将在此展示真实下单走势。"
+        />
       )}
 
-      {/* 退货分析：演示（退货数/率双 Y + 原因环图，两列） */}
+      {/* 退货分析：后端暂无数据源，诚实空状态。 */}
       {tab === "returns" && (
-        <>
-          <div className="mb-4 flex flex-wrap gap-x-8 gap-y-3">
-            <Stat label="合计退货" value={fmtInt(sum(DEMO_RETURNS.count))} />
-            <Stat label="退货率" value={`${returnRate}%`} />
-            <Stat label="主要原因" value={DEMO_RETURNS.reasons[0].name} />
-          </div>
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <div className="h-[220px]">
-              <EChart option={returnsOption(t)} height={220} />
-            </div>
-            <div className="h-[220px]">
-              <EChart option={returnReasonsOption(t)} height={220} />
-            </div>
-          </div>
-        </>
+        <DemoPlaceholder
+          title="退货分析 · 数据源开发中"
+          desc="退货数量、退货率与退货原因的数据接入开发中，接通后将在此展示真实退货分析。"
+        />
       )}
 
-      {/* 退款分析：演示（退款金额面积 + 退款率虚线，月维度） */}
+      {/* 退款分析：后端暂无数据源，诚实空状态。 */}
       {tab === "refunds" && (
-        <>
-          <div className="mb-4 flex flex-wrap gap-x-8 gap-y-3">
-            <Stat label="累计退款" value={`$${fmtInt(sum(DEMO_REFUNDS.amount))}`} />
-            <Stat label="最新退款率" value={`${DEMO_REFUNDS.rate[DEMO_REFUNDS.rate.length - 1]}%`} />
-          </div>
-          <div className="h-[220px]">
-            <EChart option={refundsOption(t)} height={220} />
-          </div>
-        </>
+        <DemoPlaceholder
+          title="退款分析 · 数据源开发中"
+          desc="退款金额与退款率的数据接入开发中，接通后将在此展示真实退款趋势。"
+        />
       )}
     </BoardCard>
   );

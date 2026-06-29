@@ -38,7 +38,7 @@ export function TaskCard({ task, onToggle, onDelete }: Props) {
             className={cn(
               "text-nowrap rounded-md px-1.5 py-0.5 text-xs leading-4",
               task.enabled
-                ? "bg-green-100 text-green-700"
+                ? "bg-positive/15 text-positive"
                 : "bg-fill text-foreground-secondary",
             )}
           >
@@ -88,7 +88,7 @@ export function TaskCard({ task, onToggle, onDelete }: Props) {
           </button>
 
           {showMenu && (
-            <div className="absolute right-0 top-full z-20 mt-1 w-32 rounded-xl border border-border bg-white py-1 shadow-lg">
+            <div className="absolute right-0 top-full z-20 mt-1 w-32 rounded-xl border border-border bg-card py-1 shadow-lg">
               <button
                 onClick={() => {
                   setShowMenu(false);

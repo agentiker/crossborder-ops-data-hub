@@ -30,11 +30,11 @@ interface ChatMessageProps {
 
 const stepIcons: Record<string, React.ReactNode> = {
   thinking: <Zap className="h-3.5 w-3.5" />,
-  skill: <Zap className="h-3.5 w-3.5 text-blue-500" />,
-  api: <Database className="h-3.5 w-3.5 text-green-500" />,
-  command: <Terminal className="h-3.5 w-3.5 text-purple-500" />,
-  file: <Upload className="h-3.5 w-3.5 text-orange-500" />,
-  action: <Send className="h-3.5 w-3.5 text-teal-500" />,
+  skill: <Zap className="h-3.5 w-3.5 text-info" />,
+  api: <Database className="h-3.5 w-3.5 text-positive" />,
+  command: <Terminal className="h-3.5 w-3.5 text-foreground-tertiary" />,
+  file: <Upload className="h-3.5 w-3.5 text-warning" />,
+  action: <Send className="h-3.5 w-3.5 text-foreground-tertiary" />,
 };
 
 export function ChatMessage({
@@ -124,7 +124,7 @@ export function ChatMessage({
                       </div>
                     </div>
                     {step.status === "done" && (
-                      <Check className="h-3.5 w-3.5 text-green-500 flex-shrink-0" />
+                      <Check className="h-3.5 w-3.5 text-positive flex-shrink-0" />
                     )}
                   </div>
                 ))}
@@ -163,8 +163,8 @@ export function ChatMessage({
             {files.map((file, index) => (
               <span key={index} className="group block">
                 <div className="flex items-center gap-3 rounded-2xl border border-border bg-card px-5 py-5 cursor-pointer transition-shadow duration-150 hover:shadow-md">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-teal-50">
-                    <FileCode className="shrink-0 h-6 w-6 text-teal-600" />
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-fill">
+                    <FileCode className="shrink-0 h-6 w-6 text-foreground-secondary" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-base font-medium text-foreground">{file.name}</div>

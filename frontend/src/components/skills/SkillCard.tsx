@@ -64,7 +64,7 @@ export function SkillCard({ skill, enabled, onToggle, onClick }: Props) {
             "inline-flex items-center rounded px-2 py-0.5 text-xs font-medium",
             skill.badge === "官方"
               ? "bg-foreground/10 text-foreground"
-              : "bg-orange-100 text-orange-700",
+              : "bg-caution/15 text-caution",
           )}
         >
           {skill.badge}
@@ -83,7 +83,7 @@ export function SkillCard({ skill, enabled, onToggle, onClick }: Props) {
           </button>
 
           {showMenu && (
-            <div className="absolute bottom-full right-0 z-20 mb-1 w-32 rounded-xl border border-border bg-white py-1 shadow-lg">
+            <div className="absolute bottom-full right-0 z-20 mb-1 w-32 rounded-xl border border-border bg-card py-1 shadow-lg">
               <button
                 onClick={(e) => {
                   e.stopPropagation();

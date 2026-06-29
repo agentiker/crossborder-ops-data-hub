@@ -124,7 +124,7 @@ export function SidebarContent({
             <Icon className="size-[18px] shrink-0" />
             {!collapsed && <span className="truncate">{label}</span>}
             {!collapsed && badge && (
-              <span className="ml-auto shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+              <span className="ml-auto shrink-0 rounded-full bg-caution/15 px-1.5 py-0.5 text-[10px] font-medium text-caution">
                 {badge}
               </span>
             )}

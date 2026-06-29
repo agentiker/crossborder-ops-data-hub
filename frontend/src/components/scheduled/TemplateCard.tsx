@@ -32,7 +32,7 @@ export function TemplateCard({ template, onUse }: Props) {
         <div className="pointer-events-none absolute right-[-38px] top-[36px] z-[1] h-[165px] w-[169px]">
           <div
             style={{
-              transition: "transform 520ms cubic-bezier(0.34,1.56,0.64,1)",
+              transition: "transform 520ms cubic-bezier(0.22,1,0.36,1)",
             }}
             className={cn(
               "absolute left-[10px] top-[30px] h-[116px] w-[155px]",
@@ -43,7 +43,7 @@ export function TemplateCard({ template, onUse }: Props) {
           </div>
           <div
             style={{
-              transition: "transform 520ms cubic-bezier(0.34,1.56,0.64,1)",
+              transition: "transform 520ms cubic-bezier(0.22,1,0.36,1)",
               transitionDelay: "20ms",
             }}
             className={cn(
