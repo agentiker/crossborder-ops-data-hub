@@ -106,8 +106,10 @@ export function AppShell() {
       )}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-[70] flex w-[280px] flex-col border-r border-border-shallow bg-background pt-[env(safe-area-inset-top)] transition-transform duration-300 lg:hidden",
-          mobileOpen ? "translate-x-0" : "-translate-x-full",
+          // 浮起卡片：左侧贴边（无间隙），右侧两角圆角；顶/底留间隙（含安全区）；不再纠结底栏同色
+          "fixed left-0 z-[70] flex w-[280px] flex-col overflow-hidden rounded-r-2xl border border-l-0 border-border-shallow bg-background shadow-xl transition-transform duration-300 lg:hidden",
+          "top-[max(0.75rem,calc(env(safe-area-inset-top)+0.5rem))] bottom-[max(0.75rem,env(safe-area-inset-bottom))]",
+          mobileOpen ? "translate-x-0" : "-translate-x-[120%]",
         )}
       >
         <SidebarContent
