@@ -82,21 +82,73 @@ export function ChatMessage({
 
   const steps = thinkingSteps || [];
   const visibleSteps = showMore ? steps : steps.slice(0, 3);
-  // 思考阶段：流式中、正文尚未到达 → 用流光文字 + 转动图标，让用户明确知道 AI 在思考/工作。
+  // 思考阶段：流式中、正文尚未到达 → 标题用流光文字 + 转动图标，但仍可点开看具体步骤。
   const thinking = isStreaming && content.length === 0;
+  const hasSteps = steps.length > 0;
+
+  // 展开后的步骤列表（思考态/完成态共用，避免两套渲染分叉）。
+  const stepsPanel = showThinking && hasSteps && (
+    <div className="ml-2 pl-3 border-l-2 border-border-shallow space-y-1.5 animate-fade-up">
+      {visibleSteps.map((step, index) => (
+        <div key={index} className="flex items-start gap-2 group/step">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <span className="flex-shrink-0 mt-0.5">
+              {stepIcons[step.type] || <Terminal className="h-3.5 w-3.5" />}
+            </span>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-foreground truncate">{step.label}</div>
+              {step.detail && (
+                <div className="text-xs text-foreground-tertiary truncate">{step.detail}</div>
+              )}
+            </div>
+          </div>
+          {step.status === "done" ? (
+            <Check className="h-3.5 w-3.5 text-positive flex-shrink-0" />
+          ) : step.status === "running" ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-foreground-tertiary flex-shrink-0" />
+          ) : null}
+        </div>
+      ))}
+      {steps.length > 3 && !showMore && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setShowMore(true);
+          }}
+          className="flex items-center gap-1 text-xs text-foreground-secondary hover:text-foreground transition-colors mt-1"
+        >
+          <ChevronRight className="h-3 w-3" />
+          展开全部
+        </button>
+      )}
+    </div>
+  );
 
   return (
     <div className="space-y-1 group" style={{ contain: "paint", opacity: 1, transform: "none" }}>
       <div className="group/assistant-content min-w-0 px-2 space-y-2 text-[15px] leading-7 text-[#0A0F1A]">
-        {/* 思考中：流光「思考中…」+ 转动小图标（流式无正文阶段） */}
+        {/* 思考中：流光「思考中…」+ 转动小图标。有步骤时整行可点开看具体步骤（功能不丢）。 */}
         {thinking && (
-          <div className="flex flex-col items-start gap-1.5 py-1">
-            <span className="text-shimmer text-sm font-medium">{workingTime || "思考中…"}</span>
-            <Loader2 className="h-4 w-4 animate-spin text-foreground-tertiary" />
+          <div className="space-y-2">
+            <button
+              type="button"
+              disabled={!hasSteps}
+              onClick={() => hasSteps && setShowThinking((v) => !v)}
+              className={`flex items-center gap-1.5 py-1 text-left ${hasSteps ? "cursor-pointer" : "cursor-default"}`}
+            >
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-foreground-tertiary shrink-0" />
+              <span className="text-shimmer text-sm font-medium">{workingTime || "思考中…"}</span>
+              {hasSteps && (
+                <ChevronDown
+                  className={`h-3.5 w-3.5 text-foreground-tertiary opacity-60 transition-transform duration-200 ${showThinking ? "rotate-180" : ""}`}
+                />
+              )}
+            </button>
+            {stepsPanel}
           </div>
         )}
 
-        {/* Working time indicator（折叠区，思考阶段不显示、改由上方流光替代） */}
+        {/* Working time indicator（完成态折叠区；思考态改由上方流光行承载） */}
         {workingTime && !thinking && (
           <div className="space-y-2">
             <div className="flex items-center gap-2 group/working-header -mb-3">
@@ -111,49 +163,7 @@ export function ChatMessage({
                 />
               </button>
             </div>
-
-            {/* Expanded thinking steps */}
-            {showThinking && steps.length > 0 && (
-              <div className="ml-2 pl-3 border-l-2 border-border-shallow space-y-1.5 animate-fade-up">
-                {/* Steps */}
-                {visibleSteps.map((step, index) => (
-                  <div key={index} className="flex items-start gap-2 group/step">
-                    <div className="flex items-center gap-2 flex-1 min-w-0">
-                      <span className="flex-shrink-0 mt-0.5">
-                        {stepIcons[step.type] || <Terminal className="h-3.5 w-3.5" />}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-foreground truncate">
-                          {step.label}
-                        </div>
-                        {step.detail && (
-                          <div className="text-xs text-foreground-tertiary truncate">
-                            {step.detail}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    {step.status === "done" && (
-                      <Check className="h-3.5 w-3.5 text-positive flex-shrink-0" />
-                    )}
-                  </div>
-                ))}
-
-                {/* Show more button */}
-                {steps.length > 3 && !showMore && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowMore(true);
-                    }}
-                    className="flex items-center gap-1 text-xs text-foreground-secondary hover:text-foreground transition-colors mt-1"
-                  >
-                    <ChevronRight className="h-3 w-3" />
-                    展开全部
-                  </button>
-                )}
-              </div>
-            )}
+            {stepsPanel}
           </div>
         )}
 

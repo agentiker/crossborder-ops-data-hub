@@ -40,9 +40,13 @@ export function AskAiSheet({
   const COLLAPSED_VH = 72; // 收起档可见高度
   const COLLAPSED_OFFSET = EXPANDED_VH - COLLAPSED_VH; // 收起时下移的 vh（露出 72，藏 23）
   const MAX_OFFSET = EXPANDED_VH; // 拖拽下限（最多整体拖出视口）
+  const OFFSCREEN = EXPANDED_VH; // 完全移出视口（进出场起止位）
   const CLOSE_OFFSET = COLLAPSED_OFFSET + 28; // 慢拖：要再下拖 28vh（过大半截）松手才关闭
   const FLICK_VH_PER_S = 55; // 快速下滑速度阈值（vh/秒）：超过即关闭，无论位移
-  const [offsetVh, setOffsetVh] = useState(COLLAPSED_OFFSET); // 当前下移量（0=铺满）
+  // 初始在屏外（OFFSCREEN），挂载后下一帧滑到收起档 → 入场动画；退场则滑回 OFFSCREEN 再卸载。
+  const [offsetVh, setOffsetVh] = useState(OFFSCREEN);
+  const [entered, setEntered] = useState(false); // 是否已播过入场（控制遮罩淡入 + 桌面缩放）
+  const [closing, setClosing] = useState(false); // 退场中（遮罩淡出）
   // 拖拽态：起点 + 实时速度跟踪（lastY/lastT/velocity，vh/秒，下拖为正）。
   const dragRef = useRef<{
     startY: number;
@@ -51,8 +55,31 @@ export function AskAiSheet({
     lastT: number;
     velocity: number;
   } | null>(null);
+  const closeTimer = useRef<number | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // 退场：先播下滑+淡出动画，结束后才真正卸载（onClose）。幂等防重复触发。
+  const requestClose = () => {
+    if (closing) return;
+    setClosing(true);
+    setOffsetVh(OFFSCREEN);
+    closeTimer.current = window.setTimeout(onClose, 280);
+  };
+
+  // 入场：挂载后下一帧把抽屉从屏外滑到收起档 + 遮罩淡入（桌面则做轻缩放淡入）。
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      setEntered(true);
+      setOffsetVh(COLLAPSED_OFFSET);
+    });
+    return () => {
+      cancelAnimationFrame(id);
+      if (closeTimer.current) clearTimeout(closeTimer.current);
+    };
+    // 仅挂载时入场一次。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 顶部 handle 拖拽：上拖 → offset 减小（整体上移、铺满）；下拖 → offset 增大（整体下移）。
   // 松手关闭条件 =「快速下滑(flick)」OR「慢拖但拖过 CLOSE_OFFSET」，否则吸附最近档（收起/铺满）。
@@ -86,20 +113,16 @@ export function AskAiSheet({
     const flickDown = d.velocity > FLICK_VH_PER_S; // 快速下滑
     const flickUp = d.velocity < -FLICK_VH_PER_S; // 快速上滑
     dragRef.current = null;
-    setOffsetVh((v) => {
-      // 快速下滑 → 关闭；快速上滑 → 直接铺满。
-      if (flickDown) {
-        onClose();
-        return v;
-      }
-      if (flickUp) return 0;
-      // 慢拖：拖过 CLOSE_OFFSET 才关闭，否则吸附最近档（收起/铺满，以中点为界）。
-      if (v > CLOSE_OFFSET) {
-        onClose();
-        return v;
-      }
-      return v <= COLLAPSED_OFFSET / 2 ? 0 : COLLAPSED_OFFSET;
-    });
+    // 快速下滑 → 退场关闭；快速上滑 → 铺满；慢拖过 CLOSE_OFFSET → 关闭；否则吸附最近档。
+    if (flickDown || offsetVh > CLOSE_OFFSET) {
+      requestClose();
+      return;
+    }
+    if (flickUp) {
+      setOffsetVh(0);
+      return;
+    }
+    setOffsetVh(offsetVh <= COLLAPSED_OFFSET / 2 ? 0 : COLLAPSED_OFFSET);
   };
   const onHandleClick = () => {
     if (movedRef.current) {
@@ -130,7 +153,7 @@ export function AskAiSheet({
 
   // Esc 关闭（单独 effect，可随 onClose 更新，不碰滚动锁）。
   useEffect(() => {
-    const onEsc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onEsc = (e: KeyboardEvent) => e.key === "Escape" && requestClose();
     window.addEventListener("keydown", onEsc);
     return () => window.removeEventListener("keydown", onEsc);
   }, [onClose]);
@@ -145,8 +168,12 @@ export function AskAiSheet({
       role="dialog"
       aria-modal="true"
       aria-label="AI 解答"
-      onClick={onClose}
-      className="fixed inset-0 z-[80] flex items-end justify-center bg-black/50 sm:items-center sm:p-4"
+      onClick={requestClose}
+      className={cn(
+        "fixed inset-0 z-[80] flex items-end justify-center bg-black/50 transition-opacity duration-300 sm:items-center sm:p-4",
+        // 遮罩淡入/淡出：入场前与退场时透明。
+        entered && !closing ? "opacity-100" : "opacity-0",
+      )}
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -156,10 +183,11 @@ export function AskAiSheet({
         }}
         className={cn(
           "flex w-full flex-col rounded-t-2xl bg-card shadow-lg will-change-transform",
-          // 拖拽中不加 transition（跟手平移）；松手吸附时由 onDragEnd 触发的 state 变化走过渡。
+          // 拖拽中不加 transition（跟手平移）；其余（入场/退场/吸附）走过渡。
           dragRef.current ? "" : "transition-transform duration-300 ease-out",
-          // 桌面：忽略平移与高度，回居中弹窗。
-          "sm:!h-auto sm:!translate-y-0 sm:max-h-[80vh] sm:max-w-lg sm:rounded-2xl",
+          // 桌面：忽略平移与高度，回居中弹窗；进出场做轻缩放+淡入。
+          "sm:!h-auto sm:!translate-y-0 sm:max-h-[80vh] sm:max-w-lg sm:rounded-2xl sm:transition-all sm:duration-200",
+          entered && !closing ? "sm:scale-100 sm:opacity-100" : "sm:scale-95 sm:opacity-0",
         )}
       >
         {/* 顶部条：drag handle（移动端可拖拽改高度 + 点击切换档位） + 标题 + 关闭 */}
@@ -185,7 +213,7 @@ export function AskAiSheet({
             <button
               type="button"
               aria-label="关闭"
-              onClick={onClose}
+              onClick={requestClose}
               className="-m-1 rounded-lg p-1 text-foreground-secondary transition-colors hover:bg-fill-shallow hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:p-2"
             >
               <X className="size-5" />
