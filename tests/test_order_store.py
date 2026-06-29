@@ -147,7 +147,7 @@ def test_gmv_trend_fills_empty_days(session, monkeypatch):
     assert by_date["2026-06-03"]["gmv"] == 100000.0
     assert by_date["2026-06-03"]["order_count"] == 1
     assert by_date["2026-06-04"] == {
-        "date": "2026-06-04", "gmv": 0.0, "order_count": 0, "units_sold": 0,
+        "date": "2026-06-04", "label": None, "gmv": 0.0, "order_count": 0, "units_sold": 0,
     }
     assert by_date["2026-06-05"]["gmv"] == 50000.0
     assert by_date["2026-06-05"]["order_count"] == 2
@@ -200,3 +200,116 @@ def test_business_day_timezone_boundary(session, monkeypatch):
     )
     assert summary_8["gmv"] == 46894.0
     assert summary_8["order_count"] == 1
+
+
+# ── 逐小时趋势（单天 granularity="hour"）──────────────────────────────────────
+
+
+def test_gmv_trend_hourly_past_day_full_24(session, monkeypatch):
+    """过去某天逐小时：返回 24 个点（00:00–23:00），按印尼当地小时归桶，无单的小时补 0。"""
+    orders = [
+        # UTC 6/8 02:00 → 印尼 6/8 09:00 桶
+        _order("h9", paid=_dt(2026, 6, 8, 2, 0), total="100000",
+               lines=[{"id": "l1", "sku_id": "sku-A", "sale_price": "100000"}]),
+        # UTC 6/8 06:30 → 印尼 6/8 13:30 → 13:00 桶（两笔同小时）
+        _order("h13a", paid=_dt(2026, 6, 8, 6, 30), total="30000",
+               lines=[{"id": "l2", "sku_id": "sku-A", "sale_price": "30000"}]),
+        _order("h13b", paid=_dt(2026, 6, 8, 6, 59), total="20000",
+               lines=[{"id": "l3", "sku_id": "sku-B", "sale_price": "10000"},
+                      {"id": "l4", "sku_id": "sku-C", "sale_price": "10000"}]),
+    ]
+    upsert_orders(session, orders, country="ID", shop_id="shop-1")
+    session.commit()
+    monkeypatch.setattr(order_metrics, "SessionLocal", lambda: session)
+    # 钉死「今天」在 6/9，使 6/8 走「过去某天补满 24 格」分支。
+    monkeypatch.setattr(order_metrics, "business_today", lambda: date(2026, 6, 9))
+
+    points = order_metrics.get_gmv_trend(
+        start_date=date(2026, 6, 8), end_date=date(2026, 6, 8),
+        country="ID", shop_id="shop-1", granularity="hour",
+    )
+    assert len(points) == 24
+    assert [p["label"] for p in points] == [f"{h:02d}:00" for h in range(24)]
+    # date 全部等于当天 ISO（逐小时点不污染 date 字段语义）
+    assert {p["date"] for p in points} == {"2026-06-08"}
+    by_h = {p["label"]: p for p in points}
+    assert by_h["09:00"]["gmv"] == 100000.0
+    assert by_h["09:00"]["order_count"] == 1
+    assert by_h["09:00"]["units_sold"] == 1
+    # 13:00 桶聚两笔：GMV 30000+20000、2 单、3 个 line_item
+    assert by_h["13:00"]["gmv"] == 50000.0
+    assert by_h["13:00"]["order_count"] == 2
+    assert by_h["13:00"]["units_sold"] == 3
+    # 无单的小时补 0
+    assert by_h["00:00"] == {
+        "date": "2026-06-08", "label": "00:00", "gmv": 0.0, "order_count": 0, "units_sold": 0,
+    }
+
+
+def test_gmv_trend_hourly_today_truncated_to_current_hour(session, monkeypatch):
+    """选「今天」逐小时：只画到当前印尼小时，不画未来空格。"""
+    orders = [
+        # UTC 6/9 02:00 → 印尼 6/9 09:00 桶（已过去，应出现）
+        _order("now9", paid=_dt(2026, 6, 9, 2, 0), total="80000",
+               lines=[{"id": "l1", "sku_id": "sku-A", "sale_price": "80000"}]),
+    ]
+    upsert_orders(session, orders, country="ID", shop_id="shop-1")
+    session.commit()
+    monkeypatch.setattr(order_metrics, "SessionLocal", lambda: session)
+    monkeypatch.setattr(order_metrics, "business_today", lambda: date(2026, 6, 9))
+    # 当前印尼此刻 = 6/9 13:42 → 截断到 13:00（画 00:00–13:00 共 14 格）。
+    monkeypatch.setattr(
+        order_metrics, "business_hour_now", lambda: datetime(2026, 6, 9, 13, 0, 0)
+    )
+
+    points = order_metrics.get_gmv_trend(
+        start_date=date(2026, 6, 9), end_date=date(2026, 6, 9),
+        country="ID", shop_id="shop-1", granularity="hour",
+    )
+    assert len(points) == 14  # 00:00 … 13:00
+    assert points[-1]["label"] == "13:00"
+    by_h = {p["label"]: p for p in points}
+    assert by_h["09:00"]["gmv"] == 80000.0
+    # 未来小时（14:00+）不出现
+    assert "14:00" not in by_h
+
+
+def test_gmv_trend_hourly_timezone_boundary(session, monkeypatch):
+    """逐小时也无 UTC/CST 漂移：UTC 6/8 23:57 的单（印尼 6/9 06:57）归到 6/9 06:00 桶。"""
+    orders = [
+        _order("late", paid=_dt(2026, 6, 8, 23, 57), total="20028",
+               lines=[{"id": "ll", "sku_id": "sku-B", "sale_price": "20028"}]),
+    ]
+    upsert_orders(session, orders, country="ID", shop_id="shop-1")
+    session.commit()
+    monkeypatch.setattr(order_metrics, "SessionLocal", lambda: session)
+    monkeypatch.setattr(order_metrics, "business_today", lambda: date(2026, 6, 10))
+
+    points = order_metrics.get_gmv_trend(
+        start_date=date(2026, 6, 9), end_date=date(2026, 6, 9),
+        country="ID", shop_id="shop-1", granularity="hour",
+    )
+    by_h = {p["label"]: p for p in points}
+    assert by_h["06:00"]["gmv"] == 20028.0
+    assert by_h["06:00"]["order_count"] == 1
+    # 印尼 6/9 其它小时无单
+    assert by_h["07:00"]["gmv"] == 0.0
+
+
+def test_gmv_trend_day_default_unchanged(session, monkeypatch):
+    """回归：不传 granularity 仍逐日，结构含 label=None、数值与原口径一致。"""
+    orders = [
+        _order("d3", paid=_dt(2026, 6, 3), total="100000",
+               lines=[{"id": "l1", "sku_id": "sku-A", "sale_price": "100000"}]),
+    ]
+    upsert_orders(session, orders, country="ID", shop_id="shop-1")
+    session.commit()
+    monkeypatch.setattr(order_metrics, "SessionLocal", lambda: session)
+
+    points = order_metrics.get_gmv_trend(
+        start_date=date(2026, 6, 3), end_date=date(2026, 6, 3),
+        country="ID", shop_id="shop-1",
+    )
+    assert points == [
+        {"date": "2026-06-03", "label": None, "gmv": 100000.0, "order_count": 1, "units_sold": 1},
+    ]

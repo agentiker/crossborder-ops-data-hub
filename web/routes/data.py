@@ -366,6 +366,8 @@ class TrendPoint(BaseModel):
     gmv: float
     order_count: int
     units_sold: int
+    # 逐小时趋势时为 "HH:00" 展示串；逐日时为 None（前端 x 轴：label ?? date）。
+    label: Optional[str] = None
 
 
 class TrendResponse(BaseModel):
@@ -375,6 +377,8 @@ class TrendResponse(BaseModel):
     points: list[TrendPoint]
     scope: Optional[str] = None
     caliber: Optional[str] = None
+    # day（逐日，默认）/ hour（单天逐小时）。前端据此决定 x 轴格式。
+    granularity: str = "day"
 
 
 class OverviewInventory(BaseModel):
@@ -855,11 +859,13 @@ async def get_orders_trend(
     scope_id: Optional[str] = Query(None, description="业务范围 scope_key（命名店铺集合）"),
     shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
     open_id: Optional[str] = Query(None, description="飞书用户 open_id（ou_xxx，用于自动应用会话默认范围）"),
+    granularity: Optional[str] = Query("day", description="粒度：day（逐日，默认）/ hour（单天逐小时，要求 start_date==end_date；多天时静默回退 day）。逐小时点的 label 为 HH:00 展示串。"),
 ):
     """已付款订单按天的 GMV/单量/销量趋势，默认近 7 天（窗口内无单的日期补 0）。
 
     相对时间（近3天/近7天/本周/本月…）传 `period` 参数，服务端按印尼时区+周一起算，**不要自己算日期**；
     店铺 GMV 趋势传 shop_id 或 scope_id/shop_ids。口径与 ops_orders_summary 一致，随响应 caliber 字段返回。
+    granularity=hour 仅在单天（start_date==end_date）有效，返回该天逐小时点（label=HH:00）；今天只到当前小时。
     """
     scope = _resolve_scope(
         scope_id=scope_id, platform=platform, country=country,
@@ -867,12 +873,16 @@ async def get_orders_trend(
     )
     sd, ed = _resolve_window(start_date, end_date, period, default_back_days=6)
 
+    # 逐小时仅对单天成立；跨天误传静默回退逐日（趋势是展示数据，不抛错炸前端/agent）。
+    gran = "hour" if (granularity == "hour" and sd == ed) else "day"
+
     points = get_gmv_trend(
         start_date=sd,
         end_date=ed,
         platform=scope.platform,
         country=scope.country,
         shop_ids=scope.shop_ids,
+        granularity=gran,
     )
     return TrendResponse(
         start_date=sd.isoformat(),
@@ -881,6 +891,7 @@ async def get_orders_trend(
         points=[TrendPoint(**p) for p in points],
         scope=scope.display_text,
         caliber=ORDERS_CALIBER,
+        granularity=gran,
     )
 
 

@@ -211,3 +211,55 @@ def test_collect_sets_current_account_before_nested_data_calls(monkeypatch):
 
     data = asyncio.run(board_routes._collect(perm, "last_30d", ""))
     assert data["scope"] == "全部范围"
+
+
+def test_collect_passes_granularity_to_trend(monkeypatch):
+    """_collect 把 granularity 透传给 get_orders_trend（前端选单天传 hour）。"""
+    set_current_account(None)
+    monkeypatch.setattr(
+        board_routes,
+        "resolve_authorized_scope",
+        lambda perm, requested_scope_key=None, platform=None, country=None: ScopeFilters(
+            platform=None, country=None, shop_ids=["s1"], scope_key=None, display_text="全部范围",
+        ),
+    )
+    seen = {}
+
+    async def fake_get_orders_trend(**kwargs):
+        seen["granularity"] = kwargs.get("granularity")
+        return {"points": [], "granularity": kwargs.get("granularity")}
+
+    async def fake_async_empty(**kwargs):
+        return {"orders": {}, "inventory": {}, "items": [], "buckets": {}}
+
+    monkeypatch.setattr(board_routes, "get_overview", fake_async_empty)
+    monkeypatch.setattr(board_routes, "get_orders_trend", fake_get_orders_trend)
+    monkeypatch.setattr(board_routes, "get_low_stock", fake_async_empty)
+    monkeypatch.setattr(board_routes, "get_fulfillments_pending", fake_async_empty)
+    monkeypatch.setattr(board_routes, "get_top_products", lambda **k: [])
+    monkeypatch.setattr(board_routes, "get_channel_gmv_breakdown", lambda **k: {"available": False})
+    monkeypatch.setattr(board_routes, "get_profit_card", lambda **k: {"available": False})
+    monkeypatch.setattr(
+        board_routes, "get_gmv_summary",
+        lambda **k: {"gmv": 0, "order_count": 0, "units_sold": 0, "avg_order_value": 0},
+    )
+    monkeypatch.setattr(
+        board_routes, "get_ad_spend_summary",
+        lambda **k: {
+            "total_ad_spend": 0, "paid_ad_spend": 0, "creator_commission": 0,
+            "gmv_max_fee": 0, "tap_commission": 0, "affiliate_commission": 0,
+            "currency": "IDR", "complete": True, "settled_through": "2026-06-14",
+            "latest_covered_date": None,
+        },
+    )
+    monkeypatch.setattr(board_routes, "get_roas", lambda **k: {"roas": None})
+
+    # 单天 + granularity=hour → 透传 hour
+    asyncio.run(board_routes._collect(
+        BOSS, "today", "", "2026-06-09", "2026-06-09", None, None, "hour",
+    ))
+    assert seen["granularity"] == "hour"
+
+    # 不传 → 默认 day
+    asyncio.run(board_routes._collect(BOSS, "last_30d", ""))
+    assert seen["granularity"] == "day"

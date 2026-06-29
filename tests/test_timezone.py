@@ -129,3 +129,19 @@ def test_business_now_is_utc_plus_offset(monkeypatch):
     import core.timezone as _tz
     monkeypatch.setattr(_tz, "_utcnow_naive", lambda: datetime(2026, 6, 9, 3, 0, 0))
     assert _tz.business_now() == datetime(2026, 6, 9, 10, 0, 0)
+
+
+def test_to_business_hour_offset_and_truncation():
+    """to_business_hour：UTC + 7h 后分秒归零。UTC 6/8 23:57 → 印尼 6/9 06:00 桶（跨日）。"""
+    from core.timezone import to_business_hour
+    assert to_business_hour(datetime(2026, 6, 8, 23, 57, 42)) == datetime(2026, 6, 9, 6, 0, 0)
+    # 同一小时内不同分秒归到同一桶
+    assert to_business_hour(datetime(2026, 6, 9, 6, 30, 1)) == datetime(2026, 6, 9, 13, 0, 0)
+
+
+def test_business_hour_now_truncates_to_hour(monkeypatch):
+    """business_hour_now = 印尼此刻的整点（分秒归零）。"""
+    import core.timezone as _tz
+    monkeypatch.setattr(_tz, "_utcnow_naive", lambda: datetime(2026, 6, 9, 6, 42, 17))
+    # 印尼 = 13:42:17 → 桶 13:00:00
+    assert _tz.business_hour_now() == datetime(2026, 6, 9, 13, 0, 0)

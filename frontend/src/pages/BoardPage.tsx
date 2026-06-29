@@ -100,6 +100,9 @@ export function BoardPage() {
     let alive = true;
     setLoading(true);
     setError(null);
+    // 单天（起止同一天，如预设「今天」）→ 趋势切逐小时；多天回退逐日。后端跨天误传会静默回退。
+    const granularity =
+      range.start && range.start === range.end ? "hour" : undefined;
     api
       .boardData({
         start: range.start ?? undefined,
@@ -107,6 +110,7 @@ export function BoardPage() {
         scope,
         platform: platform || undefined,
         country: region || undefined,
+        granularity,
       })
       .then((d) => alive && setData(d))
       .catch((e) => alive && setError(String(e)))
@@ -753,12 +757,19 @@ function ProfitCard({
   const p = data?.profit;
   const est = p?.estimated;
   const settled = p?.settled;
-  const empty = !p?.available ? "暂无利润数据（需接生产店并跑聚合）" : "";
+  const includesToday = !!data?.window?.includes_today;
+  // 空状态分两种、给老板看人话（不暴露「聚合/生产店」黑话）：
+  // ① 含今日且无预估行 → 今日利润凌晨结算后才有，引导先看其它天；
+  // ② 全窗口无预估行 → 数据源还没接通。
+  const empty = p?.available
+    ? ""
+    : includesToday
+      ? "今天的利润要等今晚结算后才有，可先选其它日期查看预估利润。"
+      : "利润数据还没接好，接通后这里会显示每天的预估利润。";
   // 商品成本未录入（product_cost≈0）→ 利润/利润率虚高，标注「未扣商品成本」，不展示误导性利润率。
   const costMissing = !!est && (!est.product_cost || est.product_cost === 0);
   // 覆盖天数护栏：预聚合表缺天 → 利润静默少算。有数据但覆盖不全时显告警，让缺失可见。
   const coverageIncomplete = !!p?.available && p?.coverage_complete === false;
-  const includesToday = !!data?.window?.includes_today;
 
   // 分项占 GMV 比例（每行独立、皆为事实——成本=0 时该行 0%，不掩盖）。
   const gmv = est?.gmv ?? 0;
@@ -824,11 +835,17 @@ function ProfitCard({
 
   // 提示区：统一成低权重图标行（暖色只落在小图标、文字用深前景色，避免暖白底浅色文字 washed-out）。
   const notes: { icon: ReactNode; text: ReactNode }[] = [];
-  if (coverageIncomplete)
+  if (coverageIncomplete) {
+    const missing = (p?.expected_days ?? 0) - (p?.covered_days ?? 0);
     notes.push({
       icon: <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />,
-      text: `近 ${p?.expected_days ?? "?"} 天缺 ${(p?.expected_days ?? 0) - (p?.covered_days ?? 0)} 天数据，利润偏低，将自动补齐。`,
+      // 缺的多半是今天（今晚结算后补）；缺历史天则如实说明会自动补齐。
+      text:
+        includesToday && missing <= 1
+          ? "今天的利润要等今晚结算后才计入，当前为已结算天数的合计。"
+          : `所选 ${p?.expected_days ?? "?"} 天里还差 ${missing} 天的数据，利润暂时偏低，会自动补齐。`,
     });
+  }
   if (costMissing)
     notes.push({
       icon: <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />,
@@ -1130,7 +1147,9 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
       <Info className="h-3.5 w-3.5" />
     </button>
   ) : undefined;
-  const labels = pts.map((p) => p.date.slice(5));
+  // 逐小时趋势（单天）后端给 label="HH:00"；逐日则用 date 的 MM-DD。一行兼容两态。
+  // 当天日期已在卡头 window_label 标明（印尼时间 X 月 X 日），tooltip 标题用 HH:00 已足够清晰。
+  const labels = pts.map((p) => p.label ?? p.date.slice(5));
 
   const axisX = (boundaryGap: boolean) => ({
     type: "category" as const,

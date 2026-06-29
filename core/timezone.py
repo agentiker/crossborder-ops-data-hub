@@ -33,9 +33,26 @@ def to_business_day(dt: datetime) -> date:
     return (dt + OFFSET).date()
 
 
+def to_business_hour(dt: datetime) -> datetime:
+    """naive UTC datetime → 业务时区（印尼）的当地小时桶（naive，分秒归零）。
+
+    与 to_business_day 同源 OFFSET，用于把 paid_time 按印尼当地小时归桶（单天逐小时趋势）。
+    例：UTC 6/28 23:57 → 印尼 6/29 06:57 → 桶 datetime(2026, 6, 29, 6, 0, 0)。
+    """
+    return (dt + OFFSET).replace(minute=0, second=0, microsecond=0)
+
+
 def business_now() -> datetime:
     """业务时区（印尼）的"此刻"（naive）。用于当日报告的"截至现在"时点。"""
     return _utcnow_naive() + OFFSET
+
+
+def business_hour_now() -> datetime:
+    """业务时区（印尼）当前小时桶（naive，分秒归零）。
+
+    用于"今天逐小时趋势只画到当前小时"的上界截断：印尼 13:42 → datetime(.., 13, 0, 0)。
+    """
+    return business_now().replace(minute=0, second=0, microsecond=0)
 
 
 def intraday_window_utc(day: date, cutoff: time) -> tuple[datetime, datetime]:

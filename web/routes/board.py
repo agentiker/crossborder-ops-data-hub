@@ -127,11 +127,13 @@ async def _collect(
     end_date: str | None = None,
     platform_q: str | None = None,
     country_q: str | None = None,
+    granularity: str | None = None,
 ) -> dict:
     """按权限闸夹紧范围后取看板各块数据。越界由 resolve_authorized_scope 抛 ScopeError。
 
     start_date/end_date：显式起止日期（YYYY-MM-DD，日历筛选）；传了即覆盖 period。
     platform_q/country_q：平台/区域筛选（正交附加维度，叠加在 scope 的 shop_ids 之上、不参与越界判断）。
+    granularity：趋势粒度，hour=单天逐小时（前端选单天时传）；多天时 get_orders_trend 内部静默回退 day。
     """
     # /board 渲染链路不走 X-Account-Id 注入；复用 data.py 路由前先把当前老板的租户写进 context，
     # 让下游 _resolve_scope / ORM 自动过滤按同一 account_id 生效。
@@ -154,6 +156,7 @@ async def _collect(
         start_date=start_date, end_date=end_date, period=period,
         platform=platform, country=country, shop_id=None,
         scope_id=None, shop_ids=shop_ids, open_id=None,
+        granularity=granularity or "day",
     )
     low = await get_low_stock(
         platform=platform, country=country, shop_id=None,
@@ -303,10 +306,11 @@ async def board_data(
     end_date: str | None = Query(None),
     platform: str | None = Query(None),
     country: str | None = Query(None),
+    granularity: str | None = Query(None, description="趋势粒度：hour=单天逐小时（前端选单天时传）"),
 ):
     """切换日期/范围/平台/区域用的 JSON 端点：前端 AJAX 局部重绘。越界 → 403 JSON。"""
     try:
-        data = await _collect(perm, period, scope, start_date, end_date, platform, country)
+        data = await _collect(perm, period, scope, start_date, end_date, platform, country, granularity)
     except (ScopeError, AuthzError) as exc:
         return JSONResponse({"error": "forbidden", "detail": str(exc)}, status_code=403)
     return JSONResponse(data)

@@ -81,6 +81,8 @@ export interface TrendPoint {
   gmv: number;
   order_count: number;
   units_sold: number;
+  // 逐小时趋势时为 "HH:00" 展示串；逐日时缺省（x 轴：label ?? date.slice(5)）。
+  label?: string;
 }
 
 export interface TopSku {
@@ -225,7 +227,7 @@ export interface BoardData {
       roas?: number | null;
     };
   };
-  trend: { points: TrendPoint[]; window_label?: string; start_date?: string; end_date?: string };
+  trend: { points: TrendPoint[]; window_label?: string; start_date?: string; end_date?: string; granularity?: string };
   top: { items: TopSku[] };
   low: {
     items: LowStockItem[];
@@ -340,6 +342,7 @@ export interface BoardQuery {
   scope?: string;
   platform?: string;
   country?: string;
+  granularity?: string;
 }
 
 export const api = {
@@ -352,6 +355,7 @@ export const api = {
     if (q.scope) params.set("scope", q.scope);
     if (q.platform) params.set("platform", q.platform);
     if (q.country) params.set("country", q.country);
+    if (q.granularity) params.set("granularity", q.granularity);
     return getJSON<BoardData>(`/board/data?${params.toString()}`);
   },
   // 商品详情（懒加载）：点击爆款卡某商品时才请求，返回渠道 4 分 + 各 SKU 销量。窗口/范围与 boardData 同源。

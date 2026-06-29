@@ -18,7 +18,14 @@ from typing import Optional
 from sqlalchemy import func
 
 from core.db import SessionLocal
-from core.timezone import intraday_window_utc, paid_window_utc, to_business_day
+from core.timezone import (
+    business_hour_now,
+    business_today,
+    intraday_window_utc,
+    paid_window_utc,
+    to_business_day,
+    to_business_hour,
+)
 from models.base_models import Inventory, OrderHeader, OrderLineItem, Product
 
 
@@ -467,16 +474,29 @@ def get_gmv_trend(
     country: Optional[str] = None,
     shop_id: Optional[str] = None,
     shop_ids: Optional[list[str]] = None,
+    granularity: str = "day",
 ) -> list[dict]:
-    """Return a per-day paid-order trend over [start_date, end_date].
+    """Return a paid-order trend over [start_date, end_date].
 
-    口径与 get_gmv_summary 一致（已付款 = paid_time 非空且落在窗口内，按 paid_time 归日；
+    口径与 get_gmv_summary 一致（已付款 = paid_time 非空且落在窗口内，按 paid_time 归桶；
     GMV = total_amount 求和；销量 = 已付款订单的 line_item 条数）。
 
-    归日按**印尼当地时间 UTC+7**，在 Python 端用 to_business_day 完成（不在 SQL 里做
-    date(paid_time + interval)，规避 SQLite/MySQL 的方言差异）。对窗口内没有订单的日期补 0，
-    返回连续日序列，便于直接画趋势。
+    granularity：
+    - "day"（默认）：逐日点 `{date, label:None, gmv, order_count, units_sold}`，窗口内无单的日补 0。
+    - "hour"：单天逐小时点 `{date, label:"HH:00", ...}`，要求 start_date==end_date（调用方保证）。
+      今天只画到当前印尼小时（business_hour_now），过去某天补满 00:00–23:00 共 24 格。
+
+    归桶按**印尼当地时间 UTC+7**，在 Python 端用 to_business_day / to_business_hour 完成（不在 SQL 里做
+    date(paid_time + interval)，规避 SQLite/MySQL 的方言差异）。返回连续序列，便于直接画趋势。
     """
+    if granularity == "hour":
+        return _get_gmv_trend_hourly(
+            day=start_date,
+            platform=platform,
+            country=country,
+            shop_id=shop_id,
+            shop_ids=shop_ids,
+        )
     start_dt, end_dt = _paid_window(start_date, end_date)
     session = SessionLocal()
     try:
@@ -527,12 +547,87 @@ def get_gmv_trend(
             points.append(
                 {
                     "date": cursor.isoformat(),
+                    "label": None,
                     "gmv": _to_float(gmv),
                     "order_count": int(order_count or 0),
                     "units_sold": int(units_by_day.get(cursor, 0) or 0),
                 }
             )
             cursor += timedelta(days=1)
+        return points
+    finally:
+        session.close()
+
+
+def _get_gmv_trend_hourly(
+    *,
+    day: date,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_id: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
+) -> list[dict]:
+    """单天逐小时趋势（印尼当地小时归桶）。被 get_gmv_trend(granularity="hour") 调。
+
+    SQL 窗口仍取整天 [day 00:00, day 23:59:59]（印尼），归桶在 Python 端用 to_business_hour。
+    补零上界：day 是今天 → 补到当前印尼小时（不画未来空格）；过去某天 → 补满 24 格。
+    """
+    start_dt, end_dt = _paid_window(day, day)
+    session = SessionLocal()
+    try:
+        header_q = _scope_filters(
+            session.query(OrderHeader.paid_time, OrderHeader.total_amount).filter(
+                OrderHeader.paid_time.isnot(None),
+                OrderHeader.paid_time >= start_dt,
+                OrderHeader.paid_time <= end_dt,
+            ),
+            OrderHeader,
+            platform,
+            country,
+            shop_id,
+            shop_ids,
+        )
+        gmv_by_hour: dict[datetime, list] = {}
+        for paid_time, amount in header_q.all():
+            h = to_business_hour(paid_time)
+            agg = gmv_by_hour.setdefault(h, [0.0, 0])
+            agg[0] += _to_float(amount)
+            agg[1] += 1
+
+        line_q = _scope_filters(
+            session.query(OrderHeader.paid_time)
+            .join(OrderLineItem, OrderLineItem.order_id == OrderHeader.order_id)
+            .filter(
+                OrderHeader.paid_time.isnot(None),
+                OrderHeader.paid_time >= start_dt,
+                OrderHeader.paid_time <= end_dt,
+            ),
+            OrderHeader,
+            platform,
+            country,
+            shop_id,
+            shop_ids,
+        )
+        units_by_hour: dict[datetime, int] = {}
+        for (paid_time,) in line_q.all():
+            h = to_business_hour(paid_time)
+            units_by_hour[h] = units_by_hour.get(h, 0) + 1
+
+        # 补零上界：今天只到当前小时，其它天补满 23 点。
+        last_h = business_hour_now().hour if day == business_today() else 23
+        points: list[dict] = []
+        for hh in range(0, last_h + 1):
+            bucket = datetime.combine(day, time(hh, 0))
+            gmv, order_count = gmv_by_hour.get(bucket, (0.0, 0))
+            points.append(
+                {
+                    "date": day.isoformat(),
+                    "label": f"{hh:02d}:00",
+                    "gmv": _to_float(gmv),
+                    "order_count": int(order_count or 0),
+                    "units_sold": int(units_by_hour.get(bucket, 0) or 0),
+                }
+            )
         return points
     finally:
         session.close()
