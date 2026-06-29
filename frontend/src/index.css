@@ -152,24 +152,25 @@
     display: none;
   }
   /* 思考中流光：一道亮光在墨绿文字上左右扫过，作 AI 工作中的功能性加载反馈
-     （非装饰性渐变文字——是 loading 态的状态指示，公认例外）。减少动态效果时降为静态前景色。 */
+     （非装饰性渐变文字——是 loading 态的状态指示，公认例外）。减少动态效果时降为静态前景色。
+     暗端用三级前景(0.5)、亮端用纯墨绿主色，亮带收窄聚焦，让流光更明显。 */
   .text-shimmer {
     background: linear-gradient(
       100deg,
-      var(--foreground-secondary) 30%,
-      var(--foreground) 48%,
-      var(--foreground-secondary) 66%
+      var(--foreground-tertiary) 35%,
+      hsl(var(--primary)) 50%,
+      var(--foreground-tertiary) 65%
     );
-    background-size: 220% 100%;
+    background-size: 250% 100%;
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
     color: transparent;
-    animation: text-shimmer 1.8s ease-in-out infinite;
+    animation: text-shimmer 1.6s linear infinite;
   }
   @keyframes text-shimmer {
-    0% { background-position: 180% 0; }
-    100% { background-position: -80% 0; }
+    0% { background-position: 165% 0; }
+    100% { background-position: -65% 0; }
   }
   @media (prefers-reduced-motion: reduce) {
     .text-shimmer {
@@ -177,6 +178,17 @@
       -webkit-text-fill-color: var(--foreground-secondary);
       color: var(--foreground-secondary);
     }
+  }
+  /* 流式正文光标：墨绿细条，柔和呼吸（不在纯黑白间硬闪）。 */
+  .stream-caret {
+    animation: stream-caret 1.1s ease-in-out infinite;
+  }
+  @keyframes stream-caret {
+    0%, 100% { opacity: 0.15; }
+    50% { opacity: 0.8; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .stream-caret { animation: none; opacity: 0.5; }
   }
 }
 

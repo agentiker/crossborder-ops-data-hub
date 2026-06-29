@@ -163,7 +163,7 @@ export function ChatMessage({
             <Markdown text={content} />
           </div>
           {isStreaming && content.length > 0 && (
-            <span className="inline-block w-2 h-5 bg-foreground animate-pulse ml-0.5" />
+            <span className="stream-caret ml-0.5 inline-block h-4 w-[3px] translate-y-0.5 rounded-full bg-primary align-text-bottom" />
           )}
         </div>
 
