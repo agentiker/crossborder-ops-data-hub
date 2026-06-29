@@ -106,9 +106,9 @@ export function AppShell() {
       )}
       <aside
         className={cn(
-          // 浮起卡片：左侧贴边（无间隙），右侧两角圆角；顶/底留间隙（含安全区）；不再纠结底栏同色
-          "fixed left-0 z-[70] flex w-[280px] flex-col overflow-hidden rounded-r-2xl border border-l-0 border-border-shallow bg-background shadow-xl transition-transform duration-300 lg:hidden",
-          "top-[max(0.75rem,calc(env(safe-area-inset-top)+0.5rem))] bottom-[max(0.75rem,env(safe-area-inset-bottom))]",
+          // 浮起卡片：左侧贴边，四角圆角；顶留间隙、底部贴边（含安全区）；不再纠结底栏同色
+          "fixed left-0 z-[70] flex w-[280px] flex-col overflow-hidden rounded-2xl border border-border-shallow bg-background shadow-xl transition-transform duration-300 lg:hidden",
+          "top-[max(0.375rem,calc(env(safe-area-inset-top)+0.125rem))] bottom-[max(0.375rem,env(safe-area-inset-bottom))]",
           mobileOpen ? "translate-x-0" : "-translate-x-[120%]",
         )}
       >
