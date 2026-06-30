@@ -37,7 +37,10 @@ CUSTOMERS_ALL=(
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEFAULT_ACCOUNT="ecom-app"
 if [[ -f "$REPO_DIR/.env" ]]; then
-  _da="$(grep -E '^TENANCY__DEFAULT_ACCOUNT=' "$REPO_DIR/.env" | tail -1 | cut -d= -f2- | tr -d '"'"'"' ' | tr -d "'")"
+  # grep 加 || true：hp 的 .env 没这行（回落 ecom-app），无匹配返回非零会在
+  # set -e 下让整个脚本静默退出。取值后去掉引号和首尾空格。
+  _da="$(grep -E '^TENANCY__DEFAULT_ACCOUNT=' "$REPO_DIR/.env" | tail -1 | cut -d= -f2- || true)"
+  _da="${_da//\"/}"; _da="${_da//\'/}"; _da="$(echo "$_da" | xargs 2>/dev/null || true)"
   [[ -n "$_da" ]] && DEFAULT_ACCOUNT="$_da"
 fi
 
