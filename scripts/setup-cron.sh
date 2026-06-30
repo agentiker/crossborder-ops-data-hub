@@ -21,11 +21,36 @@
 set -euo pipefail
 
 # ── 客户列表：account:agent:open_id:label ──────────────────────────────
-# 新增客户往这里加一行即可。open_id 是飞书用户 id（cron 收件人 + ops_report 参数）。
-CUSTOMERS=(
+# 这是**全集**（hp + prod 两台机器的所有客户）。新增客户往这里加一行即可。
+# open_id 是飞书用户 id（cron 收件人 + ops_report 参数）。
+# 实际建 cron 时只取**本机租户**那一行——见下方 DEFAULT_ACCOUNT 过滤。
+CUSTOMERS_ALL=(
   "ecom-app:ecom:ou_7afe4514b269e5a0abfbd395f3f26410:ecom"
   "ecom-app-gtl:ecom-gtl:ou_5a27000e3e67de797de432a43bac29da:ecom-gtl"
 )
+
+# ── 按机器区分客户：每台机只给本机租户建 cron ────────────────────────
+# hp 与 prod 共用本脚本，但客户不同：hp=ecom-app（单店 ecom）、prod=ecom-app-gtl。
+# 权威信号 = .env 的 TENANCY__DEFAULT_ACCOUNT（prod 覆盖成 ecom-app-gtl，hp 未配→回落
+# ecom-app，见 core/config.py TenancyConfig.default_account）。不用 hostname/host_to_account
+# 判断——hp 的 host_to_account 仍残留 gtl 子域名映射，会误判。
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DEFAULT_ACCOUNT="ecom-app"
+if [[ -f "$REPO_DIR/.env" ]]; then
+  _da="$(grep -E '^TENANCY__DEFAULT_ACCOUNT=' "$REPO_DIR/.env" | tail -1 | cut -d= -f2- | tr -d '"'"'"' ' | tr -d "'")"
+  [[ -n "$_da" ]] && DEFAULT_ACCOUNT="$_da"
+fi
+
+CUSTOMERS=()
+for _c in "${CUSTOMERS_ALL[@]}"; do
+  [[ "${_c%%:*}" == "$DEFAULT_ACCOUNT" ]] && CUSTOMERS+=("$_c")
+done
+if [[ ${#CUSTOMERS[@]} -eq 0 ]]; then
+  echo "⚠️  本机 DEFAULT_ACCOUNT=${DEFAULT_ACCOUNT} 在 CUSTOMERS_ALL 里没有匹配客户，未建任何 cron。" >&2
+  echo "    （检查 .env 的 TENANCY__DEFAULT_ACCOUNT 或往 CUSTOMERS_ALL 加该租户一行）" >&2
+  exit 1
+fi
+echo "本机租户 DEFAULT_ACCOUNT=${DEFAULT_ACCOUNT} → 建 ${#CUSTOMERS[@]} 个客户的 cron"
 
 # ── cron 定义：name_suffix|cron_expr|period|template ────────────────────
 JOBS=(
