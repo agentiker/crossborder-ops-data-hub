@@ -153,73 +153,79 @@ openclaw cron edit eca7f330-7981-4aed-b362-78a99745dbb7 \
 
 ### B3. 给新客户加日报（模板）
 
-> **⚠️ 飞书排版铁律（务必保留在 prompt 里）**：飞书私聊**不渲染 Markdown 表格和 `#` 标题**（见 `feishu-bot-onboarding.md`），表格会变成满屏 `|---|` 竖线、手机尤其难读。模板内已写死「禁止表格/编号或 bullet 替代/emoji 小标题」的约束 + 示范，**改 prompt 时不要删这段**，否则 agent 又会输出表格。
-> **日报开头先挂图表版链接**：prompt 第一步让 agent 调 `ops_report_link`（`daily_brief`/`period=yesterday`）把可点击链接放最前——cron 无人值守，agent 无上下文 open_id，故 **open_id 必须在 prompt 里写死**（换成该客户的真实 open_id，下方 `<填客户 open_id>`）。
+> **三条踩过的坑，建 cron 时务必带上对应参数：**
+> 1. **飞书不渲染表格/`#` 标题**（见 `feishu-bot-onboarding.md`）→ 表格变满屏 `|---|` 竖线、手机难读。prompt 里写死「禁表格 + emoji/bullet 替代」铁律，**别删**。
+> 2. **思考独白外泄**（claude 工具间会冒"I'll generate… Let me gather data"）→ **必须加 `--thinking off`**；光靠 prompt 写"别输出思考"压不住（模型层问题）。
+> 3. **默认模型可能挂**（prod 默认 `glm-5.2` 曾 502 forbidden）→ 视情况 `--model claude-jm/claude-opus-4-8:shanma-ccmax` 覆盖到可用模型。
+>
+> **开头先挂图表版链接**：cron 无人值守、agent 无上下文 open_id，故 **open_id 必须写死在 prompt 里**（换成该客户真实 open_id）。明细引导点链接看，文字简报只给核心——**老板手机一屏看完**。
 
 ```bash
 read -r -d '' PROMPT <<'EOF'
 请生成并推送【昨日（完整日）】印尼 TikTok Shop 经营日报。今天推的是昨天完整业绩，勿用"今日"（今早数据未累计完）。
 
-第一步——先出图表版链接：调用 ops_report_link（template_name=daily_brief、period=yesterday、open_id=<填客户 open_id>），把返回的 markdown 字段原样放在日报最开头一行（形如"📊 图表版日报 → 点击查看"）。
+第一步：调用 ops_report_link（template_name=daily_brief、period=yesterday、open_id=<填客户 open_id>），把返回的 markdown 字段原样放第一行（形如"📊 完整图表版日报 → 点击查看"）。明细数据都在链接里，文字部分只给老板最该看的，保持精炼。
 
-第二步——文字详情，依次：
-1. 📊 经营概览：库存总量/低库存数；昨日 GMV/订单/销量/客单价（各环比前日带升降箭头）；附近7天累计
-2. 📈 近7天趋势：逐日 GMV/订单/销量，点出峰值与关键变化
-3. 🚚 待发货风险：待发货总数、超时/临界单数、重点店铺品类、SLA 截止
-4. 📦 低库存/断货：已断货/告急/预警各几个 SKU，点名有动销却零库存的款
-5. 🔥 近7天爆款 Top 5：商品名 + 规格 + 销量 + GMV
-末尾给 ≤3 条运营建议。数据口径以接口 caliber 字段为准。利润/ROI 本期未上线，不要编。
+第二步——文字简报，控制在手机一屏内，每块只给核心：
+📊 昨日概览：GMV、订单、客单价各一个数 + 环比箭头（一行一个，共3-4行）
+📈 趋势一句话：近7天什么形态、昨日处在高位还是低谷（不要逐日罗列，一句话点峰值与昨日位置）
+🚚 待发货：合计X单、其中临界/超时各几单、最晚SLA（一两行）
+📦 断货：已断货X个SKU、告急X个，只点名最该补的1个款（一两行，不要逐SKU列）
+🔥 昨日卖得最好：Top3商品名+销量（只3个，不带GMV，想看全的去链接）
+💡 建议：最多2条，每条一句话
 
-⚠️ 飞书排版铁律（飞书私聊不渲染表格和 # 标题，违反会变满屏竖线、手机难读）：
-- 绝对禁止表格（不要出现 | 和 |---|）；不要用 #/##/### 标题
-- 分段用 emoji + **粗体小标题**；明细用「• 」每条一行；趋势/排行用「1. 2. 3.」编号
-- 数字千分位、关键数字加粗。示范（7天趋势就这样写，别用表格）：
-  • 6/27（六）🔺 GMV **7,810万** · 575单 · 594件（周峰值）
-  • 6/28（日）GMV 5,603万 · 399单 · 418件
+铁律：
+- 飞书不渲染表格和 # 标题，绝对禁止出现 | 和竖线表格和 #；分段用 emoji+**粗体**，明细用「• 」每条一行
+- 不要输出任何思考过程、工具调用说明、"我来查""让我"之类的话，直接给报告正文
+- 数字千分位、关键数字加粗。利润/ROI 未上线不要编
 
-【重要】直接输出完整日报全文作为回复，系统会自动投递，不要用 message 工具，不要只回确认语。
+【重要】直接输出完整日报全文作为回复，系统自动投递，不要用 message 工具，不要只回确认语。
 EOF
 
 openclaw cron add --name "<客户> 每日经营日报" \
   --agent <agentId> --account <accountId> \
   --cron "30 8 * * *" --tz Asia/Shanghai \
+  --thinking off \
+  --model claude-jm/claude-opus-4-8:shanma-ccmax \
   --announce --channel feishu --to user:<open_id> \
   --message "$PROMPT"
 ```
 
-### B3b. 给客户加【定时周报】（plan/19 W2，模板 — 按"准备不开"原则，命令备好待手动执行）
+### B3b. 给客户加【定时周报】（plan/19 W2，模板）
 
-与日报对称，周报走同一套 openclaw cron + LLM，调 `ops_report_link` 的 `weekly_review` 模板看上周整周（`period=last_week`）。**周一晨推**（cron `0 9 * * 1`，避开与日报 8:30 撞点）。同样遵守上方飞书排版铁律 + 开头挂图表版周报链接。
+与日报对称，周报走同一套 openclaw cron + LLM，调 `ops_report_link` 的 `weekly_review` 模板看上周整周（`period=last_week`）。**周一晨推**（cron `0 9 * * 1`，避开与日报 8:30 撞点）。同样遵守上方三条坑（飞书排版铁律 + `--thinking off` + 视情况 `--model` 覆盖）+ 开头挂图表版周报链接 + 文字简报精炼。
 
 ```bash
 read -r -d '' WPROMPT <<'EOF'
 请生成并推送【上周（完整一周，周一至周日）】印尼 TikTok Shop 经营周报。
 
-第一步——先出图表版链接：调用 ops_report_link（template_name=weekly_review、period=last_week、open_id=<填客户 open_id>），把返回的 markdown 字段原样放在周报最开头一行（形如"📊 图表版周报 → 点击查看"）。
+第一步：调用 ops_report_link（template_name=weekly_review、period=last_week、open_id=<填客户 open_id>），把返回的 markdown 字段原样放第一行（形如"📊 完整图表版周报 → 点击查看"）。明细都在链接里，文字部分只给老板最该看的，保持精炼。
 
-第二步——文字详情，依次：
-1. 📊 周度概览：上周 GMV/订单/销量/客单价，与上上周环比（带升降箭头）
-2. 📈 趋势与动销：逐日 GMV/订单走势、动销率、连续区间表现
-3. 📦 商品健康度：爆款集中度、新品表现、断货风险
-4. 🚚 待发货与履约概况
-末尾给 ≤3 条运营复盘建议。数据口径以接口 caliber 字段为准。利润/ROI 本期未上线，不要编。
+第二步——文字简报，控制在手机一屏内，每块只给核心：
+📊 上周概览：GMV、订单、客单价各一个数 + 与上上周环比箭头（一行一个）
+📈 趋势一句话：上周走势形态、动销率高低（一句话，不要逐日罗列）
+📦 商品健康：爆款集中度（头部款占比）+ 断货风险数，点名最该补的1个款（一两行）
+🔥 上周卖得最好：Top3商品名+销量（只3个，不带GMV）
+💡 复盘建议：最多2条，每条一句话
 
-⚠️ 飞书排版铁律（飞书私聊不渲染表格和 # 标题，违反会变满屏竖线、手机难读）：
-- 绝对禁止表格（不要出现 | 和 |---|）；不要用 #/##/### 标题
-- 分段用 emoji + **粗体小标题**；明细用「• 」每条一行；趋势/排行用「1. 2. 3.」编号
-- 数字千分位、关键数字加粗
+铁律：
+- 飞书不渲染表格和 # 标题，绝对禁止出现 | 和竖线表格和 #；分段用 emoji+**粗体**，明细用「• 」每条一行
+- 不要输出任何思考过程、工具调用说明、"我来查""让我"之类的话，直接给报告正文
+- 数字千分位、关键数字加粗。利润/ROI 未上线不要编
 
-【重要】直接输出完整周报全文作为回复，系统会自动投递，不要用 message 工具，不要只回确认语。
+【重要】直接输出完整周报全文作为回复，系统自动投递，不要用 message 工具，不要只回确认语。
 EOF
 
 openclaw cron add --name "<客户> 每周经营周报" \
   --agent <agentId> --account <accountId> \
   --cron "0 9 * * 1" --tz Asia/Shanghai \
+  --thinking off \
+  --model claude-jm/claude-opus-4-8:shanma-ccmax \
   --announce --channel feishu --to user:<open_id> \
   --message "$WPROMPT"
 ```
 
-> 现状：定时日报已在跑（B1）；**定时周报 cron 尚未在服务器添加**——本计划只备命令、不执行，由用户确认后手动 `cron add`。问答周报（飞书发"看周报"/webUI `ops_report` template=weekly_review）已可用，不依赖本 cron。
+> **prod 现状（2026-06-30）**：日报×2（gtl 客户 `ou_5a27…` + 运维 `ou_9be9…`，每天 08:30）+ 周报×2（同收件人，周一 09:00）共 4 条 cron 已建并跑通；均加了 `--thinking off` + `--model claude-jm/...:shanma-ccmax`（绕开当时 502 的 glm 默认模型）。**待办**：报告链接点开报"应用页面已失效"——`ops_report_link` 的 applink 需对应飞书 app（main-app / ecom-app-gtl）配「H5 可信域名 + 网页能力」，main-app 与客户 app 归属不同公司主体，待逐个核配（见 [[report-artifact]] 飞书可信域名节）。glm 默认模型恢复后可酌情把 `--model` 改回或保留 claude。
 
 ### B4. 运维命令
 
