@@ -215,6 +215,50 @@ def test_report_link_daily_label_for_single_day():
     assert "查看经营日报" in result.markdown
 
 
+def test_report_link_summary_matches_collect(monkeypatch):
+    """ops_report_link 返回的 summary 数字与 _collect 同源同口径（防漂移）。
+
+    summary 是 agent 写文字报告引用的权威数字源——必须与链接里可视化报告的 _collect 完全一致，
+    否则文字摘要和图表数字打架。本测试 mock 同一份数据源、分别取 summary 与 _collect，断言关键字段相等。
+    """
+    _patch_collect_data_sources(monkeypatch)
+    from web.routes.data import _extract_report_summary, get_report_link
+    from web.routes.report import _collect
+
+    full = _run(_collect("ou_x", None, None, "last_7d"))
+    link = _run(get_report_link(
+        open_id="ou_x", template_name="daily_brief",
+        period="last_7d", wrap_applink=False,
+    ))
+    assert link.summary is not None
+    # 关键 KPI 数字一致
+    assert link.summary["kpi"]["gmv"]["value"] == full["kpi"]["gmv"]["value"]
+    assert link.summary["kpi"]["orders"]["value"] == full["kpi"]["orders"]["value"]
+    assert link.summary["kpi"]["ad_spend"]["value"] == full["kpi"]["ad_spend"]["value"]
+    # Top爆款 / 库存风险一致
+    assert link.summary["top_skus"] == full["top_skus"]
+    assert link.summary["low_stock"] == full["low_stock"]
+    # 护栏标记一致
+    assert link.summary["low_volume"] == full["low_volume"]
+    # summary 刻意不带 trend 逐日序列（省 token）
+    assert "trend" not in link.summary
+
+
+def test_report_link_summary_weekly_has_health(monkeypatch):
+    """周报 summary 含 health（集中度/动销率/新品），kind=weekly。"""
+    _patch_collect_data_sources(monkeypatch)
+    from web.routes.data import get_report_link
+
+    link = _run(get_report_link(
+        open_id="ou_x", template_name="weekly_review",
+        period="last_week", wrap_applink=False,
+    ))
+    assert link.summary["kind"] == "weekly"
+    assert "health" in link.summary
+    assert "concentration" in link.summary["health"]
+    assert "sell_through" in link.summary["health"]
+
+
 # ── _collect 版型自适应（按时间窗自动判定）────────────────────────────
 
 
@@ -435,8 +479,12 @@ def test_ops_report_tool_returns_markdown(monkeypatch):
     )
 
     result = run_tool("ops_report", {"template_name": "daily_brief", "period": "last_7d"}, perm)
-    # run_tool returns the markdown string directly for ops_report
-    assert "查看经营报告" in result  # last_7d → 区间报版型文案
+    # ops_report 返回 {markdown, summary}：markdown 是链接文案，summary 是权威摘要供 agent 写文字报告
+    assert isinstance(result, dict)
+    assert "查看经营报告" in result["markdown"]  # last_7d → 区间报版型文案
+    assert result["summary"] is not None
+    assert result["summary"]["kind"] in ("daily", "period")
+    assert "gmv" in result["summary"]["kpi"]
 
 
 # ── auth_feishu next 回跳 ───────────────────────────────────────────
@@ -812,4 +860,9 @@ def test_ops_report_tool_weekly(monkeypatch):
     )
     result = run_tool("ops_report",
                       {"template_name": "weekly_review", "period": "last_week"}, perm)
-    assert "查看经营周报" in result
+    assert isinstance(result, dict)
+    assert "查看经营周报" in result["markdown"]
+    # 周报摘要含商品健康度（集中度/动销率/新品）
+    assert result["summary"]["kind"] == "weekly"
+    assert "health" in result["summary"]
+    assert "concentration" in result["summary"]["health"]

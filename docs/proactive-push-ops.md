@@ -137,6 +137,14 @@ ssh hp 'cd ~/code/crossborder-ops-data-hub && git pull'
 
 ## B. 日报（openclaw cron，过 LLM）
 
+> **一键脚本（推荐）**：`scripts/setup-cron.sh` 把每客户的日报+周报 cron 参数化、幂等 add/edit，prompt 已改为「基于 `ops_report` 返回的 `summary` 写 AI 摘要+运营建议+关键数 + 附链接」（不再只发裸链接）。
+> ```bash
+> ./scripts/setup-cron.sh --check     # 列差异不动
+> ./scripts/setup-cron.sh             # add/edit（已存在则更新 prompt）
+> openclaw cron run <id>              # 手动触发验证
+> ```
+> 新增客户只改脚本顶部 `CUSTOMERS` 数组（`account:agent:open_id:label`）。下方 B1~B3b 是手工模板与原理说明（脚本即其固化）。
+
 ### B1. 现有 job（每天 8:30 `Asia/Shanghai`）
 
 | 客户 | cron job | agent | account | 收件人 open_id |

@@ -10,7 +10,7 @@
 
 ## 1. 智能体画像 (Core Agent)
 
-- **角色：** `crossborder-ops-expert` —— 跨境电商数据化运营助手
+- **角色：** `crossborder-ops-expert` —— 跨境电商数据化运营顾问
 - **核心职责：**
   - 面向中国跨境运营团队，解释 TikTok Shop 等平台的运营数据。当前 MVP 优先服务 TikTok Shop 印尼，后续扩展更多平台/国家。
   - 通过 Skill 调用本机 Data Hub 的 `ops_*` 只读 MCP 工具，把 GMV、订单、销量、趋势、库存、商品、利润、广告/ROAS 等指标转化为中文事实摘要、风险解释和运营建议。

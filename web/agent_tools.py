@@ -207,6 +207,10 @@ def run_tool(name: str, arguments: dict, perm: UserPermission) -> dict:
         result = _run(get_report_link(
             open_id=perm.open_id, template_name=template, period=period_val,
             wrap_applink=False))
+        # 返回链接 + 权威摘要：WebUI agent 据摘要写「AI 摘要 + 运营建议 + 关键数」再附链接，
+        # 数字只复述 summary、不编造（与飞书侧 ops_report_link 同源）。
+        if getattr(result, "summary", None):
+            return {"markdown": result.markdown, "summary": result.summary}
         return result.markdown
     else:  # 不会到这（已校验），保险
         raise ValueError(f"未实现工具：{name}")

@@ -40,7 +40,7 @@ All endpoints are read-only and live under `/api/data`, **except** `POST /api/da
 | `POST /api/data/scope/binding` | live (write) | Persist a conversation's default scope. The **only** write endpoint; called when the user switches scope via menu phrase. The default scope is then **auto-applied server-side** on every data query that carries `open_id` and no explicit `scope_id` — there is no read endpoint/tool. |
 | `GET /api/data/profit/summary` | live | Estimated profit (GMV − commission − ad cost − product cost − refund), CNY. Returns `available=false` (not 503) when no aggregate data for the scope/window. |
 | `GET /api/data/ads/summary` | live | Ad spend (settlement caliber: GMV Max / TAP / affiliate split) + ROAS. |
-| `GET /api/data/report/link` | live | Signed report link (`markdown` field — send as-is to user). Auto-picks daily vs range template by window. |
+| `GET /api/data/report/link` | live | Signed report link (`markdown` field — send as-is to user). Also returns `summary`: authoritative report figures (same source as the visual page's `_collect`) for the agent to write a text report (AI summary + advice + key figures) alongside the link — figures must be quoted verbatim, never invented. Auto-picks daily vs range template by window. |
 | `GET /api/data/dashboard/link` | live | Signed dashboard link (`markdown` field — send as-is). |
 | `GET /api/data/alerts` | **503 — planned** | Alert-list query not yet exposed (no `operation_id`). Pending-shipment/low-stock risks are queryable via their own tools; alerts also go out via proactive push. |
 

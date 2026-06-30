@@ -350,6 +350,10 @@ class ReportLinkResponse(BaseModel):
     expires_in: int  # token 有效期（秒）
     # 现成的飞书 markdown 片段：把可点击文字 + 有效期包好，agent 原样发即可。
     markdown: str
+    # 报告权威摘要：复用报告页 _collect/_collect_weekly 已算好的结构化数据，供 agent
+    # 写「AI 摘要 + 运营建议 + 关键数」文字报告时引用——保证文字里的数字与链接里可视化报告
+    # 同源同口径，agent 只复述、不编不算。无数据时为 None（agent 据实说明）。
+    summary: Optional[dict] = None
 
 
 class SetScopeBindingRequest(BaseModel):
@@ -1086,6 +1090,35 @@ def _wrap_feishu_applink(url: str, mode: str = "window", account_id: Optional[st
     return link
 
 
+def _extract_report_summary(report: dict) -> dict:
+    """从 _collect/_collect_weekly 的完整报告 dict 摘取 agent 写文字报告需要的关键字段。
+
+    刻意丢弃 trend 逐日序列（agent 写摘要/建议不需要逐日点、且占 token）；保留 KPI（含环比
+    baseline/change）、Top5 爆款、库存风险、护栏标记；周报额外保留 health（集中度/动销率/新品）。
+    所有数字均来自报告页同源计算，agent 只复述不编造。
+    """
+    if not report:
+        return None
+    kpi = report.get("kpi") or {}
+    summary = {
+        "kind": report.get("kind"),
+        "title": report.get("title"),
+        "scope": report.get("scope"),
+        "period_label": report.get("period_label"),
+        "cutoff_label": report.get("cutoff_label"),
+        "change_label": report.get("change_label"),
+        "low_volume": report.get("low_volume", False),
+        "empty_window": report.get("empty_window", False),
+        "kpi": kpi,
+        "top_skus": report.get("top_skus") or [],
+        "low_stock": report.get("low_stock") or [],
+    }
+    # 周报特有：商品结构健康度（集中度风险 / 动销率 / 新品测款）
+    if report.get("kind") == "weekly":
+        summary["health"] = report.get("health") or {}
+    return summary
+
+
 @router.get(
     "/report/link", response_model=ReportLinkResponse, operation_id="ops_report_link"
 )
@@ -1171,7 +1204,19 @@ async def get_report_link(
              label=label, link=link, ttl_text=ttl_text)
     logger.info("report link issued: open_id=%s template=%s ttl=%ds applink=%s",
                 open_id, template_name, ttl, wrap)
-    return ReportLinkResponse(url=link, expires_in=ttl, markdown=markdown)
+    # 随链接返回报告权威摘要（复用报告页 _collect 数据），供 agent 写「文字报告 + 链接」。
+    # 函数内 import 防循环（report.py 反向 import data.py 的端点）。摘要算失败不影响链接可用。
+    summary = None
+    try:
+        from web.routes.report import _collect, _collect_weekly
+        if template_name == "weekly_review":
+            report_data = await _collect_weekly(open_id, period)
+        else:
+            report_data = await _collect(open_id, _sd, _ed, period)
+        summary = _extract_report_summary(report_data)
+    except Exception as exc:  # 摘要是增值，不能让它的失败把链接也拖垮
+        logger.warning("report summary collect failed (link still returned): %s", exc)
+    return ReportLinkResponse(url=link, expires_in=ttl, markdown=markdown, summary=summary)
 
 
 @router.get(
