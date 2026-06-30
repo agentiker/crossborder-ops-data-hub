@@ -56,14 +56,15 @@ build_message() {
   cat <<EOF
 请调用 ops_report 工具，参数 template_name=${template}、period=${period}、open_id=${open_id}（open_id 必须原样使用 ${open_id}，禁止改动或自行编造）。
 
-工具会返回 markdown（报告链接）和 summary（报告权威摘要，含 GMV/订单/广告/ROAS KPI+环比、爆款 Top5、库存风险等关键数字，周报还含商品健康度）。
+工具会返回 markdown（报告链接）和 summary（报告权威摘要，含 GMV/订单/广告/ROAS KPI+环比、爆款 Top5、库存风险等关键数字，周报还含商品健康度）。summary 还含 scope（范围：平台·区域·店铺，如「TikTok Shop / 印尼 / 3 个店铺」）、period_label（时间范围）、cutoff_label（当日截至时刻，可能为空）。
 
 基于 summary 的真实数字写一份经营文字报告，结构如下：
-1. 开头：一句 AI 经营摘要 + 运营建议（环比归因：GMV/订单升降主因；风险优先级：哪个最该先处理；可执行下一步：具体到补哪个 SKU / 关注哪个指标）。发挥运营顾问价值，建议要有数据依据。
-2. 随后：关键数与风险（GMV+环比、订单量、爆款 Top1-3、断货/低库存 SKU），用飞书友好的 emoji + 粗体小节 + 列表，不要用表格。
-3. 结尾：附上工具返回的 markdown 报告链接（原样发出，让用户点开看完整可视化图表）。
+1. 首行标范围：用一行简洁标出「范围 = scope · period_label」（若 cutoff_label 非空，时间用它，体现"截至此刻"）。只标这三要素、简洁不展开，例：📍 TikTok Shop / 印尼 / 3 个店铺 · 6/30。
+2. 开头：一句 AI 经营摘要 + 运营建议（环比归因：GMV/订单升降主因；风险优先级：哪个最该先处理；可执行下一步：具体到补哪个 SKU / 关注哪个指标）。发挥运营顾问价值，建议要有数据依据。
+3. 随后：关键数与风险（GMV+环比、订单量、爆款 Top1-3、断货/低库存 SKU），用飞书友好的 emoji + 粗体小节 + 列表，不要用表格。
+4. 结尾：附上工具返回的 markdown 报告链接（原样发出，让用户点开看完整可视化图表）。
 
-铁律：数字只能引用 summary 返回值，严禁编造、估算或凭常识补（佣金率/成本/ROI 等一律不估）；summary 没返回的字段如实说明"暂无数据"不补造。summary.low_volume=true 时环比%不可靠，不要说"增长 X%"，改说绝对值对比。报告范围由 open_id 的 binding 锁定。
+铁律：数字只能引用 summary 返回值，严禁编造、估算或凭常识补（佣金率/成本/ROI 等一律不估）；summary 没返回的字段如实说明"暂无数据"不补造。范围（scope/period_label/cutoff_label）也只引用 summary 返回值，不自行编造区域或店铺数。summary.low_volume=true 时环比%不可靠，不要说"增长 X%"，改说绝对值对比。报告范围由 open_id 的 binding 锁定。
 EOF
 }
 
