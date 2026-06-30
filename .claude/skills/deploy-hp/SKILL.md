@@ -43,7 +43,7 @@ ssh hp 'cd ~/code/crossborder-ops-data-hub && ./deploy/deploy.sh --pull <restart
 | 只改 `flows/` 定时任务代码 | （无） | timer 每次新起 python 进程，自动拿新代码 |
 | openclaw plugin 文案 | `--restart-gateway` | 重载 gateway |
 | cloudflared / 看板隧道 | `--restart-tunnel` | |
-| 客户 skill 文案 | `--sync-skill` | 同步后客户飞书 `/new` 重载 |
+| 客户 skill / 人格文案：`openclaw-skills/**` 或 `openclaw-docs/{SKILL,AGENTS,SOUL}.md`、`references/api-contract.md` 等 | `--sync-skill` | **改了这些文档必带此 flag**，否则只更新后端、skill 没同步（最易漏）。同步后**必须去飞书发 `/new`** 重载（`/reset` 不够）。详见 §2.6 |
 | `frontend/` SPA（页面/组件/`api.ts`） | （**另跑前端构建**，见 §2.5；**不**重启 web） | dist 不入库、由 StaticFiles 直接服务，build 完即时生效 |
 
 典型代码修复（本次 P0 在 `core/db.py`）：`--pull --restart-web`。
@@ -60,6 +60,27 @@ ssh hp 'cd ~/code/crossborder-ops-data-hub/frontend \
 ```
 
 坑：hp 的 `frontend/package-lock.json` 偶有本机 build 残差挡 `git pull`，pull 前 `git checkout -- frontend/package-lock.json` 丢弃即可（远端 lock 权威，install 会重建）。
+
+### 2.6 skill / 人格文案同步（仅当改了 `openclaw-skills/` 或 `openclaw-docs/`）
+
+判定规则（**最易漏的一步**）：改动里**只要有** `openclaw-skills/**`（SKILL.md、`references/api-contract.md` 等）或 `openclaw-docs/{AGENTS,SOUL}.md`、`openclaw-docs/workspaces/<ws>/USER.md`，部署就**必须带 `--sync-skill`**。这些文件是 openclaw 读的、不是 data-hub web 进程读的，所以**纯文案改动不需要 `--restart-web`**，但不带 `--sync-skill` 就只 `git pull` 了仓库、workspace 里的实文件没更新（openclaw 拒绝软链，必须实文件，见 `scripts/sync-skill.sh` 注释）。
+
+```bash
+ssh hp 'cd ~/code/crossborder-ops-data-hub && ./deploy/deploy.sh --pull --sync-skill'
+# 验证两 workspace 一致：
+ssh hp 'cd ~/code/crossborder-ops-data-hub && ./scripts/sync-skill.sh --check'   # 全 ✅ = 已同步
+```
+
+**同步后必须去飞书对应对话发 `/new`** 才重载新 SKILL（`/reset` 只清上下文、不重载文件）。
+
+**⚠️ hp 与 prod 的 workspace 不同**（`sync-skill.sh` 的 `WORKSPACES` 写死 `workspace-ecom` + `workspace-ecom-gtl`）：
+
+| 机器 | 存在的 ecom 类 workspace | 同步行为 |
+|------|------------------------|---------|
+| **hp** | `workspace-ecom`（内部测试）+ `workspace-ecom-gtl`（客户） | 两个都同步，验证发 `/new` 各发一次 |
+| **prod** | **只有 `workspace-ecom-gtl`**（无 ecom） | 同步时打印 `⚠️ 跳过 workspace-ecom：目录不存在`——**这是正常的良性跳过**，不是失败；prod 验证只在 ecom-gtl 客户对话发 `/new` |
+
+`sync-skill.sh` 对不存在的 workspace 是安全跳过（`[[ ! -d ]]` 分支），所以同一脚本在两台都能跑、不用改列表。
 
 ### 3. 验证
 
