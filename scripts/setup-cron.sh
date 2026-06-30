@@ -45,10 +45,9 @@ done
 
 TZ="Asia/Shanghai"   # 操作者在 CST，晨报/周报按 CST 调（见 memory operator-cst-vs-shop-wib-timezones）
 
-# cron 固定模型：定时报告是"工具调用 + 写多段文字"的重任务，flash 类轻量模型（如
-# deepseek-v4-flash）实测在长结构化输出上会 stream 不收敛、卡到 stalled 超时被 abort。
-# glm-5.2 之前长期跑通 cron、稳且便宜，故钉死，不跟随 agent 默认模型变化。
-CRON_MODEL="glm-5.2"
+# cron 不绑定具体模型：报告用 openclaw agent 自己配置的模型（~/.openclaw/openclaw.json /
+# .env 决定），代码不写死模型 id（同 services/llm 层原则）。思考独白外泄靠 agent 模型配置里
+# 的 "reasoning": true 压住，不靠 cron 的 --thinking off。换模型在配置层改，cron 自动跟随。
 
 # 日报/周报共用 prompt 模板：调工具 → 基于 summary 写文字报告 + 附链接。
 # 数字只用 summary 返回值（同源同口径、不编不算），发挥运营顾问价值给归因+建议。
@@ -105,8 +104,7 @@ for cust in "${CUSTOMERS[@]}"; do
     common_args=(--name "${name}" --agent "${agent}" --account "${account}"
                  --cron "${cron_expr}" --tz "${TZ}" --exact
                  --session isolated --announce --channel feishu
-                 --to "user:${open_id}" --message "${msg}"
-                 --model "${CRON_MODEL}")
+                 --to "user:${open_id}" --message "${msg}")
     [[ $DISABLED -eq 1 ]] && common_args+=(--disabled)
 
     if [[ -z "$existing" ]]; then
