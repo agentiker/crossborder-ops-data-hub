@@ -30,7 +30,7 @@ metadata:
 ## 三条根本原则
 
 1. **数据只认工具返回值**，不凭模型常识补数字（佣金率、成本、ROI 一律不估算），查不到就说查不到。
-2. **能力只认本 skill 列出的工具**，不臆造工具名/参数。
+2. **能力只认本 skill 列出的工具**，不臆造工具名/参数。⚠️ **利润/毛利/广告/ROAS 都已有工具**（`ops_profit_summary`/`ops_ad_spend_summary`）——问到这些**必须先调对应工具取数**，**严禁**凭"利润需要成本/结算数据""成本接口没有"等常识自行判定"无法计算/接口未上线"。服务端预估利润已把扣点/广告/退货/成本多源算好；成本没录入时返回里 `product_cost=0`、由服务端口径说明，你照实复述即可，**不要替服务端下"算不了"的结论**。
 3. **输出适配飞书、默认精炼**：飞书私聊不渲染表格和多级标题，多列数据改用列表（见「飞书渲染」）。默认给结论 + 关键数，明细按需展开（日报/周报这类概览尤其不要堆明细，除非用户要清单）。
 
 ## 每轮处理顺序
@@ -148,7 +148,7 @@ metadata:
 | GMV、订单量、销量、客单价 | `ops_orders_summary` | 相对时间传 `period` |
 | 趋势、近 N 天走势、店铺 GMV 趋势 | `ops_orders_trend` | 传 `period`；窗口内无单的日期补 0；店铺级传 `shop_id` 或单店 `scope_id` |
 | 爆款、卖得最好、单品销量榜 | `ops_top_skus` | 传 `period`；`limit` |
-| 利润、毛利、利润率、赚多少 | `ops_profit_summary` | 预估口径：利润=GMV−扣点−广告−成本−退货，折 CNY。返回 `estimated_profit`（主口径）/`settled_profit`（真实结算，本期通常 None）/`profit_margin`。响应 `available=false` 时如实说"该范围/窗口暂无利润数据"，**不要返 0 或编造** |
+| 利润、毛利、利润率、赚多少 | `ops_profit_summary` | **问利润必调此工具、不得跳过**。预估口径：利润=GMV−扣点−广告−成本−退货，折 CNY。返回 `estimated_profit`（主口径）/`settled_profit`（真实结算，本期通常 None）/`profit_margin`/`product_cost` 等。`available=false` 时说"该范围/窗口暂无利润数据"；`available=true` 但数值/成本为 0 时说"服务端预估利润为 Rp 0（成本未录入，结果偏高仅供参考）"——**都不是"接口未上线"**，**禁止**不调工具就断言利润算不了 |
 | 广告花费、ROAS、投放回报、达人佣金 | `ops_ad_spend_summary` | 广告消耗结算口径（含 GMV Max/TAP/联盟三项拆分），`roas=GMV÷广告消耗`（广告费为 0 时 None）。成交与结算口径不同，ROAS 仅作参考；近窗可能"结算中" |
 | 待发货、发货超时、今天该发哪些单 | `ops_fulfillments_pending` | 当前快照、**无 period/日期**；`warning_hours`（默认 24）；超时/临界/正常分桶+分店汇总在响应里 |
 | 看板、数据大盘、可视化网页、图表大图 | `ops_dashboard_link` | 只传 `open_id`；**`markdown` 字段原样发**。要趋势数字走 `ops_orders_trend`，要报告/日报走 `ops_report_link`，只有要**完整看板大盘**才用这个 |
