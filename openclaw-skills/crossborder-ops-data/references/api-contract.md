@@ -38,10 +38,13 @@ All endpoints are read-only and live under `/api/data`, **except** `POST /api/da
 | `GET /api/data/fulfillments/pending` | live | Pending-shipment snapshot (`order_status=AWAITING_SHIPMENT`) with overdue/critical buckets + per-shop summary. **Current snapshot, no time window**. |
 | `GET /api/data/scopes` | live | List of configured business scopes (id, name, shop_ids). Used when user asks "what scopes do I have". |
 | `POST /api/data/scope/binding` | live (write) | Persist a conversation's default scope. The **only** write endpoint; called when the user switches scope via menu phrase. The default scope is then **auto-applied server-side** on every data query that carries `open_id` and no explicit `scope_id` — there is no read endpoint/tool. |
-| `GET /api/data/profit/summary` | **503 — planned** | Needs Finance/Ads/cost data sources, not connected. |
-| `GET /api/data/alerts` | **503 — planned** | Depends on profit + inventory metrics. |
+| `GET /api/data/profit/summary` | live | Estimated profit (GMV − commission − ad cost − product cost − refund), CNY. Returns `available=false` (not 503) when no aggregate data for the scope/window. |
+| `GET /api/data/ads/summary` | live | Ad spend (settlement caliber: GMV Max / TAP / affiliate split) + ROAS. |
+| `GET /api/data/report/link` | live | Signed report link (`markdown` field — send as-is to user). Auto-picks daily vs range template by window. |
+| `GET /api/data/dashboard/link` | live | Signed dashboard link (`markdown` field — send as-is). |
+| `GET /api/data/alerts` | **503 — planned** | Alert-list query not yet exposed (no `operation_id`). Pending-shipment/low-stock risks are queryable via their own tools; alerts also go out via proactive push. |
 
-The 503 endpoints return JSON `{"detail": "..."}` explaining the gap. Do not show fake zero values.
+`available=false` responses are normal (no data for that scope/window) — say so, don't show fake zeros. The remaining 503 endpoint (`alerts`) returns JSON `{"detail": "..."}` explaining the gap.
 
 ## GET /api/data/overview
 
@@ -367,13 +370,21 @@ Response shape (`open_id` / `scope_key` / `scope` / `is_set`). Use the returned 
 
 ## GET /api/data/profit/summary
 
-**Status: 503 — planned.** Returns JSON `{"detail": "利润功能规划中：需先接入结算(Finance API)、广告费(Ads API)与商品成本录入后开放。"}` and HTTP 503.
+**Status: live** (`operation_id=ops_profit_summary`). Estimated profit, folded to CNY. Default window = last 7 days; relative time via `period` (same vocabulary as orders).
 
-Do not call as if it returns data. The Skill must reply that profit features are not yet enabled and name the missing dependencies (settlement / ad spend / product cost).
+Caliber: `profit = GMV − commission − ad cost − product cost(incl. shipping) − estimated refund`. Commission/ad cost use a dual source (TikTok official *unsettled estimate* + *settled actual*); refund is an estimated configurable rate; product cost comes from CSV entry. Response carries both `estimated_profit` (primary) and `settled_profit` (3b backfill, usually `null` this period), plus `profit_margin`, `commission_fee`, `ad_cost`, `product_cost`, `refund_amount`, `order_count`, `units_sold`.
+
+When there is no aggregate data for the scope/window, returns `available=false` (HTTP 200, **not** 503). The Skill should say "no profit data for this scope/window", never show fabricated zeros.
+
+## GET /api/data/ads/summary
+
+**Status: live** (`operation_id=ops_ad_spend_summary`). Ad spend + ROAS, default last 7 days, settlement caliber by Indonesia business day.
+
+Caliber: ad spend is settlement caliber (`fact_ad_spend_daily`, split into `gmv_max_fee` / `tap_commission` / `affiliate_commission`); GMV is paid-order caliber (same as `ops_orders_summary`); `roas = GMV ÷ ad spend`, `null` when ad spend is 0. Order vs settlement calibers differ, so ROAS is reference-only; recent windows may still be settling.
 
 ## GET /api/data/alerts
 
-**Status: 503 — planned.** Returns JSON `{"detail": "告警功能规划中：依赖利润与库存指标，待结算/广告/成本数据接入后开放。"}` and HTTP 503.
+**Status: 503 — planned.** No `operation_id` (not exposed as a tool). Returns JSON `{"detail": "告警功能规划中：依赖利润与库存指标，待结算/广告/成本数据接入后开放。"}` and HTTP 503. Pending-shipment/low-stock risks are queryable via `ops_fulfillments_pending` / `ops_low_stock`; alerts also go out via proactive push.
 
 ## Error Handling
 
@@ -381,7 +392,7 @@ Do not call as if it returns data. The Skill must reply that profit features are
 | --- | --- | --- |
 | `400` | `ScopeError`: out-of-scope shop id, unauthorized shop, or invalid query | Explain the scope/shop is rejected; do not retry blind. Surface the `detail` to the operator (no token leak). |
 | `401` | Invalid internal token | Explain that Data Hub authorization failed. Do not reveal token values. |
-| `503` | Endpoint is planned but not yet available (currently `profit/summary` and `alerts`) | Tell user the feature is on the roadmap and what data sources it needs. Do not invent zeros. |
+| `503` | Endpoint is planned but not yet available (currently only `alerts`) | Tell user the feature is on the roadmap and what data sources it needs. Do not invent zeros. |
 | `404` | Endpoint not found | Explain that the Skill contract may be out of sync with the Data Hub service. |
 | timeout / connection refused | Data Hub unreachable | Ask operator to check local service status and `DATA_HUB_URL`. |
 | Empty result (HTTP 200 with `total=0` or empty arrays) | Filter matched no data | State "no rows for this filter window" plainly; do not speculate causes. |
