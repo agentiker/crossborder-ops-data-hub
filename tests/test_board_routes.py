@@ -85,7 +85,8 @@ def test_logged_in_pending_403_friendly(monkeypatch):
     monkeypatch.setattr(web_security, "get_user_permission", lambda oid, **k: None)
     monkeypatch.setattr(web_security, "get_registration_status", lambda oid, **k: "pending")
     client = TestClient(app, follow_redirects=False)
-    r = client.get("/board/data", cookies={settings.feishu_oauth.cookie_name: "whatever"})
+    client.cookies.set(settings.feishu_oauth.cookie_name, "whatever")
+    r = client.get("/board/data")
     assert r.status_code == 403
     assert "等待管理员开通" in r.text  # 待审批友好文案
     assert "ou_unknown" not in r.text  # 不再回显 open_id
@@ -98,7 +99,8 @@ def test_logged_in_unregistered_403_generic(monkeypatch):
     monkeypatch.setattr(web_security, "get_user_permission", lambda oid, **k: None)
     monkeypatch.setattr(web_security, "get_registration_status", lambda oid, **k: "none")
     client = TestClient(app, follow_redirects=False)
-    r = client.get("/board/data", cookies={settings.feishu_oauth.cookie_name: "whatever"})
+    client.cookies.set(settings.feishu_oauth.cookie_name, "whatever")
+    r = client.get("/board/data")
     assert r.status_code == 403
     assert "暂无看板权限" in r.text
 
