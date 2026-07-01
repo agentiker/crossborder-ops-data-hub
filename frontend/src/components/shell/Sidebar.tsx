@@ -7,6 +7,7 @@ import {
   PanelLeftOpen,
   Plus,
   ShieldCheck,
+  SlidersHorizontal,
   Trash2,
   UserRound,
   Zap,
@@ -41,6 +42,7 @@ const NAV: NavItem[] = [
   { to: "/skills", label: "技能", icon: Zap, badge: "待开发" },
   { to: "/board", label: "看板", icon: LayoutDashboard },
   { to: "/admin", label: "管理", icon: ShieldCheck, bossOnly: true },
+  { to: "/settings", label: "阈值配置", icon: SlidersHorizontal, bossOnly: true },
 ];
 
 interface Props {

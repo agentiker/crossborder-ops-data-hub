@@ -25,6 +25,7 @@ from core.config import settings
 from core.db import SessionLocal
 from core.timezone import business_today
 from services import fee_rate_alerts, hotsell_alerts, stock_alerts
+from services.biz_config import get_config_int
 from services.fee_rate_metrics import get_settled_fee_rate, get_unsettled_fee_rate
 from services.fulfillment_alerts import ALERT_TYPE, build_decision
 from services.fulfillment_metrics import get_pending_fulfillments
@@ -398,7 +399,7 @@ def _scan_hotsell(session, *, account, open_id, scope, scope_id, dry_run: bool) 
     )
     # 近 N 天上线的新品集合 → 文案对命中的爆单商品标注 🌟「新品爆发」（同阈不重复推送）
     new_ids = get_new_product_ids(
-        as_of=today, lookback_days=settings.new_product_lookback_days,
+        as_of=today, lookback_days=get_config_int("new_product_lookback_days", account_id=account),
         platform=scope.platform, country=scope.country, shop_ids=scope.shop_ids or None,
         session=session,
     )
@@ -409,7 +410,7 @@ def _scan_hotsell(session, *, account, open_id, scope, scope_id, dry_run: bool) 
 
     decision = hotsell_alerts.build_decision(
         units_by_product=units_by_product,
-        threshold=settings.hotsell_daily_units_threshold,
+        threshold=get_config_int("hotsell_daily_units_threshold", account_id=account),
         prev_reported_ids=prev_ids,
         scope_display=scope.display_text,
         date_label=f"{today.month}/{today.day}",

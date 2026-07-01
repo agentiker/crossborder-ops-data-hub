@@ -18,10 +18,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Optional
 
-from core.config import settings
 from core.db import SessionLocal
 from core.timezone import OFFSET, business_today
 from models.base_models import Inventory, Product
+from services.biz_config import get_config_int
 from services.order_metrics import get_units_by_sku
 
 
@@ -58,9 +58,9 @@ def get_stock_risk(
       stockout/critical/warning/ok（充足）/idle（无销量）。无论哪种口径，buckets 计数始终只算
       真实风险桶（与告警一致），供"断货风险数"KPI 用。
     """
-    critical_days = critical_days or settings.stock_cover_critical_days
-    warning_days = warning_days or settings.stock_cover_warning_days
-    velocity_window_days = velocity_window_days or settings.stock_velocity_window_days
+    critical_days = critical_days or get_config_int("stock_cover_critical_days")
+    warning_days = warning_days or get_config_int("stock_cover_warning_days")
+    velocity_window_days = velocity_window_days or get_config_int("stock_velocity_window_days")
 
     # 销速窗口：近 velocity_window_days 天（含今天），按印尼业务日。
     end_d = business_today()

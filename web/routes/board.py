@@ -19,6 +19,7 @@ from core.config import settings
 from core.tenancy import set_current_account
 from core.timezone import business_now, business_today, previous_window
 from services.ad_metrics import get_ad_spend_summary, get_roas
+from services.biz_config import get_config_int
 from services.channel_metrics import get_channel_gmv_breakdown
 from services.fee_rate_metrics import get_fee_rate_monitor
 from services.order_metrics import (
@@ -383,8 +384,8 @@ async def board_new_products(
         return JSONResponse({"error": "forbidden", "detail": str(exc)}, status_code=403)
 
     as_of = business_today()
-    lookback_days = settings.new_product_lookback_days
-    threshold = settings.hotsell_daily_units_threshold
+    lookback_days = get_config_int("new_product_lookback_days")
+    threshold = get_config_int("hotsell_daily_units_threshold")
     try:
         items = get_new_product_trends(
             as_of=as_of,

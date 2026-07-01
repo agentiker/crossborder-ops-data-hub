@@ -15,11 +15,11 @@ from core.retry import retry
 
 logger = logging.getLogger(__name__)
 
-from core.config import settings
 from core.db import SessionLocal
 from flows.network import log_egress_ip
 from platforms.tiktok_shop.client import PLATFORM as TIKTOK_PLATFORM
 from platforms.tiktok_shop.client import TikTokShopClient
+from services.biz_config import get_config_int
 from services.sync_state import record_raw_response, upsert_cursor
 from services.unsettled_fee_store import parse_unsettled_fees, replace_unsettled_for_day
 
@@ -35,7 +35,7 @@ def _resolve_window(lookback_days: Optional[int] = None) -> tuple[int, int]:
     lookback_days 不为空则覆盖 settings.unsettled_lookback_days（回填可拉更长窗口）。
     """
     now = datetime.now(timezone.utc)
-    days = lookback_days if lookback_days is not None else settings.unsettled_lookback_days
+    days = lookback_days if lookback_days is not None else get_config_int("unsettled_lookback_days")
     start = now - timedelta(days=days)
     return int(start.timestamp()), int(now.timestamp())
 

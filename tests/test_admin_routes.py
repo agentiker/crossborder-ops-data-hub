@@ -233,3 +233,111 @@ def test_operator_list_scopes_forbidden(_db):
 
 def test_unauth_list_scopes_401():
     assert TestClient(app).get("/api/admin/scopes").status_code == 401
+
+
+# ── 业务阈值配置（biz-configs，boss-only）─────────────────────────────────────
+
+
+def test_biz_configs_list_returns_metadata_and_defaults(_db):
+    _login(BOSS)
+    r = TestClient(app).get("/api/admin/biz-configs")
+    assert r.status_code == 200
+    items = r.json()["items"]
+    by_key = {i["config_key"]: i for i in items}
+    hot = by_key["hotsell_daily_units_threshold"]
+    assert hot["label"] and hot["unit"] == "件/天" and hot["type"] == "int"
+    assert hot["default_value"] == 50 and hot["current_value"] == 50
+    assert hot["is_overridden"] is False
+
+
+def test_biz_config_upsert_and_reflect(_db):
+    _login(BOSS)
+    client = TestClient(app)
+    r = client.post("/api/admin/biz-configs",
+                    json={"config_key": "hotsell_daily_units_threshold", "value": 30})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["current_value"] == 30 and body["is_overridden"] is True
+    # 再 list 应反映
+    items = {i["config_key"]: i for i in client.get("/api/admin/biz-configs").json()["items"]}
+    assert items["hotsell_daily_units_threshold"]["current_value"] == 30
+
+
+def test_biz_config_reset_falls_back(_db):
+    _login(BOSS)
+    client = TestClient(app)
+    client.post("/api/admin/biz-configs",
+                json={"config_key": "hotsell_daily_units_threshold", "value": 30})
+    r = client.post("/api/admin/biz-configs/reset",
+                    json={"config_key": "hotsell_daily_units_threshold"})
+    assert r.status_code == 200
+    assert r.json()["current_value"] == 50 and r.json()["is_overridden"] is False
+
+
+def test_biz_config_unknown_key_400(_db):
+    _login(BOSS)
+    r = TestClient(app).post("/api/admin/biz-configs",
+                             json={"config_key": "no_such_key", "value": 1})
+    assert r.status_code == 400
+
+
+def test_biz_config_out_of_range_400(_db):
+    _login(BOSS)
+    # hotsell min=1 max=100000 → 0 越界
+    r = TestClient(app).post("/api/admin/biz-configs",
+                             json={"config_key": "hotsell_daily_units_threshold", "value": 0})
+    assert r.status_code == 400
+
+
+def test_biz_config_non_integer_400(_db):
+    _login(BOSS)
+    # int 类给小数 → 400
+    r = TestClient(app).post("/api/admin/biz-configs",
+                             json={"config_key": "hotsell_daily_units_threshold", "value": 30.5})
+    assert r.status_code == 400
+
+
+def test_biz_config_return_rate_dispatch(_db):
+    """退货率走 return_rate_configs 专表分派。"""
+    _login(BOSS)
+    client = TestClient(app)
+    r = client.post("/api/admin/biz-configs",
+                    json={"config_key": "estimated_return_rate_default", "value": 0.08})
+    assert r.status_code == 200
+    assert abs(r.json()["current_value"] - 0.08) < 1e-9 and r.json()["is_overridden"] is True
+
+
+def test_biz_config_replenishment_shared_row(_db):
+    """补货三系数共享一行：改一个不影响其它。"""
+    _login(BOSS)
+    client = TestClient(app)
+    client.post("/api/admin/biz-configs",
+                json={"config_key": "replenish_normal_multiplier", "value": 1.8})
+    items = {i["config_key"]: i for i in client.get("/api/admin/biz-configs").json()["items"]}
+    assert abs(items["replenish_normal_multiplier"]["current_value"] - 1.8) < 1e-9
+    assert items["replenish_normal_multiplier"]["is_overridden"] is True
+    # 未改的两个仍是默认
+    assert items["replenish_velocity_days"]["is_overridden"] is False
+    assert items["replenish_superhot_multiplier"]["is_overridden"] is False
+
+
+def test_biz_config_operator_forbidden(_db):
+    _login(OPER)
+    client = TestClient(app)
+    assert client.get("/api/admin/biz-configs").status_code == 403
+    assert client.post("/api/admin/biz-configs",
+                       json={"config_key": "hotsell_daily_units_threshold", "value": 30}).status_code == 403
+
+
+def test_biz_config_tenant_isolation(_db):
+    """gtl boss 改的值不影响 ecom-app boss 看到的。"""
+    GTL_BOSS = UserPermission(open_id="ou_gtl", role="boss", allowed_scope_key=None,
+                              channel="feishu", account_id="ecom-app-gtl")
+    # gtl boss 改爆单=20
+    _login(GTL_BOSS)
+    TestClient(app).post("/api/admin/biz-configs",
+                         json={"config_key": "hotsell_daily_units_threshold", "value": 20})
+    # ecom-app boss 看仍是默认 50
+    _login(BOSS)
+    items = {i["config_key"]: i for i in TestClient(app).get("/api/admin/biz-configs").json()["items"]}
+    assert items["hotsell_daily_units_threshold"]["current_value"] == 50

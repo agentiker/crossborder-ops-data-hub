@@ -338,6 +338,21 @@ export interface RoleUpsertBody {
   channel?: string;
 }
 
+// ── 业务阈值配置（boss-only，按租户覆盖 core/config 默认）──
+export interface BizConfigRow {
+  config_key: string;
+  label: string;
+  unit: string | null;
+  type: "int" | "float";
+  group: string;
+  hint?: string | null;
+  min?: number | null;
+  max?: number | null;
+  default_value: number;
+  current_value: number;
+  is_overridden: boolean;
+}
+
 // 看板筛选参数：start/end 显式日期（覆盖 period）；platform/country 平台/区域；scope 店铺。
 // 空值不拼进 querystring（让后端走默认/全部）。period 作无显式日期时的回退。
 export interface BoardQuery {
@@ -388,6 +403,11 @@ export const api = {
   adminUpsertRole: (body: RoleUpsertBody) => postJSON<RoleRow>("/api/admin/roles", body),
   adminDeactivateRole: (open_id: string, account_id = "ecom-app", channel = "feishu") =>
     postJSON<RoleRow>("/api/admin/roles/deactivate", { open_id, account_id, channel }),
+  bizConfigs: () => getJSON<{ items: BizConfigRow[] }>("/api/admin/biz-configs"),
+  bizConfigUpsert: (config_key: string, value: number) =>
+    postJSON<BizConfigRow>("/api/admin/biz-configs", { config_key, value }),
+  bizConfigReset: (config_key: string) =>
+    postJSON<BizConfigRow>("/api/admin/biz-configs/reset", { config_key }),
   conversations: () => getJSON<{ items: ConversationItem[] }>("/api/conversations"),
   conversation: (id: number) =>
     getJSON<{ id: number; title: string; messages: Message[] }>(

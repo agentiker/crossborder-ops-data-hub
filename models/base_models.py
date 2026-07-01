@@ -1025,3 +1025,31 @@ class FactExchangeRate(Base):
 
     def __repr__(self):
         return f"<FactExchangeRate({self.currency_code} {self.published_at}: {self.rate_middle}/{self.unit})>"
+
+
+class BizConfig(Base):
+    """按租户可配的业务阈值（key-value）。boss 在 /settings 页面调，覆盖 core/config 全局默认。
+
+    通用单表（不给每个阈值建专表）：一行 = 某租户对某 config_key 的覆盖值。查不到该 (account_id,
+    config_key) 行 → services/biz_config 回落 settings.<config_key> 全局默认（fail-safe）。
+    数值型阈值统一存 value_num（int 类如天/件/时读时取整，比例类如倍数保留小数）。
+    唯一键 (account_id, config_key)。无 channel 列（阈值与飞书渠道无关）。
+
+    注：退货率 default / 补货三系数不落本表——它们读各自专表（return_rate_configs /
+    replenishment_config），路由按 key 分派写入，见 web/routes/admin.py + services/biz_config。
+    """
+
+    __tablename__ = "biz_configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(String(64), nullable=False, index=True)  # 多租户隔离
+    config_key = Column(String(64), nullable=False, index=True)  # 如 hotsell_daily_units_threshold
+    value_num = Column(Numeric(18, 6), nullable=False)  # 数值型阈值
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("account_id", "config_key", name="uq_biz_config"),
+    )
+
+    def __repr__(self):
+        return f"<BizConfig({self.account_id}:{self.config_key}={self.value_num})>"

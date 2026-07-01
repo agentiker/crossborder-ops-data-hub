@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import csv
 import io
+from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -24,6 +25,13 @@ from core.db import SessionLocal
 from core.tenancy import set_current_account
 from models.base_models import UserRole
 from services.audit import record_audit_event_safe
+from services.biz_config import (
+    CONFIGURABLE_KEYS,
+    default_of,
+    delete_config,
+    get_biz_config_overrides,
+    upsert_config_num,
+)
 from services.product_cost_store import import_costs_from_rows
 from services.scope_resolution import ScopeError, expand_scope, list_scopes
 from services.user_authz import UserPermission, get_user_permission
@@ -293,5 +301,238 @@ async def import_product_costs(
             after=result,
         )
         return result
+    finally:
+        session.close()
+
+
+# ── 业务阈值配置（/settings 页面，boss-only）──────────────────────────────────
+# 一张通用配置页统一管理三类来源的阈值：数值类走 biz_configs 表（services/biz_config），
+# 退货率 default 级走 return_rate_configs，补货三系数走 replenishment_config。路由按
+# CONFIGURABLE_KEYS[key]["source"] 分派，对前端透明（前端只看到一组 {key,value}）。
+
+
+class BizConfigItemOut(BaseModel):
+    config_key: str
+    label: str
+    unit: Optional[str]
+    type: str  # int / float
+    group: str
+    hint: Optional[str] = None
+    min: Optional[float] = None
+    max: Optional[float] = None
+    default_value: float
+    current_value: float
+    is_overridden: bool  # 是否已被本租户覆盖（非默认）
+
+
+class BizConfigListOut(BaseModel):
+    items: list[BizConfigItemOut]
+
+
+class BizConfigUpsertIn(BaseModel):
+    config_key: str
+    value: float
+
+
+class BizConfigResetIn(BaseModel):
+    config_key: str
+
+
+def _replenish_field(config_key: str) -> str:
+    """补货 key → ReplenishmentConfig 列名。"""
+    return {
+        "replenish_velocity_days": "velocity_days",
+        "replenish_normal_multiplier": "normal_multiplier",
+        "replenish_superhot_multiplier": "superhot_multiplier",
+    }[config_key]
+
+
+def _read_current(session, account_id: str, config_key: str) -> tuple[Decimal, bool]:
+    """按 source 读某 key 的当前生效值 + 是否被覆盖。返回 (current_value, is_overridden)。"""
+    meta = CONFIGURABLE_KEYS[config_key]
+    source = meta["source"]
+    default = default_of(config_key)
+
+    if source == "biz_config":
+        overrides = get_biz_config_overrides(session, account_id)
+        if config_key in overrides:
+            return overrides[config_key], True
+        return default, False
+
+    if source == "return_rate":
+        from services.return_rate_store import get_default_override
+        ov = get_default_override(session, account_id=account_id)
+        return (ov, True) if ov is not None else (default, False)
+
+    if source == "replenishment":
+        from models.base_models import ReplenishmentConfig
+        row = (
+            session.query(ReplenishmentConfig)
+            .filter_by(config_key=f"{account_id}|")  # 租户级 scope_key=None → key 尾部空
+            .first()
+        )
+        if row is not None:
+            raw = getattr(row, _replenish_field(config_key))
+            if raw is not None:
+                return Decimal(str(raw)), True
+        return default, False
+
+    return default, False
+
+
+def _dispatch_write(session, account_id: str, config_key: str, value: Decimal) -> None:
+    """按 source 写入某 key 的覆盖值。"""
+    source = CONFIGURABLE_KEYS[config_key]["source"]
+    if source == "biz_config":
+        upsert_config_num(session, account_id=account_id, config_key=config_key, value=value)
+    elif source == "return_rate":
+        from services.return_rate_store import upsert_default_return_rate
+        upsert_default_return_rate(session, account_id=account_id, rate=value)
+    elif source == "replenishment":
+        # 补货三系数共享一行：读现有三字段原始值，改目标字段，其它保持（None=回落默认）。
+        from services.replenishment_config import upsert_config
+        vals = _replenish_raw_values(session, account_id)
+        field = _replenish_field(config_key)
+        vals[field] = value
+        upsert_config(
+            session, account_id=account_id, scope_key=None,
+            velocity_days=int(vals["velocity_days"]) if vals["velocity_days"] is not None else None,
+            normal_multiplier=float(vals["normal_multiplier"]) if vals["normal_multiplier"] is not None else None,
+            superhot_multiplier=float(vals["superhot_multiplier"]) if vals["superhot_multiplier"] is not None else None,
+        )
+
+
+def _dispatch_reset(session, account_id: str, config_key: str) -> None:
+    """按 source 删除某 key 的覆盖（回落默认）。"""
+    source = CONFIGURABLE_KEYS[config_key]["source"]
+    if source == "biz_config":
+        delete_config(session, account_id=account_id, config_key=config_key)
+    elif source == "return_rate":
+        from services.return_rate_store import delete_default_return_rate
+        delete_default_return_rate(session, account_id=account_id)
+    elif source == "replenishment":
+        # 把目标字段设回 None（回落默认），其它两个保持原值。
+        from services.replenishment_config import upsert_config
+        vals = _replenish_raw_values(session, account_id)
+        vals[_replenish_field(config_key)] = None
+        upsert_config(
+            session, account_id=account_id, scope_key=None,
+            velocity_days=int(vals["velocity_days"]) if vals["velocity_days"] is not None else None,
+            normal_multiplier=float(vals["normal_multiplier"]) if vals["normal_multiplier"] is not None else None,
+            superhot_multiplier=float(vals["superhot_multiplier"]) if vals["superhot_multiplier"] is not None else None,
+        )
+
+
+def _replenish_raw_values(session, account_id: str) -> dict:
+    """读补货租户级行的三字段**原始值**（含 None，不回落）。"""
+    from models.base_models import ReplenishmentConfig
+    row = (
+        session.query(ReplenishmentConfig)
+        .filter_by(config_key=f"{account_id}|")
+        .first()
+    )
+    if row is None:
+        return {"velocity_days": None, "normal_multiplier": None, "superhot_multiplier": None}
+    return {
+        "velocity_days": row.velocity_days,
+        "normal_multiplier": row.normal_multiplier,
+        "superhot_multiplier": row.superhot_multiplier,
+    }
+
+
+@router.get("/biz-configs", response_model=BizConfigListOut, include_in_schema=False)
+async def list_biz_configs(boss: UserPermission = Depends(require_boss)):
+    """列出本租户所有可配业务阈值（元数据 + 当前生效值 + 是否覆盖）。boss-only。"""
+    set_current_account(boss.account_id)
+    session = SessionLocal()
+    try:
+        items = []
+        for key, meta in CONFIGURABLE_KEYS.items():
+            current, overridden = _read_current(session, boss.account_id, key)
+            items.append(BizConfigItemOut(
+                config_key=key,
+                label=meta["label"], unit=meta.get("unit"), type=meta["type"],
+                group=meta["group"], hint=meta.get("hint"),
+                min=meta.get("min"), max=meta.get("max"),
+                default_value=float(default_of(key)),
+                current_value=float(current),
+                is_overridden=overridden,
+            ))
+        return BizConfigListOut(items=items)
+    finally:
+        session.close()
+
+
+@router.post("/biz-configs", response_model=BizConfigItemOut, include_in_schema=False)
+async def upsert_biz_config(body: BizConfigUpsertIn, boss: UserPermission = Depends(require_boss)):
+    """覆盖某业务阈值（按 source 分派写入）。校验白名单 + 范围。boss-only，钉死 boss 租户。"""
+    set_current_account(boss.account_id)
+    key = body.config_key
+    meta = CONFIGURABLE_KEYS.get(key)
+    if meta is None:
+        raise HTTPException(status_code=400, detail=f"未知配置项：{key}")
+    try:
+        value = Decimal(str(body.value))
+    except (InvalidOperation, ValueError):
+        raise HTTPException(status_code=400, detail="value 必须是数字")
+    lo, hi = meta.get("min"), meta.get("max")
+    if (lo is not None and value < Decimal(str(lo))) or (hi is not None and value > Decimal(str(hi))):
+        raise HTTPException(status_code=400, detail=f"{meta['label']} 须在 [{lo}, {hi}] 之间")
+    if meta["type"] == "int" and value != value.to_integral_value():
+        raise HTTPException(status_code=400, detail=f"{meta['label']} 须为整数")
+
+    session = SessionLocal()
+    try:
+        before_val, before_ov = _read_current(session, boss.account_id, key)
+        _dispatch_write(session, boss.account_id, key, value)
+        session.commit()
+        after_val, after_ov = _read_current(session, boss.account_id, key)
+        record_audit_event_safe(
+            session,
+            event_type="account_op", event_action="biz_config.upsert",
+            actor_open_id=boss.open_id, actor_source="web", account_id=boss.account_id,
+            target=key, summary=f"设置 {meta['label']} = {body.value}",
+            before={"value": float(before_val), "is_overridden": before_ov},
+            after={"value": float(after_val), "is_overridden": after_ov},
+        )
+        return BizConfigItemOut(
+            config_key=key, label=meta["label"], unit=meta.get("unit"), type=meta["type"],
+            group=meta["group"], hint=meta.get("hint"), min=lo, max=hi,
+            default_value=float(default_of(key)), current_value=float(after_val),
+            is_overridden=after_ov,
+        )
+    finally:
+        session.close()
+
+
+@router.post("/biz-configs/reset", response_model=BizConfigItemOut, include_in_schema=False)
+async def reset_biz_config(body: BizConfigResetIn, boss: UserPermission = Depends(require_boss)):
+    """恢复某业务阈值为默认（删除本租户覆盖）。boss-only。"""
+    set_current_account(boss.account_id)
+    key = body.config_key
+    meta = CONFIGURABLE_KEYS.get(key)
+    if meta is None:
+        raise HTTPException(status_code=400, detail=f"未知配置项：{key}")
+    session = SessionLocal()
+    try:
+        before_val, before_ov = _read_current(session, boss.account_id, key)
+        _dispatch_reset(session, boss.account_id, key)
+        session.commit()
+        after_val, after_ov = _read_current(session, boss.account_id, key)
+        record_audit_event_safe(
+            session,
+            event_type="account_op", event_action="biz_config.reset",
+            actor_open_id=boss.open_id, actor_source="web", account_id=boss.account_id,
+            target=key, summary=f"恢复 {meta['label']} 为默认",
+            before={"value": float(before_val), "is_overridden": before_ov},
+            after={"value": float(after_val), "is_overridden": after_ov},
+        )
+        return BizConfigItemOut(
+            config_key=key, label=meta["label"], unit=meta.get("unit"), type=meta["type"],
+            group=meta["group"], hint=meta.get("hint"),
+            min=meta.get("min"), max=meta.get("max"),
+            default_value=float(default_of(key)), current_value=float(after_val),
+            is_overridden=after_ov,
+        )
     finally:
         session.close()

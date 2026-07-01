@@ -17,10 +17,10 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
-from core.config import settings
 from core.db import SessionLocal
 from core.timezone import OFFSET
 from models.base_models import PendingFulfillment
+from services.biz_config import get_config_int
 
 # 超时分桶判定用的 SLA 字段（待真实店铺核对，需切换只改此处 + caliber 文案）
 SLA_FIELD = "tts_sla_time"
@@ -69,7 +69,7 @@ def get_pending_fulfillments(
     from datetime import timedelta
 
     if warning_hours is None:
-        warning_hours = settings.fulfillment_warning_hours
+        warning_hours = get_config_int("fulfillment_warning_hours")
     warning_delta = timedelta(hours=warning_hours)
     now = _now()
 
