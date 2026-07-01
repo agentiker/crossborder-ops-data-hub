@@ -112,6 +112,27 @@ def test_empty_window_weekly():
     assert "暂无订单" in flat
 
 
+def test_no_table_nested_in_collapsible_panel():
+    """飞书 CardKit 限制：table 不能嵌在 collapsible_panel 内（报 200621）。守此回归。"""
+    for s in (DAILY_SUMMARY, WEEKLY_SUMMARY):
+        card = build_report_card(s, analysis="x", report_url="https://x/r")
+
+        def _panels_contain_table(elements):
+            for el in elements:
+                if not isinstance(el, dict):
+                    continue
+                if el.get("tag") == "collapsible_panel":
+                    inner = _iter_tags(el.get("elements", []))
+                    if "table" in inner:
+                        return True
+                for k in ("elements", "columns"):
+                    if isinstance(el.get(k), list) and _panels_contain_table(el[k]):
+                        return True
+            return False
+
+        assert not _panels_contain_table(card["body"]["elements"]), "table 不能嵌在折叠面板内"
+
+
 def test_money_and_change_helpers():
     assert _abbr(178_200_000) == "178.2M"
     assert _abbr(1500) == "1.5K"

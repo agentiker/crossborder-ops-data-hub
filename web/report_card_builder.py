@@ -213,38 +213,29 @@ def build_report_card(summary: dict, analysis: str, report_url: str,
                     })
 
         # ── 库存风险（折叠面板，默认收起）────────────────────────────
+        # ⚠️ 飞书 CardKit 限制：table 不能嵌在 collapsible_panel 内（报 200621），
+        # 故面板内用 markdown 列表呈现库存明细，不用 table。
         low_stock = summary.get("low_stock") or []
         if low_stock:
             risk = [x for x in low_stock if x.get("level") in ("stockout", "critical", "warning")]
             n_out = sum(1 for x in low_stock if x.get("level") == "stockout")
             n_crit = sum(1 for x in low_stock if x.get("level") == "critical")
             head_title = f"**📦 库存风险**（断货 {n_out} · 告急 {n_crit}）"
-            rows = []
+            lines = []
             for x in low_stock[:20]:
                 name = x.get("name") or "?"
-                if len(name) > 14:
-                    name = name[:14] + "…"
+                if len(name) > 16:
+                    name = name[:16] + "…"
                 days = x.get("days")
-                rows.append({
-                    "name": name,
-                    "stock": _int(x.get("stock")),
-                    "days": (f"{days:.1f}" if days is not None else "—"),
-                    "level": x.get("level_label") or "",
-                })
+                days_str = f"{days:.1f} 天" if days is not None else "无销量"
+                level = x.get("level_label") or ""
+                lines.append(f"· **{name}** — 库存 {_int(x.get('stock'))} · 可售 {days_str} · {level}")
             elements.append(_hr())
             elements.append({
                 "tag": "collapsible_panel",
                 "expanded": bool(risk),  # 有真实风险则默认展开，否则收起
                 "header": {"title": {"tag": "markdown", "content": head_title}},
-                "elements": [_table(
-                    [
-                        {"name": "name", "display_name": "商品", "data_type": "text"},
-                        {"name": "stock", "display_name": "库存", "data_type": "text"},
-                        {"name": "days", "display_name": "可售天数", "data_type": "text"},
-                        {"name": "level", "display_name": "状态", "data_type": "text"},
-                    ],
-                    rows,
-                )],
+                "elements": [_md("\n".join(lines))],
             })
 
     # ── 底部：查看完整报告按钮 + footer ──────────────────────────────
