@@ -158,6 +158,7 @@ async def _collect(
         scope_id=None, shop_ids=shop_ids, open_id=None,
         granularity=granularity or "day",
     )
+    trend_dict = _asdict(trend)
     low = await get_low_stock(
         platform=platform, country=country, shop_id=None,
         scope_id=None, shop_ids=shop_ids,
@@ -178,6 +179,23 @@ async def _collect(
     )
     prev_start, prev_end = previous_window(cur_start, cur_end)
     shop_id_list = filters.shop_ids or None
+    # 销售趋势「上期对比线」：取等长上期（单天=前一天、多天=等长上一期）的趋势点，
+    # 复用当期实际生效的 granularity（hour/day），前端在同一张图画一条虚线做对比。
+    # 上期窗口同样单天（prev_start==prev_end）→ granularity=hour 生效，逐小时自然对齐。
+    # 取数失败不阻断整页：缺上期线只是少一条对比曲线，趋势主体照常展示。
+    # 注：_asdict 统一 TrendResponse(Pydantic) 与测试 mock 的 dict，二者都可取 points/window_label。
+    try:
+        prev_trend = await get_orders_trend(
+            start_date=prev_start.isoformat(), end_date=prev_end.isoformat(),
+            platform=platform, country=country, shop_id=None,
+            scope_id=None, shop_ids=shop_ids, open_id=None,
+            granularity=trend_dict.get("granularity") or "day",
+        )
+        prev_dict = _asdict(prev_trend)
+        trend_dict["prev_points"] = prev_dict.get("points") or []
+        trend_dict["prev_window_label"] = prev_dict.get("window_label")
+    except Exception:  # noqa: BLE001 — 上期对比线兜底，失败不炸看板
+        logger.warning("prev trend points failed", exc_info=True)
     # 爆款「商品」榜（按 product_id 聚合，带小图/款号；窗口同当期）。直调服务（不走 data 路由），
     # 与 channels/profit 一致：商品级语义 + 单品渠道拆分 join 都按 product_id。
     top_items = get_top_products(
@@ -271,7 +289,7 @@ async def _collect(
         # 当期窗口元信息:含今日时前端显「当日累计」徽章 + 利润卡提示,避免客户把半天今天当下降。
         "window": window_meta,
         "overview": overview,
-        "trend": _asdict(trend),
+        "trend": trend_dict,
         "top": {"items": top_items},
         "low": _asdict(low),
         "fulfillment": _asdict(fulfillment),

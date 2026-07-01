@@ -227,7 +227,7 @@ export interface BoardData {
       roas?: number | null;
     };
   };
-  trend: { points: TrendPoint[]; window_label?: string; start_date?: string; end_date?: string; granularity?: string };
+  trend: { points: TrendPoint[]; window_label?: string; start_date?: string; end_date?: string; granularity?: string; prev_points?: TrendPoint[]; prev_window_label?: string };
   top: { items: TopSku[] };
   low: {
     items: LowStockItem[];

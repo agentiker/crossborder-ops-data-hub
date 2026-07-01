@@ -1122,6 +1122,8 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
   const ads = data?.overview.ads;
   const ch = data?.overview.change;
   const pts = data?.trend.points ?? [];
+  // 上期对比线（销售趋势）：单天=前一天逐小时、多天=等长上一期逐日。后端可能不返回（取数失败）。
+  const prevPts = data?.trend.prev_points ?? [];
   // 无结算数据降级：广告消耗 0/缺失 → 卡值「—」+「暂无结算数据」；roas 为 null → 「—」。
   const hasAdSpend = !!ads && ads.total_ad_spend > 0;
   const adCostValue = hasAdSpend ? fmtMoney(ads!.total_ad_spend) : "—";
@@ -1172,10 +1174,41 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
 
   // fork 的「销售趋势」：GMV 平滑面积折线。配色照搬 fork StoreClaw 的靛蓝 #6366f1
   // （用户拍板：此处不走品牌墨绿，1:1 复刻 fork 的鲜亮彩色面积效果）。
+  // 上期对比虚线：单天=前一天逐小时、多天=等长上一期逐日，按索引与当期 x 轴对齐（等长窗口）。
+  //   - 仅当 prevPts 存在且长度与当期一致时画，避免错位；
+  //   - 同色（靛蓝）浅化 + dashed，视觉上明确是「参照」而非主体；
+  //   - tooltip 同时列出当期/上期 GMV，便于逐点对比。
+  const hasPrev = prevPts.length > 0 && prevPts.length === pts.length;
+  const salesPrevLabel = hasPrev
+    ? (data?.trend.granularity === "hour" ? "前一天" : "上期")
+    : null;
   const salesOption = useMemo(
     () => ({
-      tooltip: { trigger: "axis" as const, ...tip },
-      grid: { top: 12, right: 16, bottom: 28, left: 60 },
+      tooltip: {
+        trigger: "axis" as const,
+        ...tip,
+        formatter: (ps: { axisValue: string; seriesName: string; data: number | null; color: string }[]) => {
+          if (!ps.length) return "";
+          const row = (name: string, val: number | null | undefined, color: string) =>
+            val == null
+              ? ""
+              : `<br/><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:6px;"></span>${name}　${fmtMoney(val)}`;
+          const cur = ps.find((p) => p.seriesName === "GMV");
+          const prev = ps.find((p) => p.seriesName === (salesPrevLabel ?? "__none__"));
+          return `${cur?.axisValue ?? ""}${row("当期", cur?.data, "#6366f1")}${salesPrevLabel ? row(salesPrevLabel, prev?.data, "#a5b4fc") : ""}`;
+        },
+      },
+      legend: hasPrev
+        ? {
+            data: ["GMV", salesPrevLabel as string],
+            top: 0,
+            left: "center",
+            textStyle: { color: t.sub, fontSize: 11 },
+            itemWidth: 16,
+            itemHeight: 2,
+          }
+        : undefined,
+      grid: { top: hasPrev ? 30 : 12, right: 16, bottom: 28, left: 60 },
       xAxis: axisX(false),
       yAxis: axisY,
       series: [
@@ -1201,9 +1234,26 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
             },
           },
         },
+        // 上期对比虚线：仅 hasPrev 时出现。无面积填充（参照线不应与主体争夺视觉权重）。
+        ...(hasPrev
+          ? [
+              {
+                name: salesPrevLabel as string,
+                type: "line" as const,
+                smooth: true,
+                showSymbol: false,
+                data: prevPts.map((p) => p.gmv),
+                // 同色靛蓝浅化（indigo-300 #a5b4fc）+ dashed + 更细，明确「参照」语义。
+                lineStyle: { color: "#a5b4fc", width: 2, type: "dashed" as const },
+                itemStyle: { color: "#a5b4fc" },
+                // 隐藏悬停圆点放大（emphasis），保持参照线的安静观感。
+                emphasis: { disabled: true },
+              },
+            ]
+          : []),
       ],
     }),
-    [data, t],
+    [data, t, hasPrev, prevPts, salesPrevLabel],
   );
 
   // fork 的「流量趋势」槽位无 UV/PV 数据源 → 换成我方真实的「订单数 + 销量」双系列。

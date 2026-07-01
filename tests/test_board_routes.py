@@ -263,3 +263,111 @@ def test_collect_passes_granularity_to_trend(monkeypatch):
     # 不传 → 默认 day
     asyncio.run(board_routes._collect(BOSS, "last_30d", ""))
     assert seen["granularity"] == "day"
+
+
+def _patch_collect_deps_no_db(monkeypatch, trend_points_by_window):
+    """Mock 掉 _collect 全部连库依赖（含 _scope_options / fee_rate），让 _collect 可离线跑完。
+
+    trend_points_by_window: {(start, end): [point_dict, ...]} —— 按 (start,end) 窗口返回不同趋势点，
+    用来区分当期 vs 上期。
+    """
+    set_current_account(None)
+    monkeypatch.setattr(
+        board_routes,
+        "resolve_authorized_scope",
+        lambda perm, requested_scope_key=None, platform=None, country=None: ScopeFilters(
+            platform=None, country=None, shop_ids=["s1"], scope_key=None, display_text="全部范围",
+        ),
+    )
+
+    async def fake_get_orders_trend(**kwargs):
+        key = (kwargs.get("start_date"), kwargs.get("end_date"))
+        pts = trend_points_by_window.get(key, [])
+        gran = kwargs.get("granularity") or "day"
+        # 返回 TrendResponse-like 对象（_asdict 兼容 model_dump）；用 dataclass 复刻最小字段。
+        from dataclasses import dataclass
+
+        @dataclass
+        class _Pt:
+            date: str
+            gmv: float
+            order_count: int
+            units_sold: int
+            label: str = ""
+
+            def model_dump(self):
+                return {"date": self.date, "gmv": self.gmv, "order_count": self.order_count,
+                        "units_sold": self.units_sold, "label": self.label or None}
+
+        @dataclass
+        class _Trend:
+            points: list
+            granularity: str = "day"
+            window_label: str = ""
+
+            def model_dump(self):
+                return {"points": [p.model_dump() for p in self.points],
+                        "granularity": self.granularity,
+                        "window_label": self.window_label or None}
+
+        return _Trend([_Pt(**p) for p in pts], granularity=gran,
+                      window_label=f"{key[0]} ~ {key[1]}")
+
+    async def fake_async_empty(**kwargs):
+        return {"orders": {}, "inventory": {}, "items": [], "buckets": {}}
+
+    monkeypatch.setattr(board_routes, "get_overview", fake_async_empty)
+    monkeypatch.setattr(board_routes, "get_orders_trend", fake_get_orders_trend)
+    monkeypatch.setattr(board_routes, "get_low_stock", fake_async_empty)
+    monkeypatch.setattr(board_routes, "get_fulfillments_pending", fake_async_empty)
+    monkeypatch.setattr(board_routes, "get_top_products", lambda **k: [])
+    monkeypatch.setattr(board_routes, "get_channel_gmv_breakdown", lambda **k: {"available": False})
+    monkeypatch.setattr(board_routes, "get_profit_card", lambda **k: {"available": False})
+    monkeypatch.setattr(board_routes, "get_fee_rate_monitor", lambda **k: {"status": "insufficient", "skip_reason": "test", "trend": []})
+    monkeypatch.setattr(board_routes, "_scope_options", lambda perm: [])
+    monkeypatch.setattr(
+        board_routes, "get_gmv_summary",
+        lambda **k: {"gmv": 0, "order_count": 0, "units_sold": 0, "avg_order_value": 0},
+    )
+    monkeypatch.setattr(
+        board_routes, "get_ad_spend_summary",
+        lambda **k: {
+            "total_ad_spend": 0, "paid_ad_spend": 0, "creator_commission": 0,
+            "gmv_max_fee": 0, "tap_commission": 0, "affiliate_commission": 0,
+            "currency": "IDR", "complete": True, "settled_through": "2026-06-14",
+            "latest_covered_date": None,
+        },
+    )
+    monkeypatch.setattr(board_routes, "get_roas", lambda **k: {"roas": None})
+
+
+def test_collect_includes_prev_points_for_single_day_hour(monkeypatch):
+    """单天逐小时：_collect 在 trend 上挂 prev_points（前一天的逐小时点），granularity 同为 hour。"""
+    cur_pts = [{"date": "2026-06-09", "gmv": 10.0, "order_count": 1, "units_sold": 1, "label": "09:00"}]
+    prev_pts = [{"date": "2026-06-08", "gmv": 5.0, "order_count": 1, "units_sold": 1, "label": "09:00"}]
+    by_window = {("2026-06-09", "2026-06-09"): cur_pts, ("2026-06-08", "2026-06-08"): prev_pts}
+    _patch_collect_deps_no_db(monkeypatch, by_window)
+
+    data = asyncio.run(board_routes._collect(
+        BOSS, "today", "", "2026-06-09", "2026-06-09", None, None, "hour",
+    ))
+    # 主体趋势照常
+    assert [p["gmv"] for p in data["trend"]["points"]] == [10.0]
+    # 上期对比线：前一天、逐小时、gmv 对齐
+    assert data["trend"]["prev_points"] == [
+        {"date": "2026-06-08", "gmv": 5.0, "order_count": 1, "units_sold": 1, "label": "09:00"}
+    ]
+    assert data["trend"]["prev_window_label"]
+
+
+def test_collect_prev_points_absent_when_prev_window_empty(monkeypatch):
+    """上期窗口无数据点时 prev_points 为空列表（不缺字段、不炸），主体趋势照常展示。"""
+    cur_pts = [{"date": "2026-06-09", "gmv": 10.0, "order_count": 1, "units_sold": 1, "label": "09:00"}]
+    by_window = {("2026-06-09", "2026-06-09"): cur_pts}  # 上期窗口没 mock → 返回空
+    _patch_collect_deps_no_db(monkeypatch, by_window)
+
+    data = asyncio.run(board_routes._collect(
+        BOSS, "today", "", "2026-06-09", "2026-06-09", None, None, "hour",
+    ))
+    assert data["trend"]["points"]
+    assert data["trend"]["prev_points"] == []
