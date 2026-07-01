@@ -118,15 +118,16 @@ def build_report_card(summary: dict, analysis: str, report_url: str,
     kpi = summary.get("kpi") or {}
     low_volume = bool(summary.get("low_volume"))
 
-    # ── header：日报 wathet(浅蓝) / 周报 indigo。
-    # 日期(period_label,已含「印尼时间 6/30（周一）」)提到标题第一行，副标只留 scope，
-    # 避免第二行「scope · 长日期串」挤到截断。
+    # ── header：日报 turquoise(青绿) / 周报 indigo(靛蓝)。
+    # 日期(period_label,形如「印尼时间 6/30（周一）」)提到标题第一行，去掉「印尼时间」
+    # 前缀（时区基准全局口径不变，仅卡片标题精简）；副标只留 scope，避免第二行挤到截断。
     title = summary.get("title") or ("经营周报" if is_weekly else "经营日报")
-    template = "indigo" if is_weekly else "wathet"
+    template = "indigo" if is_weekly else "turquoise"
     period_label = summary.get("period_label")
     title_text = f"🔖 {title}"
     if period_label:
-        title_text += f" · {period_label}"
+        date_txt = period_label.replace("印尼时间 ", "").replace("印尼时间", "").strip()
+        title_text += f" · {date_txt}"
     header = {
         "template": template,
         "title": {"tag": "plain_text", "content": title_text},

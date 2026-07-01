@@ -67,7 +67,7 @@ WEEKLY_SUMMARY = {
 def test_daily_card_has_core_components():
     card = build_report_card(DAILY_SUMMARY, analysis="**今日 GMV 环比上升**，建议给爆款补货。", report_url="https://x/report?t=abc")
     assert card["schema"] == "2.0"
-    assert card["header"]["template"] == "wathet"
+    assert card["header"]["template"] == "turquoise"
     assert "经营日报" in card["header"]["title"]["content"]
     tags = _iter_tags(card["body"]["elements"])
     # 关键组件齐全：分栏 KPI、爆款/库存表格、底部按钮
