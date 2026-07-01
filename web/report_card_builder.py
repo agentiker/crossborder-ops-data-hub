@@ -292,13 +292,8 @@ def build_report_card(summary: dict, analysis: str, report_url: str,
     footer_txt = "数据来自系统真实统计"
     if ttl_text:
         footer_txt += f" · 链接 {ttl_text}内有效"
-    elements.append({
-        "tag": "note",
-        "elements": [
-            {"tag": "standard_icon", "token": "robot_outlined", "color": "grey"},
-            {"tag": "plain_text", "content": footer_txt},
-        ],
-    })
+    # v2 不支持 note 标签（200861），footer 用 markdown 灰字；图标用简洁 emoji ✨ 替代丑机器人
+    elements.append(_md(f"<font color='grey'>✨ {footer_txt}</font>"))
 
     return {
         "schema": "2.0",
