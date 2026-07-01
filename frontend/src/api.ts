@@ -158,7 +158,9 @@ export interface NewProducts {
 
 export interface LowStockItem {
   sku_id: string;
+  sku_name?: string; // SKU 变体名（颜色/尺码），缺失回退 sku_id
   product_name?: string;
+  image_url?: string | null; // 商品主图缩略图，缺图前端占位
   bucket: "stockout" | "critical" | "warning";
   available_stock: number;
   daily_velocity: number;
@@ -232,6 +234,8 @@ export interface BoardData {
   low: {
     items: LowStockItem[];
     buckets: { stockout: number; critical: number; warning: number };
+    critical_days?: number; // 告急阈值（可售天数），健康度图例/tooltip 用
+    warning_days?: number; // 偏低阈值（可售天数）
   };
   fulfillment: {
     items: PendingItem[];

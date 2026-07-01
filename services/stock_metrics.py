@@ -21,7 +21,7 @@ from typing import Optional
 from core.config import settings
 from core.db import SessionLocal
 from core.timezone import OFFSET, business_today
-from models.base_models import Inventory
+from models.base_models import Inventory, Product
 from services.order_metrics import get_units_by_sku
 
 
@@ -96,16 +96,49 @@ def get_stock_risk(
         stock = r.available_stock or 0
         entry = agg.setdefault(
             sku_id,
-            {"available": 0, "product_name": r.product_name, "top_shop": None, "top_shop_stock": -1},
+            {
+                "available": 0,
+                "product_name": r.product_name,
+                "sku_name": r.sku_name,
+                "product_id": r.product_id,
+                "top_shop": None,
+                "top_shop_stock": -1,
+            },
         )
         entry["available"] += stock
         if r.product_name and not entry["product_name"]:
             entry["product_name"] = r.product_name
+        if r.sku_name and not entry["sku_name"]:
+            entry["sku_name"] = r.sku_name
+        if r.product_id and not entry["product_id"]:
+            entry["product_id"] = r.product_id
         if stock > entry["top_shop_stock"]:
             entry["top_shop_stock"] = stock
             entry["top_shop"] = r.shop_id
         if r.synced_at is not None and (snapshot_at is None or r.synced_at > snapshot_at):
             snapshot_at = r.synced_at
+
+    # 商品主图（product 级）：收集本批 product_id 一次性批量查 Product，避免逐 SKU N+1。
+    # 带 scope 过滤锁定本店，不裸查全表（多租户安全）。
+    image_by_pid: dict[str, Optional[str]] = {}
+    product_ids = {e["product_id"] for e in agg.values() if e.get("product_id")}
+    if product_ids:
+        session = SessionLocal()
+        try:
+            pq = session.query(Product.product_id, Product.main_image_url).filter(
+                Product.product_id.in_(product_ids)
+            )
+            if platform:
+                pq = pq.filter(Product.platform == platform)
+            if country:
+                pq = pq.filter(Product.country == country)
+            if shop_ids:
+                pq = pq.filter(Product.shop_id.in_(shop_ids))
+            for pid, img in pq.all():
+                if img and not image_by_pid.get(pid):
+                    image_by_pid[pid] = img
+        finally:
+            session.close()
 
     buckets = {"stockout": 0, "critical": 0, "warning": 0, "total": 0}
     items: list[dict] = []
@@ -145,7 +178,9 @@ def get_stock_risk(
         items.append(
             {
                 "sku_id": sku_id,
+                "sku_name": entry.get("sku_name"),
                 "product_name": entry["product_name"],
+                "image_url": image_by_pid.get(entry.get("product_id")),
                 "shop_id": entry["top_shop"],
                 "available_stock": available,
                 "daily_velocity": round(daily_velocity, 2),

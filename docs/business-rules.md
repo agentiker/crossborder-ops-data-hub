@@ -161,6 +161,14 @@
 - **报告展示**（`include_all=True`，日报/周报的断货预警卡）：列**全部在库 SKU**，按可售天数升序——断货（库存 0）最前 → 告急/预警 → 充足（`ok`）→ **近期无销量（`idle`）排末尾**，`idle` 段内按库存升序（让低库存的先冒头）。可售天数对 `idle` 为 `None`（展示"—"）。
 - **不变量**：无论哪种口径，`buckets` 计数恒为真实风险桶（与告警一致），"断货风险数"KPI 不被"充足/无销量"灌水。
 
+#### 看板「库存健康」卡：健康度口径 + 商品明细（2026-07-01 优化）
+
+代码：`services/stock_metrics.py:get_stock_risk`（取数）、前端 `BoardPage.tsx:InventoryHealth`。
+
+- **健康度定义**：`健康度 = 不缺货的在售商品占比 = (总在售 SKU − 风险 SKU) / 总在售 SKU`。「风险」= 断货（库存 0）+ 告急（可售 < `critical_days`，默认 3 天）+ 偏低（可售 < `warning_days`，默认 7 天）；近期无销量（`idle`）不参与风险判断。可售天数 = 当前库存 ÷ 日均销量（见上「销速模型」）。
+- **分档变色**（前端仪表盘）：**≥85% 绿 / 60–85% 黄 / <60% 红**（阈值为默认值、可按客户观感调）。原本恒绿会误导（30% 也显绿）。仪表盘旁 InfoTooltip 用业务白话解释口径；下方图例把百分比拆成「健康 X · 风险 Y（断货/告急/偏低）· 无销量 Z」的绝对数。
+- **商品明细**：`get_stock_risk` 的 item 带 `sku_name`（`Inventory.sku_name`，变体名如「红色 / M」，缺失回退 `sku_id`）+ `image_url`（product 级主图，批量查 `Product.main_image_url`、带 scope 过滤防 N+1/跨租户）。前端明细：PC 表格 / 移动端卡片式（响应式，不横滚）、长商品名 2 行截断、前端分页（每页 20）。
+
 ### 4.5 AI 洞察
 
 代码：`web/routes/report.py` 的 `_INSIGHT_*`
@@ -304,3 +312,4 @@
 | 2026-07-01 | 展示类 GMV 统一**下单口径**(`create_time` 归日、排除 CANCELLED、含 COD 在途)对齐 TikTok 后台——COD 主导店(77%)付款口径漏算约 80%(实测日报仅后台 1/5);ROAS 分子仍付款口径(与广告结算对齐);见 §2/§2.2 | `services/order_metrics.py`(`_time_filter`/`_time_col`+各展示函数 `by_create`)、`web/routes/{data,report,board}.py` |
 | 2026-07-01 | 与后台残差 ~2.5% 对账钉死(§2.1):直打 `orders/search` vs prod 库**逐单 100% 一致**(total_count=1393、差集 0、金额不一致 0);差异纯来自「排除 CANCELLED」滞后——过去某天下单集合/金额定死不变,但 order_status 持续流转(704/1393 单变状态,UNPAID 陆续被自动取消),晚看的一方取消单更多、去 CANCELLED 后 GMV 更小;退货一单未出现且下单口径本不含退货。属实时后台 vs 定时快照的正常漂移,无需修 | 对账验证(无代码改动) |
 | 2026-07-01 | **展示 GMV 改用 `sub_total`(商品小计)+含所有状态(不排除取消)，精确对齐后台**(实测 6/29 195.8M vs 后台 196.2M、6/30 178.2M vs 178.8M，差 <0.5%)。客户「后台不减少」→反推后台口径=sub_total+含取消，我们旧口径 total_amount(偏高~4%)+排除取消(偏低)两错抵消成假 2.5%。新增正交开关 `display`(=create_time+含取消+sub_total)，仅 GMV 总额/趋势/订单数/销量用；爆款榜等口径不变靠 tooltip 标注；ROAS/利润口径不动。加 `orders.sub_total` 列(手写迁移 migrate_gmv_sub_total)+回填。见 §2/§2.1/§2.2 | `models/base_models.py`、`core/domain.py`、`platforms/tiktok_shop/normalize.py`、`services/order_store.py`、`services/order_metrics.py`(`_time_filter`/`_gmv_aggregates`/5 get_gmv_* 加 `display`)、`web/routes/{data,board,report}.py`、`scripts/migrate_gmv_sub_total.py`、`frontend/.../BoardPage.tsx` |
+| 2026-07-01 | 看板「库存健康」卡优化(§4.4)：健康度口径显式定义(=不缺货在售商品占比)+仪表盘分档变色(≥85绿/60-85黄/<60红,原恒绿误导)+口径 tooltip/图例；商品明细补 `sku_name`(变体名)+主图小图(批量查 Product 防 N+1/带 scope)、响应式(PC表格/移动卡片不横滚)、长名截断、前端分页(每页20)。无 schema 变更(Inventory.sku_name 早已建表) | `services/stock_metrics.py`、`web/routes/data.py`(`LowStockItem`)、`frontend/src/{api.ts,pages/BoardPage.tsx}`、`tests/test_stock_alerts.py` |

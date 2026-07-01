@@ -4,6 +4,7 @@ import {
   Calendar,
   Clock,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   DollarSign,
   Flame,
@@ -2258,6 +2259,8 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
   const [status, setStatus] = useState("all");
   const [sortField, setSortField] = useState<SortField>("days_of_cover");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 20;
 
   const inv = data?.overview.inventory;
   const b = data?.low.buckets;
@@ -2273,6 +2276,24 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
   const skuCount = inv?.total_sku ?? 0;
   const lowCount = inv?.low_stock_count ?? atRisk;
   const healthPct = skuCount > 0 ? Math.round(((skuCount - lowCount) / skuCount) * 100) : null;
+  const healthyCount = Math.max(skuCount - lowCount, 0);
+  // 无销量（近期不动销）= 总在售 − 有销量参与判断的（buckets.total 是有销量且落风险桶的，
+  // 但充足的有销量 SKU 不在 buckets 里）→ idle 只能粗估，图例里单独按「总 − 健康 − 风险」兜底。
+  const idleCount = Math.max(skuCount - healthyCount - atRisk, 0);
+  const criticalDays = data?.low?.critical_days ?? 3;
+  const warningDays = data?.low?.warning_days ?? 7;
+
+  // 健康度分档变色：≥85 绿 / 60–85 黄 / <60 红（阈值为默认值，可按客户观感调）。
+  const HEALTH_GOOD = 85;
+  const HEALTH_WARN = 60;
+  const healthColor =
+    healthPct == null
+      ? t.positive
+      : healthPct >= HEALTH_GOOD
+        ? t.positive
+        : healthPct >= HEALTH_WARN
+          ? t.warning
+          : t.negative;
 
   const gaugeOption = useMemo(
     () => ({
@@ -2283,7 +2304,7 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
           endAngle: -20,
           min: 0,
           max: 100,
-          progress: { show: true, width: 18, itemStyle: { color: t.positive } },
+          progress: { show: true, width: 18, itemStyle: { color: healthColor } },
           axisLine: { lineStyle: { width: 18, color: [[1, t.grid]] } },
           axisTick: { show: false },
           splitLine: { show: false },
@@ -2296,13 +2317,13 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
             fontWeight: "bold",
             offsetCenter: [0, "40%"],
             formatter: "{value}%",
-            color: t.positive,
+            color: healthColor,
           },
           data: [{ value: healthPct ?? 0, name: "库存健康度" }],
         },
       ],
     }),
-    [healthPct, t],
+    [healthPct, healthColor, t],
   );
 
   // fork 的右侧是「按品类分布」堆叠条；我方无品类维度 → 换成真实的三档风险分布环图。
@@ -2349,6 +2370,7 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
         const matchesQ =
           !q ||
           (it.product_name || "").toLowerCase().includes(q) ||
+          (it.sku_name || "").toLowerCase().includes(q) ||
           it.sku_id.toLowerCase().includes(q);
         const matchesS = status === "all" || it.bucket === status;
         return matchesQ && matchesS;
@@ -2360,10 +2382,28 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
       });
   }, [items, query, status, sortField, sortDir]);
 
+  // 前端分页：搜索/筛选/排序变化时回到第 1 页，避免停在越界的空页。
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  useEffect(() => {
+    setPage(1);
+  }, [query, status, sortField, sortDir]);
+  const safePage = Math.min(page, pageCount);
+  const paged = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
   return (
     <BoardCard>
       <CardHead
-        title="库存健康"
+        title={
+          <span className="inline-flex items-center gap-1.5">
+            库存健康
+            <InfoTooltip
+              align="start"
+              content={`健康度 = 不缺货的在售商品占比。对近期有销量的商品，按「可售天数 = 当前库存 ÷ 日均销量」判断：断货（库存 0）、告急（可售 < ${criticalDays} 天）、偏低（可售 < ${warningDays} 天）算风险，其余算健康。近期无销量的商品不参与风险判断。`}
+            >
+              <Info className="h-3.5 w-3.5 text-foreground-tertiary" />
+            </InfoTooltip>
+          </span>
+        }
         right={
           <TabPills
             tabs={[
@@ -2380,22 +2420,44 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
         loading ? (
           <ChartEmpty loading empty="" height={200} />
         ) : (
-          <div className="grid grid-cols-2 gap-4">
-            <div className="h-[200px]">
-              {healthPct == null ? (
-                <ChartEmpty loading={false} empty="暂无健康度数据" height={200} />
-              ) : (
-                <EChart option={gaugeOption} height={200} />
-              )}
+          <>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="h-[200px]">
+                {healthPct == null ? (
+                  <ChartEmpty loading={false} empty="暂无健康度数据" height={200} />
+                ) : (
+                  <EChart option={gaugeOption} height={200} />
+                )}
+              </div>
+              <div className="h-[200px]">
+                {atRisk ? (
+                  <EChart option={donutOption} height={200} />
+                ) : (
+                  <ChartEmpty loading={false} empty="暂无断货风险" height={200} />
+                )}
+              </div>
             </div>
-            <div className="h-[200px]">
-              {atRisk ? (
-                <EChart option={donutOption} height={200} />
-              ) : (
-                <ChartEmpty loading={false} empty="暂无断货风险" height={200} />
-              )}
-            </div>
-          </div>
+            {/* 口径图例：把仪表盘的百分比拆成健康/风险/无销量的绝对数，让老板一眼看懂构成。 */}
+            {skuCount > 0 && (
+              <div className="mt-1 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-foreground-secondary">
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="size-2 rounded-full" style={{ backgroundColor: t.positive }} />
+                  健康 {fmtInt(healthyCount)}
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="size-2 rounded-full" style={{ backgroundColor: t.negative }} />
+                  风险 {fmtInt(atRisk)}
+                  <span className="text-foreground-tertiary">
+                    （断货 {fmtInt(stockout)}·告急 {fmtInt(critical)}·偏低 {fmtInt(warning)}）
+                  </span>
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="size-2 rounded-full bg-fill-default" />
+                  无销量 {fmtInt(idleCount)}
+                </span>
+              </div>
+            )}
+          </>
         )
       ) : (
         <div>
@@ -2429,63 +2491,136 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
             </select>
           </div>
 
-          {/* 可排序表（照 fork：表头点击排序 + ArrowUpDown）。窄屏横滚防 6 列压扁/裁切。 */}
-          <div className="overflow-x-auto rounded-lg border border-border-shallow">
-            <table className="w-full min-w-[640px] text-sm">
-              <thead>
-                <tr className="bg-fill-shallow">
-                  <SortableTh label="商品" active={sortField === "name"} dir={sortDir} onClick={() => handleSort("name")} />
-                  <th className="px-3 py-2 text-left font-medium text-foreground-secondary">SKU</th>
-                  <SortableTh label="库存" numeric active={sortField === "available_stock"} dir={sortDir} onClick={() => handleSort("available_stock")} />
-                  <th className="px-3 py-2 text-right font-medium text-foreground-secondary">日均销量</th>
-                  <SortableTh label="可售天数" numeric active={sortField === "days_of_cover"} dir={sortDir} onClick={() => handleSort("days_of_cover")} />
-                  <th className="px-3 py-2 text-center font-medium text-foreground-secondary">状态</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-3 py-8 text-center text-foreground-secondary">
-                      暂无断货风险 SKU
-                    </td>
-                  </tr>
-                ) : (
-                  filtered.map((it) => {
-                    const badge = LOW_BADGE[it.bucket] || { label: it.bucket, cls: "bg-fill-default" };
-                    return (
-                      <tr
-                        key={it.sku_id}
-                        className="border-t border-border-shallow transition-colors hover:bg-fill-shallow"
-                      >
-                        <td className="px-3 py-2 font-medium text-foreground">
-                          {it.product_name || it.sku_id}
-                        </td>
-                        <td className="px-3 py-2 text-foreground-secondary">{it.sku_id}</td>
-                        <td className="px-3 py-2 text-right text-foreground">
-                          {fmtInt(it.available_stock)}
-                        </td>
-                        <td className="px-3 py-2 text-right text-foreground-secondary">
-                          {Number(it.daily_velocity).toFixed(1)}
-                        </td>
-                        <td className="px-3 py-2 text-right text-foreground">
-                          {Number(it.days_of_cover).toFixed(1)}
-                        </td>
-                        <td className="px-3 py-2 text-center">
+          {filtered.length === 0 ? (
+            <div className="rounded-lg border border-border-shallow px-3 py-8 text-center text-sm text-foreground-secondary">
+              暂无匹配的 SKU
+            </div>
+          ) : (
+            <>
+              {/* PC 端：可排序表（表头点击排序）。窄屏改卡片式，见下方 md:hidden。 */}
+              <div className="hidden overflow-hidden rounded-lg border border-border-shallow md:block">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-fill-shallow">
+                      <SortableTh label="商品 / SKU" active={sortField === "name"} dir={sortDir} onClick={() => handleSort("name")} />
+                      <SortableTh label="库存" numeric active={sortField === "available_stock"} dir={sortDir} onClick={() => handleSort("available_stock")} />
+                      <th className="px-3 py-2 text-right font-medium text-foreground-secondary">日均销量</th>
+                      <SortableTh label="可售天数" numeric active={sortField === "days_of_cover"} dir={sortDir} onClick={() => handleSort("days_of_cover")} />
+                      <th className="px-3 py-2 text-center font-medium text-foreground-secondary">状态</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paged.map((it) => {
+                      const badge = LOW_BADGE[it.bucket] || { label: it.bucket, cls: "bg-fill-default" };
+                      return (
+                        <tr
+                          key={it.sku_id}
+                          className="border-t border-border-shallow transition-colors hover:bg-fill-shallow"
+                        >
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-2.5">
+                              <StockThumb src={it.image_url} />
+                              <div className="min-w-0">
+                                <div
+                                  className="line-clamp-2 font-medium leading-snug text-foreground"
+                                  title={it.product_name || it.sku_id}
+                                >
+                                  {it.product_name || it.sku_id}
+                                </div>
+                                <div className="truncate text-xs text-foreground-secondary" title={it.sku_name || it.sku_id}>
+                                  {it.sku_name || it.sku_id}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-right text-foreground">{fmtInt(it.available_stock)}</td>
+                          <td className="px-3 py-2 text-right text-foreground-secondary">
+                            {Number(it.daily_velocity).toFixed(1)}
+                          </td>
+                          <td className="px-3 py-2 text-right text-foreground">{coverLabel(it.days_of_cover)}</td>
+                          <td className="px-3 py-2 text-center">
+                            <span className={"inline-flex rounded px-2 py-0.5 text-xs font-medium " + badge.cls}>
+                              {badge.label}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* 移动端：卡片式列表（不横滚），小图 + 名 + 指标堆叠。 */}
+              <div className="space-y-2 md:hidden">
+                {paged.map((it) => {
+                  const badge = LOW_BADGE[it.bucket] || { label: it.bucket, cls: "bg-fill-default" };
+                  return (
+                    <div
+                      key={it.sku_id}
+                      className="flex gap-3 rounded-lg border border-border-shallow p-3"
+                    >
+                      <StockThumb src={it.image_url} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <div
+                            className="line-clamp-2 text-sm font-medium leading-snug text-foreground"
+                            title={it.product_name || it.sku_id}
+                          >
+                            {it.product_name || it.sku_id}
+                          </div>
                           <span
-                            className={
-                              "inline-flex rounded px-2 py-0.5 text-xs font-medium " + badge.cls
-                            }
+                            className={"shrink-0 inline-flex rounded px-2 py-0.5 text-xs font-medium " + badge.cls}
                           >
                             {badge.label}
                           </span>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+                        </div>
+                        <div className="mt-0.5 truncate text-xs text-foreground-secondary" title={it.sku_name || it.sku_id}>
+                          {it.sku_name || it.sku_id}
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-foreground-secondary">
+                          <span>库存 <span className="tabnum text-foreground">{fmtInt(it.available_stock)}</span></span>
+                          <span>日均 <span className="tabnum text-foreground">{Number(it.daily_velocity).toFixed(1)}</span></span>
+                          <span>可售 <span className="tabnum text-foreground">{coverLabel(it.days_of_cover)}</span> 天</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* 分页：> 一页才显示 */}
+              {pageCount > 1 && (
+                <div className="mt-3 flex items-center justify-between gap-3 text-sm text-foreground-secondary">
+                  <span>共 {fmtInt(filtered.length)} 条</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      disabled={safePage <= 1}
+                      aria-label="上一页"
+                      className="inline-flex h-8 items-center gap-1 rounded-lg border border-border px-2.5 text-foreground transition-colors hover:bg-fill-shallow disabled:cursor-not-allowed disabled:opacity-40 [@media(pointer:coarse)]:h-11"
+                    >
+                      <ChevronLeft className="size-4" />
+                      上一页
+                    </button>
+                    <span className="tabnum">
+                      {safePage} / {pageCount}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+                      disabled={safePage >= pageCount}
+                      aria-label="下一页"
+                      className="inline-flex h-8 items-center gap-1 rounded-lg border border-border px-2.5 text-foreground transition-colors hover:bg-fill-shallow disabled:cursor-not-allowed disabled:opacity-40 [@media(pointer:coarse)]:h-11"
+                    >
+                      下一页
+                      <ChevronRight className="size-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
     </BoardCard>
@@ -2494,6 +2629,31 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
   function skuLabel(i: LowStockItem) {
     return i.product_name || i.sku_id;
   }
+}
+
+// 可售天数展示：null（近期无销量）显「—」，否则 1 位小数。
+function coverLabel(days: number | null | undefined): string {
+  if (days == null) return "—";
+  return Number(days).toFixed(1);
+}
+
+// 库存明细行小图：缺图 / 加载失败 → ShoppingBag 占位（自管失败态）。
+function StockThumb({ src }: { src?: string | null }) {
+  const [failed, setFailed] = useState(false);
+  const ok = src && !failed;
+  return ok ? (
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="size-10 shrink-0 rounded-lg object-cover ring-1 ring-border-shallow"
+    />
+  ) : (
+    <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-fill-default text-foreground-tertiary">
+      <ShoppingBag size={16} />
+    </div>
+  );
 }
 
 function SortableTh({

@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from core.db import Base
-from models.base_models import Inventory
+from models.base_models import Inventory, Product
 from services import stock_alerts, stock_metrics
 
 
@@ -96,7 +96,7 @@ def db(monkeypatch):
     return Session
 
 
-def _inv(session, sku, stock, *, shop="s1", name=None):
+def _inv(session, sku, stock, *, shop="s1", name=None, sku_name=None):
     session.add(
         Inventory(
             platform="tiktok_shop",
@@ -107,6 +107,7 @@ def _inv(session, sku, stock, *, shop="s1", name=None):
             sku_id=sku,
             product_id=f"p-{sku}",
             product_name=name or f"商品{sku}",
+            sku_name=sku_name,
             available_stock=stock,
             warehouse_id="wh",
         )
@@ -188,6 +189,34 @@ def test_get_stock_risk_aggregates_stock_across_shops(db, monkeypatch):
     assert x["available_stock"] == 9
     assert x["days_of_cover"] == 3.0  # 9/3
     assert x["bucket"] == "warning"  # 3.0 in [3,7)
+
+
+def test_get_stock_risk_includes_sku_name_and_image(db, monkeypatch):
+    """明细展示：item 带 sku_name（Inventory）+ image_url（批量查 Product 主图，缺图 None）。"""
+    session = db()
+    _inv(session, "RED", 6, name="连衣裙", sku_name="红色 / M")   # 有图
+    _inv(session, "BLUE", 6, name="连衣裙", sku_name="蓝色 / L")  # product 无主图 → None
+    # 只给 p-RED 建 Product 主图；p-BLUE 无 Product 行 → image_url 应为 None
+    session.add(
+        Product(
+            platform="tiktok_shop",
+            country="ID",
+            shop_id="s1",
+            account_id="acc",
+            idempotency_key="p-RED-key",
+            product_id="p-RED",
+            title="连衣裙",
+            main_image_url="https://cdn.example/red.jpg",
+        )
+    )
+    session.commit()
+    monkeypatch.setattr(stock_metrics, "get_units_by_sku", lambda **kw: {"RED": 21, "BLUE": 21})  # daily 3
+    out = stock_metrics.get_stock_risk(critical_days=3, warning_days=7, velocity_window_days=7)
+    by = {i["sku_id"]: i for i in out["items"]}
+    assert by["RED"]["sku_name"] == "红色 / M"
+    assert by["RED"]["image_url"] == "https://cdn.example/red.jpg"
+    assert by["BLUE"]["sku_name"] == "蓝色 / L"
+    assert by["BLUE"]["image_url"] is None
 
 
 # ── ops_low_stock 端点 smoke（不依赖真实 DB：override 鉴权 + monkeypatch 取数）──────

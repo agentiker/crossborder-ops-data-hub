@@ -407,7 +407,9 @@ class OverviewResponse(BaseModel):
 
 class LowStockItem(BaseModel):
     sku_id: str
+    sku_name: Optional[str] = None  # SKU 变体名（颜色/尺码等），缺失时前端回退 sku_id
     product_name: Optional[str] = None
+    image_url: Optional[str] = None  # 商品主图缩略图（product 级），缺图前端占位
     shop_id: Optional[str] = None
     available_stock: int
     daily_velocity: float  # 近期日均销量
