@@ -4,12 +4,18 @@
 取数 _collect 的范围夹紧逻辑已在 test_user_authz 覆盖，这里 monkeypatch 掉以隔离路由行为。
 """
 import asyncio
+import inspect
 
 import pytest
 from fastapi.testclient import TestClient
 
 from core.config import settings
 from core.tenancy import current_account, set_current_account
+from services.order_metrics import (
+    get_gmv_summary,
+    get_gmv_summary_intraday_range,
+    get_top_products,
+)
 from services.scope_resolution import ScopeError
 from services.scope_resolution import ScopeFilters
 from services.user_authz import UserPermission
@@ -17,6 +23,30 @@ from web.routes import board as board_routes
 from web import web_security
 from web.app import app
 from web.web_security import require_web_user
+
+
+def _sig_checked(real_fn, return_value, *, is_async=False):
+    """构造一个 mock，返回前先用**真实函数签名**校验 _collect 的传参。
+
+    board.py 若给服务函数传了真实签名不认的 kwarg（如漏改 order_metrics 却先加了
+    `by_create=True`），或漏了必填参数，`signature.bind()` 会抛 TypeError → 测试红。
+    这堵住了「mock 用 `lambda **k` 吞掉一切参数、签名漂移测不出、生产 500」的坑
+    （2026-07-01 评审 feat/board-ui-polish 时发现）。return_value 惰性求值支持每次新对象。
+    """
+    sig = inspect.signature(real_fn)
+
+    def _check(kwargs):
+        sig.bind(*(), **kwargs)  # 参数与真实签名不符即抛 TypeError
+        return return_value() if callable(return_value) else return_value
+
+    if is_async:
+        async def _amock(*args, **kwargs):
+            return _check(kwargs)
+        return _amock
+
+    def _mock(*args, **kwargs):
+        return _check(kwargs)
+    return _mock
 
 BOSS = UserPermission(
     open_id="ou_boss", role="boss", allowed_scope_key=None,
@@ -181,15 +211,14 @@ def test_collect_sets_current_account_before_nested_data_calls(monkeypatch):
     monkeypatch.setattr(board_routes, "get_fulfillments_pending", fake_get_fulfillments_pending)
     monkeypatch.setattr(board_routes, "get_channel_gmv_breakdown", fake_get_channel_gmv_breakdown)
     monkeypatch.setattr(board_routes, "get_profit_card", fake_get_profit_card)
+    _gmv_zero = {"gmv": 0, "order_count": 0, "units_sold": 0, "avg_order_value": 0}
     monkeypatch.setattr(
-        board_routes,
-        "get_gmv_summary",
-        lambda **kwargs: {
-            "gmv": 0,
-            "order_count": 0,
-            "units_sold": 0,
-            "avg_order_value": 0,
-        },
+        board_routes, "get_gmv_summary", _sig_checked(get_gmv_summary, lambda: dict(_gmv_zero)),
+    )
+    # last_30d 不含今日 → 走 get_gmv_summary；但含今日路径走 intraday_range，一并 mock 防打真库。
+    monkeypatch.setattr(
+        board_routes, "get_gmv_summary_intraday_range",
+        _sig_checked(get_gmv_summary_intraday_range, lambda: dict(_gmv_zero)),
     )
     monkeypatch.setattr(
         board_routes,
@@ -208,6 +237,8 @@ def test_collect_sets_current_account_before_nested_data_calls(monkeypatch):
         },
     )
     monkeypatch.setattr(board_routes, "get_roas", lambda **kwargs: {"roas": None})
+    monkeypatch.setattr(board_routes, "get_fee_rate_monitor", lambda **k: {"status": "insufficient", "skip_reason": "test", "trend": []})
+    monkeypatch.setattr(board_routes, "_scope_options", lambda perm: [])
 
     data = asyncio.run(board_routes._collect(perm, "last_30d", ""))
     assert data["scope"] == "全部范围"
@@ -239,9 +270,17 @@ def test_collect_passes_granularity_to_trend(monkeypatch):
     monkeypatch.setattr(board_routes, "get_top_products", lambda **k: [])
     monkeypatch.setattr(board_routes, "get_channel_gmv_breakdown", lambda **k: {"available": False})
     monkeypatch.setattr(board_routes, "get_profit_card", lambda **k: {"available": False})
+    monkeypatch.setattr(board_routes, "get_fee_rate_monitor", lambda **k: {"status": "insufficient", "skip_reason": "test", "trend": []})
+    monkeypatch.setattr(board_routes, "_scope_options", lambda perm: [])
     monkeypatch.setattr(
         board_routes, "get_gmv_summary",
-        lambda **k: {"gmv": 0, "order_count": 0, "units_sold": 0, "avg_order_value": 0},
+        _sig_checked(get_gmv_summary,
+                     lambda: {"gmv": 0, "order_count": 0, "units_sold": 0, "avg_order_value": 0}),
+    )
+    monkeypatch.setattr(
+        board_routes, "get_gmv_summary_intraday_range",
+        _sig_checked(get_gmv_summary_intraday_range,
+                     lambda: {"gmv": 0, "order_count": 0, "units_sold": 0, "avg_order_value": 0}),
     )
     monkeypatch.setattr(
         board_routes, "get_ad_spend_summary",
@@ -320,14 +359,21 @@ def _patch_collect_deps_no_db(monkeypatch, trend_points_by_window):
     monkeypatch.setattr(board_routes, "get_orders_trend", fake_get_orders_trend)
     monkeypatch.setattr(board_routes, "get_low_stock", fake_async_empty)
     monkeypatch.setattr(board_routes, "get_fulfillments_pending", fake_async_empty)
-    monkeypatch.setattr(board_routes, "get_top_products", lambda **k: [])
+    # order_metrics 系列用签名校验版 mock：board.py 传 by_create=True，若真实函数没这个形参即抛。
+    monkeypatch.setattr(board_routes, "get_top_products", _sig_checked(get_top_products, lambda: []))
     monkeypatch.setattr(board_routes, "get_channel_gmv_breakdown", lambda **k: {"available": False})
     monkeypatch.setattr(board_routes, "get_profit_card", lambda **k: {"available": False})
     monkeypatch.setattr(board_routes, "get_fee_rate_monitor", lambda **k: {"status": "insufficient", "skip_reason": "test", "trend": []})
     monkeypatch.setattr(board_routes, "_scope_options", lambda perm: [])
     monkeypatch.setattr(
         board_routes, "get_gmv_summary",
-        lambda **k: {"gmv": 0, "order_count": 0, "units_sold": 0, "avg_order_value": 0},
+        _sig_checked(get_gmv_summary,
+                     lambda: {"gmv": 0, "order_count": 0, "units_sold": 0, "avg_order_value": 0}),
+    )
+    monkeypatch.setattr(
+        board_routes, "get_gmv_summary_intraday_range",
+        _sig_checked(get_gmv_summary_intraday_range,
+                     lambda: {"gmv": 0, "order_count": 0, "units_sold": 0, "avg_order_value": 0}),
     )
     monkeypatch.setattr(
         board_routes, "get_ad_spend_summary",
