@@ -67,13 +67,12 @@ WEEKLY_SUMMARY = {
 def test_daily_card_has_core_components():
     card = build_report_card(DAILY_SUMMARY, analysis="**今日 GMV 环比上升**，建议给爆款补货。", report_url="https://x/report?t=abc")
     assert card["schema"] == "2.0"
-    assert card["header"]["template"] == "blue"
+    assert card["header"]["template"] == "wathet"
     assert "经营日报" in card["header"]["title"]["content"]
     tags = _iter_tags(card["body"]["elements"])
-    # 关键组件齐全：分栏 KPI、爆款表格、库存折叠面板、底部按钮
+    # 关键组件齐全：分栏 KPI、爆款/库存表格、底部按钮
     assert "column_set" in tags
-    assert "table" in tags
-    assert "collapsible_panel" in tags
+    assert tags.count("table") >= 2  # 爆款 + 库存（均顶层 table）
     assert "button" in tags
 
 
@@ -102,7 +101,7 @@ def test_low_volume_hides_change_pct_shows_baseline():
     flat = str(card)
     # 低单量：不出现环比箭头百分比，改示"基准"
     assert "基准" in flat
-    assert "↑" not in flat and "↓" not in flat
+    assert "▲" not in flat and "▼" not in flat
 
 
 def test_empty_window_weekly():

@@ -1251,10 +1251,11 @@ async def send_report_card(
     from web.feishu_card_sender import send_interactive_card, FeishuSendError
 
     account_id = current_account()
-    # 复用 get_report_link 拿 summary + 裸链（wrap_applink=False：卡片按钮用 open_url 走原始链接）
+    # 复用 get_report_link 拿 summary + applink 链接（wrap_applink=True）。
+    # 按钮 open_url 用 applink，让日报/周报都在飞书端内打开（裸链会跳浏览器，且日报/周报行为不一致）。
     link = await get_report_link(
         open_id=open_id, template_name=template_name,
-        start_date=None, end_date=None, period=period, wrap_applink=False,
+        start_date=None, end_date=None, period=period, wrap_applink=True,
     )
     if not link.summary:
         return ReportCardResponse(ok=False, error="报告摘要生成失败，未发送卡片")
