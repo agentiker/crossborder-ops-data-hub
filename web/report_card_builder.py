@@ -118,20 +118,22 @@ def build_report_card(summary: dict, analysis: str, report_url: str,
     kpi = summary.get("kpi") or {}
     low_volume = bool(summary.get("low_volume"))
 
-    # ── header：日报 wathet(浅蓝) / 周报 indigo；标题带「印尼时间」+ 短副标 ──
-    # 时区标进标题第一行括号（避免副标太长被截断）；副标只留 scope + 时间范围。
+    # ── header：日报 wathet(浅蓝) / 周报 indigo。
+    # 日期(period_label,已含「印尼时间 6/30（周一）」)提到标题第一行，副标只留 scope，
+    # 避免第二行「scope · 长日期串」挤到截断。
     title = summary.get("title") or ("经营周报" if is_weekly else "经营日报")
     template = "indigo" if is_weekly else "wathet"
+    period_label = summary.get("period_label")
+    title_text = f"🔖 {title}"
+    if period_label:
+        title_text += f" · {period_label}"
     header = {
         "template": template,
-        "title": {"tag": "plain_text", "content": f"🔖 {title}（印尼时间）"},
+        "title": {"tag": "plain_text", "content": title_text},
     }
-    subtitle_parts = [p for p in (
-        _short_scope(summary.get("scope")),
-        summary.get("period_label"),
-    ) if p]
-    if subtitle_parts:
-        header["subtitle"] = {"tag": "plain_text", "content": " · ".join(subtitle_parts)}
+    scope = _short_scope(summary.get("scope"))
+    if scope:
+        header["subtitle"] = {"tag": "plain_text", "content": scope}
 
     elements: list[dict] = []
 
