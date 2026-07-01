@@ -72,11 +72,11 @@ def _overview_window_and_gmv(
         cutoff = business_now().time()
         cur = get_gmv_summary_intraday_range(
             start_date=cur_start, end_date=cur_end, cutoff=cutoff,
-            platform=platform, country=country, shop_ids=shop_ids,
+            platform=platform, country=country, shop_ids=shop_ids, by_create=True,
         )
         prev = get_gmv_summary_intraday_range(
             start_date=prev_start, end_date=prev_end, cutoff=cutoff,
-            platform=platform, country=country, shop_ids=shop_ids,
+            platform=platform, country=country, shop_ids=shop_ids, by_create=True,
         )
         as_of_label = (
             f"数据截至 {business_now().strftime('%m-%d %H:%M')}（印尼时间）· 今日为当日累计"
@@ -84,11 +84,11 @@ def _overview_window_and_gmv(
     else:
         cur = get_gmv_summary(
             start_date=cur_start, end_date=cur_end,
-            platform=platform, country=country, shop_ids=shop_ids,
+            platform=platform, country=country, shop_ids=shop_ids, by_create=True,
         )
         prev = get_gmv_summary(
             start_date=prev_start, end_date=prev_end,
-            platform=platform, country=country, shop_ids=shop_ids,
+            platform=platform, country=country, shop_ids=shop_ids, by_create=True,
         )
         as_of_label = None
     window_meta = {
@@ -183,6 +183,7 @@ async def _collect(
     top_items = get_top_products(
         start_date=cur_start, end_date=cur_end,
         platform=platform, country=country, shop_ids=shop_id_list, limit=10,
+        by_create=True,
     )
     # 渠道 GMV 拆分（直播/视频/商品卡，实时调 TikTok analytics + 进程缓存）。沙箱店无
     # analytics 数据时内部降级返回 available=False，不抛错、不阻断看板其它块。
@@ -352,6 +353,7 @@ async def board_product_detail(
         start_date=cur_start, end_date=cur_end,
         platform=filters.platform, country=filters.country,
         shop_ids=filters.shop_ids or None,
+        by_create=True,
     )
     return JSONResponse({"channels": channels, "skus": skus})
 
@@ -390,6 +392,7 @@ async def board_new_products(
             platform=filters.platform,
             country=filters.country,
             shop_ids=filters.shop_ids or None,
+            by_create=True,
         )
         available = True
     except Exception:  # 取数异常（无 Product 表数据 / DB 抖动）→ 降级，不抛 500

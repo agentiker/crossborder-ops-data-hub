@@ -22,18 +22,18 @@
 
 ## 2. GMV 口径
 
-- **GMV = 已付款订单的买家实付总额**（`orders.total_amount` = payment.total_amount），**含运费 / 税 / 优惠，非平台结算口径**。
-- 只统计已付款（`paid_time` 非空 / 对应状态）的订单。
+- **GMV = 下单订单的买家实付总额**（`orders.total_amount` = payment.total_amount），**含运费 / 税 / 优惠，非平台结算口径**。
+- **下单口径（2026-07-01 起）**：按 `create_time` 归日、排除 `CANCELLED`，**含货到付款（COD）在途单**（下单即计入，不等付款）。与 **TikTok 后台 GMV 一致**。
+  - **为什么改**：本店（及 COD 主导店）约 **77% 是 COD 单**，下单时 `paid_time` 为空、收货才回填。旧的**付款口径**（`paid_time` 非空归日）会把当天下的 COD 单漏到几周后 → 实测日报 GMV 只有后台的 **~1/5**（6/29：付款口径 Rp37M vs 后台 Rp196M vs 下单口径 Rp195M）。老板用后台对账时严重对不上。
 - 报告里 GMV 缩写展示（`Rp xxK/M/B`）只在前端展示层，后端返回原值。
+- 代码开关：`services/order_metrics.py` 的 `_time_filter(by_create)` / `_time_col(by_create)`；展示函数（`get_gmv_summary`/`_intraday`/`_intraday_range`/`get_gmv_trend`/`get_top_skus`/`get_top_products`/`get_product_sku_breakdown`/`get_units_by_product`/`get_sell_through`/`get_new_product_*`）均带 `by_create` 参数（默认 False 向后兼容），展示端点（`data.py` overview/orders/top-skus/trend、`board.py`、`report.py` 日报周报）统一钉 `by_create=True`。
 
-### 2.1 看板「预估利润卡」GMV ≠「经营概览」GMV（口径不同，非 bug）
+### 2.1 例外：ROAS 分子 GMV 仍用付款口径
 
-代码：`services/profit_summary.py:get_profit_card` ← 预聚合表 `fact_profit_daily`（`flows/aggregate_profit` 写入）。
-
-- **经营概览 GMV**：实时直查 `orders`，**付款口径**（仅 `paid_time` 非空），完整窗口。
-- **利润卡 GMV**：读预聚合表，**下单口径**——含**货到付款（COD）在途订单**（COD 主导市场约 75% 单在送达前 `paid_time` 为空，付款口径会漏掉，故利润聚合改按下单口径，见 `services/profit_aggregation`）。
-- 两者量级本就不同，前端 GMV 行加 `<Info>` tooltip 注明「含 COD 下单口径」，避免客户误判汇率/算错。
-- **覆盖天数护栏**：利润卡读预聚合表，若 `aggregate_profit` 漏跑/未回填某天，会**静默少算**。`get_profit_card` 返回 `expected_days`（窗口应有天数）/`covered_days`（estimated 行实际覆盖的不同业务日）/`coverage_complete`；前端在 `coverage_complete=false` 时显 `TriangleAlert` + 「数据不完整：近 N 天仅 M 天已聚合」横幅，让缺失可见而非静默。**根治靠 `aggregate_profit` timer 常态跑 + 回填**（`uv run python -m flows.aggregate_profit --days 30`）。
+- **展示类 GMV 全部下单口径**（日报/周报/看板/AI 对话/爆款榜/动销率/新品），统一对齐后台，消除"我们的数和后台对不上"。
+- **例外 = ROAS 的 GMV 分子**（`services/ad_metrics.py`）：保留**付款口径**。因为分母广告消耗是**结算口径**（按结算日），分子 GMV 需与之同口径对齐；若改下单口径会把未付款 COD 在途单算进分子 → ROAS 虚高。故 ROAS 卡的 GMV 会**小于**经营概览 GMV，这是有意的、非 bug。
+- **利润卡 GMV**：读预聚合表 `fact_profit_daily`（`services/profit_summary.py:get_profit_card` ← `flows/aggregate_profit`），本就是**下单口径**（`by_create=True`，与扣点 `metric_date` 创建日同队列）。改造后与经营概览 GMV **同口径**，不再有"利润卡 GMV ≠ 概览 GMV"的困惑。
+- **覆盖天数护栏**：利润卡读预聚合表，若 `aggregate_profit` 漏跑/未回填某天，会**静默少算**。`get_profit_card` 返回 `expected_days`/`covered_days`/`coverage_complete`；前端在 `coverage_complete=false` 时显 `TriangleAlert` + 「数据不完整：近 N 天仅 M 天已聚合」横幅。**根治靠 `aggregate_profit` timer 常态跑 + 回填**（`uv run python -m flows.aggregate_profit --days 30`）。
 
 ---
 
@@ -133,7 +133,7 @@
 
 - **新品口径 = 近 N 天上线**：`Product.source_create_time` 落 `[as_of-(N-1), as_of]` 且 `status='ACTIVATE'`（在售口径，见 §3）。**N = `settings.new_product_lookback_days`（默认 60）**——看板卡、端点、爆单告警🌟标注三处共用同一配置（改一处全局一致；前端文案随端点 `window.lookback_days` 动态显示）。客户口头叫「本周新品」，但统计口径取「近一个月起、可配」，命名据实显天数。
 - **只展示已起量的**：窗口内 `total_units>0` 才进卡（测款未起量的不刷屏）；按「爆单优先 → 总销量降序」排。
-- **销量曲线**：付款口径（`paid_time` 非空）按印尼业务日（`to_business_day`）归日的每日 line_item 条数，与 `get_gmv_trend` 同口径。画布从「上线业务日」（或窗口起，取较晚者）连续补零到 as_of，诚实反映「上线即起跑」。
+- **销量曲线**：下单口径（`create_time` 归日、排除 CANCELLED，含 COD 在途，见 §2）按印尼业务日（`to_business_day`）归日的每日 line_item 条数，与 `get_gmv_trend` 同口径。画布从「上线业务日」（或窗口起，取较晚者）连续补零到 as_of，诚实反映「上线即起跑」。
 - **爆单判定**：曲线峰值单日销量 ≥ `settings.hotsell_daily_units_threshold`（默认 **50**），与飞书爆单告警**同阈同口径**。界面爆单徽章由端点确定性计算、**不依赖告警 timer**（看板打开即算）；飞书侧见 §7 规则 5 的新品标注。
 - 降级：无 `Product` 数据 / 取数异常 → 端点 `available=False`，前端显「新品数据暂不可用」，不阻断看板其它卡。
 
@@ -285,3 +285,4 @@
 | 2026-06-28 | 看板「近 30 天新品」卡：近30天上线在售品的每日销量曲线 + 单日破阈(=50,同爆单告警)界面提醒；飞书爆单告警(规则5)对新品标注 🌟，同阈不重复推送 | 本文 §4.4/§7、`services/order_metrics.py`、`services/hotsell_alerts.py`、`web/routes/board.py` |
 | 2026-06-28 | 广告口径拆分 + ROAS 只对付费投放；结算滞后护栏 complete/settled_through(ad_settle_lag_days=14)，近窗标「结算中」不显环比。真打纠偏:授权OK、付费投放真≈0(达人主导)、本周ROAS暴涨=结算滞后假象 | 本文 §6、`services/ad_metrics.py`、`web/routes/board.py`、`core/config.py` |
 | 2026-06-28 | §6.1 修正 TAP 归类:站内三项只有 GMV Max 是付费投放,TAP(TikTok Affiliate Partner 机构代管达人)+联盟均为达人 CPS 佣金→`paid_ad_spend=仅gmv_max`、`creator_commission=tap+affiliate`;ROAS 未投 GMV Max 时标「未投 GMV Max」;附站内三项本质表+站外不在结算单说明 | 本文 §6.1、`services/ad_metrics.py`、前端广告卡 |
+| 2026-07-01 | 展示类 GMV 统一**下单口径**(`create_time` 归日、排除 CANCELLED、含 COD 在途)对齐 TikTok 后台——COD 主导店(77%)付款口径漏算约 80%(实测日报仅后台 1/5);ROAS 分子仍付款口径(与广告结算对齐);见 §2/§2.1 | `services/order_metrics.py`(`_time_filter`/`_time_col`+各展示函数 `by_create`)、`web/routes/{data,report,board}.py` |

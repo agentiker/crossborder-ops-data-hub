@@ -70,6 +70,12 @@ def _time_filter(by_create: bool, start_dt: datetime, end_dt: datetime):
     ]
 
 
+def _time_col(by_create: bool):
+    """归日/归时用的时间列：下单口径取 create_time，付款口径取 paid_time。
+    与 _time_filter 配套——趋势类在 Python 端按该列 to_business_day/hour 归桶。"""
+    return OrderHeader.create_time if by_create else OrderHeader.paid_time
+
+
 def _gmv_aggregates(
     start_dt: datetime,
     end_dt: datetime,
@@ -139,10 +145,14 @@ def get_gmv_summary_intraday(
     country: Optional[str] = None,
     shop_id: Optional[str] = None,
     shop_ids: Optional[list[str]] = None,
+    by_create: bool = False,
 ) -> dict:
-    """业务日 day 从 00:00 到 cutoff 时刻的已付款 GMV 聚合（当日累计 / 同期对比用）。"""
+    """业务日 day 从 00:00 到 cutoff 时刻的 GMV 聚合（当日累计 / 同期对比用）。
+
+    by_create=True 为下单口径（create_time 落 [00:00, cutoff]，含未付款 COD 在途单、排除
+    CANCELLED），与后台/展示报表对齐；默认已付款口径。见 _time_filter。"""
     start_dt, end_dt = intraday_window_utc(day, cutoff)
-    agg = _gmv_aggregates(start_dt, end_dt, platform, country, shop_id, shop_ids)
+    agg = _gmv_aggregates(start_dt, end_dt, platform, country, shop_id, shop_ids, by_create)
     return {"start_date": day.isoformat(), "end_date": day.isoformat(),
             "cutoff": cutoff.strftime("%H:%M"), **agg}
 
@@ -156,17 +166,18 @@ def get_gmv_summary_intraday_range(
     country: Optional[str] = None,
     shop_id: Optional[str] = None,
     shop_ids: Optional[list[str]] = None,
+    by_create: bool = False,
 ) -> dict:
-    """业务日区间 [start_date 00:00 → end_date 的 cutoff 时刻] 的已付款 GMV 聚合（连续区间）。
+    """业务日区间 [start_date 00:00 → end_date 的 cutoff 时刻] 的 GMV 聚合（连续区间）。
 
     供周维度 intraday 同期对比用：本周一 00:00~今天此刻 vs 上周一 00:00~上周同一相对日此刻。
     注意是**连续区间**——中间各天整天计入，仅末日截到 cutoff；不是"逐天截至 cutoff 求和"
     （那会漏掉中间天 cutoff 之后的单）。起点取 paid_window 的当地 00:00，终点取 intraday 的
-    当地 cutoff 时点，口径与单日 intraday 完全一致。
+    当地 cutoff 时点，口径与单日 intraday 完全一致。by_create=True 为下单口径（见 _time_filter）。
     """
     start_dt, _ = paid_window_utc(start_date, start_date)
     _, end_dt = intraday_window_utc(end_date, cutoff)
-    agg = _gmv_aggregates(start_dt, end_dt, platform, country, shop_id, shop_ids)
+    agg = _gmv_aggregates(start_dt, end_dt, platform, country, shop_id, shop_ids, by_create)
     return {"start_date": start_date.isoformat(), "end_date": end_date.isoformat(),
             "cutoff": cutoff.strftime("%H:%M"), **agg}
 
@@ -180,8 +191,9 @@ def get_top_skus(
     shop_id: Optional[str] = None,
     shop_ids: Optional[list[str]] = None,
     limit: int = 10,
+    by_create: bool = False,
 ) -> list[dict]:
-    """Return top SKUs by units sold within paid orders."""
+    """Return top SKUs by units sold. by_create=True 为下单口径（见 _time_filter）。"""
     start_dt, end_dt = _paid_window(start_date, end_date)
     session = SessionLocal()
     try:
@@ -194,11 +206,7 @@ def get_top_skus(
                 func.coalesce(func.sum(OrderLineItem.sale_price), 0),
             )
             .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
-            .filter(
-                OrderHeader.paid_time.isnot(None),
-                OrderHeader.paid_time >= start_dt,
-                OrderHeader.paid_time <= end_dt,
-            )
+            .filter(*_time_filter(by_create, start_dt, end_dt))
         )
         query = _scope_filters(query, OrderHeader, platform, country, shop_id, shop_ids)
         query = (
@@ -231,8 +239,9 @@ def get_top_products(
     shop_ids: Optional[list[str]] = None,
     limit: int = 10,
     session=None,
+    by_create: bool = False,
 ) -> list[dict]:
-    """爆款「商品」榜（按 product_id 聚合，付款口径），供看板爆款卡用。
+    """爆款「商品」榜（按 product_id 聚合），供看板爆款卡用。by_create=True 为下单口径。
 
     与 get_top_skus（SKU 粒度）并列保留：客户的「爆款商品」语义是商品级，且单品渠道拆分
     （202605）也按 product_id —— 故按 product_id 聚合，一行=一个商品。
@@ -261,9 +270,7 @@ def get_top_products(
             )
             .filter(
                 OrderLineItem.product_id.isnot(None),
-                OrderHeader.paid_time.isnot(None),
-                OrderHeader.paid_time >= start_dt,
-                OrderHeader.paid_time <= end_dt,
+                *_time_filter(by_create, start_dt, end_dt),
             )
         )
         query = _scope_filters(query, OrderHeader, platform, country, shop_id, shop_ids)
@@ -300,10 +307,11 @@ def get_product_sku_breakdown(
     shop_id: Optional[str] = None,
     shop_ids: Optional[list[str]] = None,
     session=None,
+    by_create: bool = False,
 ) -> list[dict]:
-    """某商品内各 SKU 的已付款销量/GMV（商品详情弹窗「各 SKU 占比」用）。
+    """某商品内各 SKU 的销量/GMV（商品详情弹窗「各 SKU 占比」用）。by_create=True 为下单口径。
 
-    按 sku_id 聚合该 product_id 下的 line_item（付款口径，同 get_top_products），返回
+    按 sku_id 聚合该 product_id 下的 line_item（同 get_top_products 口径），返回
     [{sku_id, sku_name, seller_sku, units_sold, gmv}]，按销量降序。前端据此算占比条。
     """
     start_dt, end_dt = _paid_window(start_date, end_date)
@@ -321,9 +329,7 @@ def get_product_sku_breakdown(
             .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
             .filter(
                 OrderLineItem.product_id == product_id,
-                OrderHeader.paid_time.isnot(None),
-                OrderHeader.paid_time >= start_dt,
-                OrderHeader.paid_time <= end_dt,
+                *_time_filter(by_create, start_dt, end_dt),
             )
         )
         query = _scope_filters(query, OrderHeader, platform, country, shop_id, shop_ids)
@@ -431,11 +437,12 @@ def get_units_by_product(
     shop_id: Optional[str] = None,
     shop_ids: Optional[list[str]] = None,
     session=None,
+    by_create: bool = False,
 ) -> dict[str, dict]:
-    """窗口内各商品的已付款销量（line_item 条数），返回 {product_id: {units, product_name}}。
+    """窗口内各商品的销量（line_item 条数），返回 {product_id: {units, product_name}}。
 
-    口径同 get_units_by_sku 但按 product_id 聚合（爆单提醒用）。product_name 取该商品任一
-    line_item 的名称。无销量商品不在返回中。
+    按 product_id 聚合（爆单提醒用）。product_name 取该商品任一 line_item 的名称。无销量商品
+    不在返回中。by_create=True 为下单口径（见 _time_filter）。
     """
     start_dt, end_dt = _paid_window(start_date, end_date)
     own_session = session is None
@@ -448,11 +455,7 @@ def get_units_by_product(
                 func.max(OrderLineItem.product_name),
             )
             .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
-            .filter(
-                OrderHeader.paid_time.isnot(None),
-                OrderHeader.paid_time >= start_dt,
-                OrderHeader.paid_time <= end_dt,
-            )
+            .filter(*_time_filter(by_create, start_dt, end_dt))
         )
         query = _scope_filters(query, OrderHeader, platform, country, shop_id, shop_ids)
         query = query.group_by(OrderLineItem.product_id)
@@ -475,11 +478,13 @@ def get_gmv_trend(
     shop_id: Optional[str] = None,
     shop_ids: Optional[list[str]] = None,
     granularity: str = "day",
+    by_create: bool = False,
 ) -> list[dict]:
-    """Return a paid-order trend over [start_date, end_date].
+    """Return an order trend over [start_date, end_date].
 
-    口径与 get_gmv_summary 一致（已付款 = paid_time 非空且落在窗口内，按 paid_time 归桶；
-    GMV = total_amount 求和；销量 = 已付款订单的 line_item 条数）。
+    口径与 get_gmv_summary 一致：默认已付款（paid_time 归桶）；by_create=True 为下单口径
+    （create_time 归桶、排除 CANCELLED，含 COD 在途），GMV = total_amount 求和；销量 =
+    订单的 line_item 条数。
 
     granularity：
     - "day"（默认）：逐日点 `{date, label:None, gmv, order_count, units_sold}`，窗口内无单的日补 0。
@@ -487,7 +492,7 @@ def get_gmv_trend(
       今天只画到当前印尼小时（business_hour_now），过去某天补满 00:00–23:00 共 24 格。
 
     归桶按**印尼当地时间 UTC+7**，在 Python 端用 to_business_day / to_business_hour 完成（不在 SQL 里做
-    date(paid_time + interval)，规避 SQLite/MySQL 的方言差异）。返回连续序列，便于直接画趋势。
+    date(time + interval)，规避 SQLite/MySQL 的方言差异）。返回连续序列，便于直接画趋势。
     """
     if granularity == "hour":
         return _get_gmv_trend_hourly(
@@ -496,16 +501,16 @@ def get_gmv_trend(
             country=country,
             shop_id=shop_id,
             shop_ids=shop_ids,
+            by_create=by_create,
         )
     start_dt, end_dt = _paid_window(start_date, end_date)
+    tcol = _time_col(by_create)
     session = SessionLocal()
     try:
-        # 每笔已付款订单的 paid_time + 金额（Python 端按印尼归日聚合）
+        # 每笔订单的归日时间 + 金额（Python 端按印尼归日聚合）
         header_q = _scope_filters(
-            session.query(OrderHeader.paid_time, OrderHeader.total_amount).filter(
-                OrderHeader.paid_time.isnot(None),
-                OrderHeader.paid_time >= start_dt,
-                OrderHeader.paid_time <= end_dt,
+            session.query(tcol, OrderHeader.total_amount).filter(
+                *_time_filter(by_create, start_dt, end_dt),
             ),
             OrderHeader,
             platform,
@@ -514,20 +519,18 @@ def get_gmv_trend(
             shop_ids,
         )
         gmv_by_day: dict[date, list] = {}
-        for paid_time, amount in header_q.all():
-            d = to_business_day(paid_time)
+        for ts, amount in header_q.all():
+            d = to_business_day(ts)
             agg = gmv_by_day.setdefault(d, [0.0, 0])
             agg[0] += _to_float(amount)
             agg[1] += 1
 
-        # 每日销量 = 已付款订单下的 line_item 条数，按订单 paid_time 归日
+        # 每日销量 = 订单下的 line_item 条数，按订单归日时间归日
         line_q = _scope_filters(
-            session.query(OrderHeader.paid_time)
+            session.query(tcol)
             .join(OrderLineItem, OrderLineItem.order_id == OrderHeader.order_id)
             .filter(
-                OrderHeader.paid_time.isnot(None),
-                OrderHeader.paid_time >= start_dt,
-                OrderHeader.paid_time <= end_dt,
+                *_time_filter(by_create, start_dt, end_dt),
             ),
             OrderHeader,
             platform,
@@ -536,8 +539,8 @@ def get_gmv_trend(
             shop_ids,
         )
         units_by_day: dict[date, int] = {}
-        for (paid_time,) in line_q.all():
-            d = to_business_day(paid_time)
+        for (ts,) in line_q.all():
+            d = to_business_day(ts)
             units_by_day[d] = units_by_day.get(d, 0) + 1
 
         points: list[dict] = []
@@ -566,20 +569,21 @@ def _get_gmv_trend_hourly(
     country: Optional[str] = None,
     shop_id: Optional[str] = None,
     shop_ids: Optional[list[str]] = None,
+    by_create: bool = False,
 ) -> list[dict]:
     """单天逐小时趋势（印尼当地小时归桶）。被 get_gmv_trend(granularity="hour") 调。
 
     SQL 窗口仍取整天 [day 00:00, day 23:59:59]（印尼），归桶在 Python 端用 to_business_hour。
     补零上界：day 是今天 → 补到当前印尼小时（不画未来空格）；过去某天 → 补满 24 格。
+    by_create=True 为下单口径（create_time 归桶、排除 CANCELLED）。
     """
     start_dt, end_dt = _paid_window(day, day)
+    tcol = _time_col(by_create)
     session = SessionLocal()
     try:
         header_q = _scope_filters(
-            session.query(OrderHeader.paid_time, OrderHeader.total_amount).filter(
-                OrderHeader.paid_time.isnot(None),
-                OrderHeader.paid_time >= start_dt,
-                OrderHeader.paid_time <= end_dt,
+            session.query(tcol, OrderHeader.total_amount).filter(
+                *_time_filter(by_create, start_dt, end_dt),
             ),
             OrderHeader,
             platform,
@@ -588,19 +592,17 @@ def _get_gmv_trend_hourly(
             shop_ids,
         )
         gmv_by_hour: dict[datetime, list] = {}
-        for paid_time, amount in header_q.all():
-            h = to_business_hour(paid_time)
+        for ts, amount in header_q.all():
+            h = to_business_hour(ts)
             agg = gmv_by_hour.setdefault(h, [0.0, 0])
             agg[0] += _to_float(amount)
             agg[1] += 1
 
         line_q = _scope_filters(
-            session.query(OrderHeader.paid_time)
+            session.query(tcol)
             .join(OrderLineItem, OrderLineItem.order_id == OrderHeader.order_id)
             .filter(
-                OrderHeader.paid_time.isnot(None),
-                OrderHeader.paid_time >= start_dt,
-                OrderHeader.paid_time <= end_dt,
+                *_time_filter(by_create, start_dt, end_dt),
             ),
             OrderHeader,
             platform,
@@ -609,8 +611,8 @@ def _get_gmv_trend_hourly(
             shop_ids,
         )
         units_by_hour: dict[datetime, int] = {}
-        for (paid_time,) in line_q.all():
-            h = to_business_hour(paid_time)
+        for (ts,) in line_q.all():
+            h = to_business_hour(ts)
             units_by_hour[h] = units_by_hour.get(h, 0) + 1
 
         # 补零上界：今天只到当前小时，其它天补满 23 点。
@@ -651,13 +653,14 @@ def get_sell_through(
     country: Optional[str] = None,
     shop_id: Optional[str] = None,
     shop_ids: Optional[list[str]] = None,
+    by_create: bool = False,
 ) -> dict:
     """动销率 = 出单 SKU 数 / 在库 SKU 数（均按 distinct sku_id，分子分母口径自洽）。
 
-    分子：窗口内有已付款销量的 distinct SKU 数（OrderLineItem，口径同 get_units_by_sku）。
-    分母：当前库存快照里 distinct sku_id 数（Inventory 表按 scope 过滤）。注意分母用 distinct
-    （非 overview 的库存行数——同一 SKU 多仓会多行），保证与分子同口径、动销率不被多仓虚低。
-    cutoff 非空时分子用周维度 intraday 连续区间（与周报实时口径一致）。
+    分子：窗口内有销量的 distinct SKU 数（OrderLineItem）。分母：当前库存快照里 distinct sku_id
+    数（Inventory 表按 scope 过滤）。注意分母用 distinct（非 overview 的库存行数——同一 SKU 多仓会
+    多行），保证与分子同口径、动销率不被多仓虚低。cutoff 非空时分子用周维度 intraday 连续区间
+    （与周报实时口径一致）。by_create=True 为下单口径（见 _time_filter），与展示 GMV 同口径。
     """
     start_dt, end_dt = _window_bounds(start_date, end_date, cutoff)
     session = SessionLocal()
@@ -666,11 +669,7 @@ def get_sell_through(
         active_q = (
             session.query(func.count(func.distinct(OrderLineItem.sku_id)))
             .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
-            .filter(
-                OrderHeader.paid_time.isnot(None),
-                OrderHeader.paid_time >= start_dt,
-                OrderHeader.paid_time <= end_dt,
-            )
+            .filter(*_time_filter(by_create, start_dt, end_dt))
         )
         active_q = _scope_filters(active_q, OrderHeader, platform, country, shop_id, shop_ids)
         active_sku = int(active_q.scalar() or 0)
@@ -696,12 +695,13 @@ def get_new_product_performance(
     shop_id: Optional[str] = None,
     shop_ids: Optional[list[str]] = None,
     limit: int = 20,
+    by_create: bool = False,
 ) -> list[dict]:
     """本周上新商品（Product.source_create_time 落窗口内）的本周销量/GMV 表现。
 
     上新判定与销量统计同窗：source_create_time 落 [start, end]（按 UTC 边界过滤，±时区偏移
     误差对"本周新品"判定无碍）。新品即便零销量也列出（测款失败信号），按销量降序。
-    product↔line_item 用 product_id 关联（两表都有且带索引）。
+    product↔line_item 用 product_id 关联（两表都有且带索引）。by_create=True 为下单口径。
     """
     start_dt, end_dt = _window_bounds(start_date, end_date, cutoff)
     session = SessionLocal()
@@ -717,7 +717,7 @@ def get_new_product_performance(
         if not new_products:
             return []
 
-        # 2) 这些新品在窗口内的已付款销量/GMV（按 product_id 聚合）
+        # 2) 这些新品在窗口内的销量/GMV（按 product_id 聚合）
         sales_q = (
             session.query(
                 OrderLineItem.product_id,
@@ -726,9 +726,7 @@ def get_new_product_performance(
             )
             .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
             .filter(
-                OrderHeader.paid_time.isnot(None),
-                OrderHeader.paid_time >= start_dt,
-                OrderHeader.paid_time <= end_dt,
+                *_time_filter(by_create, start_dt, end_dt),
                 OrderLineItem.product_id.in_(list(new_products.keys())),
             )
         )
@@ -794,18 +792,20 @@ def get_new_product_trends(
     shop_id: Optional[str] = None,
     shop_ids: Optional[list[str]] = None,
     session=None,
+    by_create: bool = False,
 ) -> list[dict]:
     """看板「近 N 天新品」卡取数：近 lookback_days 天上线的在售商品，每个带每日销量曲线 + 爆单判定。
 
     - 选品：Product.status='ACTIVATE' 且 source_create_time 落 [as_of-(N-1), as_of]（在售口径）。
-    - 销量：付款口径（paid_time 非空），按印尼业务日（to_business_day）归日为每日 line_item 条数，
-      与 get_gmv_trend 同口径。曲线画布从「上线业务日」（或窗口起，取较晚者）到 as_of，前段无单补 0，
-      诚实反映「上线即起跑」。
+    - 销量：默认付款口径，by_create=True 为下单口径（create_time 归桶、排除 CANCELLED），按印尼
+      业务日（to_business_day）归日为每日 line_item 条数，与 get_gmv_trend 同口径。曲线画布从
+      「上线业务日」（或窗口起，取较晚者）到 as_of，前段无单补 0，诚实反映「上线即起跑」。
     - burst：曲线峰值单日销量 ≥ threshold（默认 50）。爆单的优先排前，其余按总销量降序。
     - 只纳入窗口内有销量（total_units>0）的新品，避免一堆 0 行刷屏（测款未起量的暂不展示）。
     """
     window_start = as_of - timedelta(days=lookback_days - 1)
     start_dt, end_dt = _paid_window(window_start, as_of)
+    tcol = _time_col(by_create)
     own_session = session is None
     session = session or SessionLocal()
     try:
@@ -829,21 +829,19 @@ def get_new_product_trends(
         if not products:
             return []
 
-        # 2) 这些新品在窗口内的已付款 line_item 明细（付款口径），Python 端归印尼业务日聚合
+        # 2) 这些新品在窗口内的 line_item 明细，Python 端归印尼业务日聚合
         rows = (
             _scope_filters(
                 session.query(
                     OrderLineItem.product_id,
-                    OrderHeader.paid_time,
+                    tcol,
                     OrderLineItem.sale_price,
                     OrderLineItem.seller_sku,
                     OrderLineItem.sku_id,
                 )
                 .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
                 .filter(
-                    OrderHeader.paid_time.isnot(None),
-                    OrderHeader.paid_time >= start_dt,
-                    OrderHeader.paid_time <= end_dt,
+                    *_time_filter(by_create, start_dt, end_dt),
                     OrderLineItem.product_id.in_(list(products.keys())),
                 ),
                 OrderHeader,
@@ -856,11 +854,11 @@ def get_new_product_trends(
 
         # per product 累加：每日销量 / 总销量 / 总 GMV / 款号 / 规格集合
         agg: dict[str, dict] = {}
-        for pid, paid_time, sale_price, seller_sku, sku_id in rows:
+        for pid, ts, sale_price, seller_sku, sku_id in rows:
             a = agg.setdefault(
                 pid, {"by_day": {}, "units": 0, "gmv": 0.0, "seller_sku": None, "skus": set()}
             )
-            d = to_business_day(paid_time)
+            d = to_business_day(ts)
             a["by_day"][d] = a["by_day"].get(d, 0) + 1
             a["units"] += 1
             a["gmv"] += _to_float(sale_price)

@@ -145,12 +145,12 @@ def _resolve_window(start_date, end_date, period, default_back_days):
 
 # ── 数据口径常量（随响应 caliber 字段下发，agent 直接复述，无需在 skill 散文里背） ──
 ORDERS_CALIBER = (
-    "已付款订单口径（paid_time 非空、排除未付款/已取消，按 paid_time 归日，印尼当地时间 UTC+7）；"
+    "下单口径（create_time 归日、排除已取消，含 COD 货到付款在途单，印尼当地时间 UTC+7，与 TikTok 后台一致）；"
     "GMV=订单 total_amount（买家实付，含运费税优惠，非平台结算）；"
     "销量=line_item 条数；客单价=GMV/订单数；来源 TikTok /order/202309/orders/search"
 )
 TOP_SKUS_CALIBER = (
-    "已付款订单口径（统计窗口按印尼当地时间 UTC+7）；单品 GMV=该 SKU 各 line_item 的 sale_price 之和"
+    "下单口径（create_time 归日、排除已取消，含 COD 在途，统计窗口按印尼当地时间 UTC+7）；单品 GMV=该 SKU 各 line_item 的 sale_price 之和"
     "（商品行售价，不含运费）；排序按销量（line_item 条数）降序"
 )
 FULFILLMENTS_CALIBER = (
@@ -662,13 +662,14 @@ async def get_overview(
     finally:
         session.close()
 
-    # 近 7 天订单（已付款口径）
+    # 近 7 天订单（下单口径 by_create：含 COD 在途单，与 TikTok 后台一致，见 business-rules §2）
     orders = get_gmv_summary(
         start_date=week_ago,
         end_date=today,
         platform=scope.platform,
         country=scope.country,
         shop_ids=scope.shop_ids,
+        by_create=True,
     )
 
     return {
@@ -700,11 +701,12 @@ async def get_orders_summary(
     shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
     open_id: Optional[str] = Query(None, description="飞书用户 open_id（ou_xxx，用于自动应用会话默认范围）"),
 ):
-    """已付款订单 GMV/订单量/销量/客单价汇总，默认最近7天（按 paid_time 归日，印尼当地时间 UTC+7）。
+    """订单 GMV/订单量/销量/客单价汇总，默认最近7天（下单口径，create_time 归日，印尼当地时间 UTC+7）。
 
     相对时间（今天/本周/近7天…）传 `period` 参数，服务端按印尼时区+周一起算，**不要自己算日期**。
-    口径（随响应 caliber 字段返回）：已付款订单（paid_time 非空、排除未付款/已取消）；
-    GMV=订单 total_amount（买家实付，非平台结算）；销量=line_item 条数；客单价=GMV/订单数。
+    口径（随响应 caliber 字段返回）：下单口径（create_time 归日、排除已取消，含 COD 货到付款在途单，
+    与 TikTok 后台 GMV 一致）；GMV=订单 total_amount（买家实付，非平台结算）；销量=line_item 条数；
+    客单价=GMV/订单数。
     """
     scope = _resolve_scope(
         scope_id=scope_id, platform=platform, country=country,
@@ -718,6 +720,7 @@ async def get_orders_summary(
         platform=scope.platform,
         country=scope.country,
         shop_ids=scope.shop_ids,
+        by_create=True,
     )
     return OrderSummary(
         **data,
@@ -821,10 +824,10 @@ async def get_orders_top_skus(
     limit: int = Query(10, description="返回数量"),
     open_id: Optional[str] = Query(None, description="飞书用户 open_id（ou_xxx，用于自动应用会话默认范围）"),
 ):
-    """已付款订单内按销量排序的单品榜，默认最近7天。
+    """订单内按销量排序的单品榜，默认最近7天（下单口径，含 COD 在途）。
 
     相对时间（今天/本周/近7天…）传 `period` 参数，服务端按印尼时区+周一起算，**不要自己算日期**。
-    口径（随响应 caliber 字段返回）：已付款订单口径；单品 GMV=该 SKU 各 line_item 的
+    口径（随响应 caliber 字段返回）：下单口径（create_time 归日、排除已取消，含 COD 在途）；单品 GMV=该 SKU 各 line_item 的
     sale_price 之和（商品行售价，不含运费）；排序按销量（line_item 条数）降序。
     """
     scope = _resolve_scope(
@@ -840,6 +843,7 @@ async def get_orders_top_skus(
         country=scope.country,
         shop_ids=scope.shop_ids,
         limit=limit,
+        by_create=True,
     )
     return TopSkuResponse(
         items=[TopSkuItem(**i) for i in items],
@@ -865,7 +869,7 @@ async def get_orders_trend(
     open_id: Optional[str] = Query(None, description="飞书用户 open_id（ou_xxx，用于自动应用会话默认范围）"),
     granularity: Optional[str] = Query("day", description="粒度：day（逐日，默认）/ hour（单天逐小时，要求 start_date==end_date；多天时静默回退 day）。逐小时点的 label 为 HH:00 展示串。"),
 ):
-    """已付款订单按天的 GMV/单量/销量趋势，默认近 7 天（窗口内无单的日期补 0）。
+    """订单按天的 GMV/单量/销量趋势，默认近 7 天（下单口径，含 COD 在途；窗口内无单的日期补 0）。
 
     相对时间（近3天/近7天/本周/本月…）传 `period` 参数，服务端按印尼时区+周一起算，**不要自己算日期**；
     店铺 GMV 趋势传 shop_id 或 scope_id/shop_ids。口径与 ops_orders_summary 一致，随响应 caliber 字段返回。
@@ -887,6 +891,7 @@ async def get_orders_trend(
         country=scope.country,
         shop_ids=scope.shop_ids,
         granularity=gran,
+        by_create=True,
     )
     return TrendResponse(
         start_date=sd.isoformat(),

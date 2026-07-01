@@ -146,11 +146,14 @@ def _dt(y, m, d):
     return datetime(y, m, d, 12, 0)
 
 
-def _order(order_id, *, total, shop):
+def _order(order_id, *, total, shop, paid=True, status="COMPLETED"):
+    """paid=False → paid_time=None（模拟 COD 未付款在途单）；status 可传 CANCELLED。"""
     return DomainOrder(
-        order_id=order_id, order_status="COMPLETED",
+        order_id=order_id, order_status=status,
         currency="IDR", total_amount=Decimal(total),
-        create_time=_dt(2026, 6, 3), paid_time=_dt(2026, 6, 3), update_time=_dt(2026, 6, 3),
+        create_time=_dt(2026, 6, 3),
+        paid_time=_dt(2026, 6, 3) if paid else None,
+        update_time=_dt(2026, 6, 3),
         line_items=(DomainOrderLineItem(line_item_id=f"l-{order_id}", sku_id="sku-A",
                                         sale_price=Decimal(total), currency="IDR"),),
     )
@@ -169,3 +172,40 @@ def test_gmv_summary_aggregates_only_listed_shops(session, monkeypatch):
     )
     assert summary["gmv"] == 300.0  # 只含 s1+s2，排除 s3
     assert summary["order_count"] == 2
+
+
+def test_display_metrics_by_create_vs_paid(session, monkeypatch):
+    """展示类函数 by_create 口径：含未付款 COD 在途单、排除 CANCELLED；付款口径仅计已付款。
+
+    覆盖 get_top_skus / get_sell_through / get_gmv_trend（均新加 by_create 参数），
+    锁定「下单口径把 COD 在途单计入、把取消单排除」不回归。
+    """
+    from datetime import time as _time
+
+    upsert_orders(session, [_order("paid1", total="50", shop="s1", paid=True)],
+                  country="ID", shop_id="s1")
+    upsert_orders(session, [_order("cod1", total="100", shop="s1", paid=False, status="IN_TRANSIT")],
+                  country="ID", shop_id="s1")
+    upsert_orders(session, [_order("cx1", total="999", shop="s1", paid=False, status="CANCELLED")],
+                  country="ID", shop_id="s1")
+    session.commit()
+    monkeypatch.setattr(order_metrics, "SessionLocal", lambda: session)
+
+    kw = dict(start_date=date(2026, 6, 1), end_date=date(2026, 6, 5), country="ID", shop_ids=["s1"])
+
+    # get_top_skus：下单口径 3 单里 paid1+cod1 计入（同 sku-A，2 条 line_item），付款口径仅 paid1
+    top_create = order_metrics.get_top_skus(**kw, by_create=True)
+    top_paid = order_metrics.get_top_skus(**kw)
+    assert top_create and top_create[0]["units_sold"] == 2  # paid1 + cod1，排除 cancelled
+    assert top_paid and top_paid[0]["units_sold"] == 1      # 仅 paid1
+
+    # get_gmv_trend：下单口径 GMV=150（50+100），付款口径 GMV=50
+    trend_create = order_metrics.get_gmv_trend(**kw, by_create=True)
+    trend_paid = order_metrics.get_gmv_trend(**kw)
+    assert sum(p["gmv"] for p in trend_create) == 150.0
+    assert sum(p["gmv"] for p in trend_paid) == 50.0
+
+    # get_sell_through：分子=出单 distinct SKU 数。下单口径含 cod1 → 有出单；两口径 sku-A 都出单，
+    # 但下单口径下即便 paid1 不存在也应因 cod1 计入（验证 by_create 生效不因未付款而漏）。
+    st_create = order_metrics.get_sell_through(**kw, by_create=True)
+    assert st_create["active_sku"] == 1  # sku-A（paid1+cod1 同 SKU）
