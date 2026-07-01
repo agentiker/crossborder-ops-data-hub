@@ -129,11 +129,12 @@ for cust in "${CUSTOMERS[@]}"; do
       continue
     fi
 
-    # 不再 --announce：卡片由 ops_report_card 工具后端直投收件人，agent 不输出文字消息
-    # （否则会多发一条"卡片已发出"文字）。--account 提供多租户上下文（openclaw 注入 x-account-id）。
+    # --no-deliver：显式关掉 openclaw 的 fallback 文字投递——卡片由 ops_report_card 工具
+    # 后端直投收件人，agent 无需再 announce 文字。不关的话 openclaw 默认 announce->last 无路由
+    # 会 fail-closed 报错（cron run 记 error，虽卡片已投成功）。--account 提供多租户上下文。
     common_args=(--name "${name}" --agent "${agent}" --account "${account}"
                  --cron "${cron_expr}" --tz "${TZ}" --exact
-                 --session isolated --message "${msg}")
+                 --session isolated --no-deliver --message "${msg}")
     [[ $DISABLED -eq 1 ]] && common_args+=(--disabled)
 
     if [[ -z "$existing" ]]; then
