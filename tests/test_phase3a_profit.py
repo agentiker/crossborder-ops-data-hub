@@ -116,6 +116,12 @@ def test_return_rate_priority(session):
 def test_compute_daily_profit(session, monkeypatch):
     import services.profit_aggregation as PA
 
+    # 钉死汇率为固定值：本测试只验聚合逻辑（去重/不双算/折算比例），不受 fact_exchange_rate
+    # 有无真实牌价行影响（hp 上跑测试时真库已有牌价，否则 0.00045 断言会挂）。
+    monkeypatch.setattr(PA, "convert_idr_to_rmb",
+                        lambda amt, on_date=None: (Decimal("0") if amt is None
+                                                   else Decimal(str(amt)) * Decimal("0.00045")))
+
     # GMV/销量 mock（get_gmv_summary 不接受 session，查真 DB，必须 mock）
     monkeypatch.setattr(PA.order_metrics, "get_gmv_summary",
                         lambda **k: {"gmv": 10000, "order_count": 3, "units_sold": 5})

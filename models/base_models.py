@@ -981,3 +981,47 @@ class AuditLog(Base):
 
     def __repr__(self):
         return f"<AuditLog(account={self.account_id}, action={self.event_action})>"
+
+
+class FactExchangeRate(Base):
+    """外汇牌价快照（数据源：中国银行外汇牌价 www.boc.cn/sourcedb/whpj）。
+
+    全局数据（非按店/租户）：一天抓多次（timer 10:33/15:33/22:33 CST）抓中行整张牌价表存
+    全币种，供利润 IDR→CNY 折算取数（services/fx_rate.get_idr_to_rmb 按业务日**对当天所有
+    样本取平均** rate_middle/unit）。抓取层不挑币种，折算层只取 IDR → 后续扩品扩国免改抓取。
+
+    一天多行（按 published_at 去重）：中行工作日日内更新频繁，唯一键含 published_at →
+    同一次发布（published_at 相同）重复抓只更新不新增，中行真更新了才多存一行。故存的是
+    「当天实际发生过的不同牌价样本」，利润折算时对当天样本取简单平均（非成交量加权，我们
+    无量数据；日粒度口径足够有代表性）。
+
+    单位口径：中行所有币种统一按 **100 外币**报价（unit 恒=100），故
+    `1 外币 → CNY = rate_middle / unit`（如 IDR 折算价 0.0379 → 1 IDR≈0.000379 CNY）。
+    rate_middle 存「中行折算价」列（中性口径，做管理会计/利润展示）；现汇/现钞买卖四价
+    一并存下备用。
+    """
+
+    __tablename__ = "fact_exchange_rate"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    metric_date = Column(Date, nullable=False, index=True)  # 牌价发布日期（非抓取日）
+    source = Column(String(32), nullable=False, default="boc", index=True)  # 数据源标记
+    currency_code = Column(String(8), nullable=False, index=True)  # ISO 币种码，如 IDR/USD/CNY
+    currency_name = Column(String(64))  # 中行中文名（印尼卢比 等），便于人工核对
+    unit = Column(Integer, nullable=False, default=100)  # 每多少外币报价（中行恒 100）
+    rate_middle = Column(Numeric(18, 6), nullable=False)  # 中行折算价（折算口径）
+    spot_buy = Column(Numeric(18, 6))  # 现汇买入价
+    cash_buy = Column(Numeric(18, 6))  # 现钞买入价
+    spot_sell = Column(Numeric(18, 6))  # 现汇卖出价
+    cash_sell = Column(Numeric(18, 6))  # 现钞卖出价
+    published_at = Column(DateTime, nullable=False)  # 中行牌价发布时间戳（唯一键一部分，去重日内重复发布）
+    raw_response_id = Column(Integer, nullable=True)  # 关联 raw_api_responses.id
+    fetched_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("source", "currency_code", "published_at",
+                         name="uq_fx_source_currency_published"),
+    )
+
+    def __repr__(self):
+        return f"<FactExchangeRate({self.currency_code} {self.published_at}: {self.rate_middle}/{self.unit})>"

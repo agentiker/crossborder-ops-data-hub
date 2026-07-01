@@ -864,7 +864,20 @@ function ProfitCard({
 
   const body = (
     <>
-      <CardHead title="预估利润（折 CNY）" as={bare ? "h3" : "h2"} />
+      <CardHead
+        title={
+          <span className="inline-flex items-center gap-1.5">
+            预估利润（折 CNY）
+            <InfoTooltip
+              align="start"
+              content="利润把印尼盾（IDR）金额折算成人民币展示。汇率取自「中国银行外汇牌价」的中行折算价，按业务日、日内多次采样取均值。2026年7月2日起用中行真实牌价折算；此前的历史数据用固定近似汇率，口径略有差异。"
+            >
+              <Info className="h-3.5 w-3.5 text-foreground-tertiary" />
+            </InfoTooltip>
+          </span>
+        }
+        as={bare ? "h3" : "h2"}
+      />
       {loading || empty ? (
         <ChartEmpty loading={loading} empty={empty} height={200} />
       ) : (

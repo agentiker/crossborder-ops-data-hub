@@ -1,0 +1,7 @@
+[Unit]
+Description=每工作日同步中行外汇牌价（10:33/15:33/22:33 CST，日内多次采样取均值）
+[Timer]
+OnCalendar=Mon-Fri *-*-* 10,15,22:33:00
+Persistent=true
+[Install]
+WantedBy=timers.target
