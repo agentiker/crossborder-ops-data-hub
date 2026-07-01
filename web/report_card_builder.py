@@ -118,18 +118,18 @@ def build_report_card(summary: dict, analysis: str, report_url: str,
     kpi = summary.get("kpi") or {}
     low_volume = bool(summary.get("low_volume"))
 
-    # ── header：日报 wathet(浅蓝) / 周报 indigo；标题精简 + 范围副标(TK Shop) ──
+    # ── header：日报 wathet(浅蓝) / 周报 indigo；标题带「印尼时间」+ 短副标 ──
+    # 时区标进标题第一行括号（避免副标太长被截断）；副标只留 scope + 时间范围。
     title = summary.get("title") or ("经营周报" if is_weekly else "经营日报")
     template = "indigo" if is_weekly else "wathet"
-    emoji = "🗓️" if is_weekly else "☀️"
-    subtitle_parts = [p for p in (
-        _short_scope(summary.get("scope")),
-        summary.get("cutoff_label") or summary.get("period_label"),
-    ) if p]
     header = {
         "template": template,
-        "title": {"tag": "plain_text", "content": f"{emoji} {title}"},
+        "title": {"tag": "plain_text", "content": f"🔖 {title}（印尼时间）"},
     }
+    subtitle_parts = [p for p in (
+        _short_scope(summary.get("scope")),
+        summary.get("period_label"),
+    ) if p]
     if subtitle_parts:
         header["subtitle"] = {"tag": "plain_text", "content": " · ".join(subtitle_parts)}
 
@@ -178,9 +178,7 @@ def build_report_card(summary: dict, analysis: str, report_url: str,
             elements.append(_md("**🔥 爆款商品 Top**"))
             rows = []
             for i, t in enumerate(top_skus[:5], 1):
-                name = t.get("name") or "?"
-                if len(name) > 14:
-                    name = name[:14] + "…"
+                name = t.get("name") or "?"  # 全名不截断，飞书点击单元格可查看完整
                 share = t.get("share")
                 rows.append({
                     "name": f"{i}. {name}",
@@ -252,9 +250,7 @@ def build_report_card(summary: dict, analysis: str, report_url: str,
             elements.append(_md(head))
             rows = []
             for x in show:
-                name = x.get("name") or "?"
-                if len(name) > 14:
-                    name = name[:14] + "…"
+                name = x.get("name") or "?"  # 全名不截断，飞书点击可查看完整
                 days = x.get("days")
                 days_str = f"{days:.1f}" if days is not None else "—"
                 level = x.get("level_label") or ""
@@ -292,8 +288,7 @@ def build_report_card(summary: dict, analysis: str, report_url: str,
     footer_txt = "数据来自系统真实统计"
     if ttl_text:
         footer_txt += f" · 链接 {ttl_text}内有效"
-    # v2 不支持 note 标签（200861），footer 用 markdown 灰字；图标用简洁 emoji ✨ 替代丑机器人
-    elements.append(_md(f"<font color='grey'>✨ {footer_txt}</font>"))
+    elements.append(_md(f"<font color='grey'>🚀 {footer_txt}</font>"))
 
     return {
         "schema": "2.0",
