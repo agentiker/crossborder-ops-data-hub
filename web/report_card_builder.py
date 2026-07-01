@@ -159,20 +159,18 @@ def build_report_card(summary: dict, analysis: str, report_url: str,
             rows = []
             for i, t in enumerate(top_skus[:5], 1):
                 name = t.get("name") or "?"
-                # 商品名截断，避免撑爆表格列
-                if len(name) > 16:
-                    name = name[:16] + "…"
+                # 商品名截断，避免撑爆表格列；序号并进商品名（少一列，窄屏更稳）
+                if len(name) > 14:
+                    name = name[:14] + "…"
                 share = t.get("share")
                 rows.append({
-                    "rank": str(i),
-                    "name": name,
+                    "name": f"{i}. {name}",
                     "units": _int(t.get("units")),
                     "gmv": _money(t.get("gmv")),
                     "share": f"{share:.1f}%" if share is not None else "—",
                 })
             elements.append(_table(
                 [
-                    {"name": "rank", "display_name": "#", "data_type": "text", "width": "40px"},
                     {"name": "name", "display_name": "商品", "data_type": "text"},
                     {"name": "units", "display_name": "销量", "data_type": "text"},
                     {"name": "gmv", "display_name": "GMV", "data_type": "text"},
