@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _STATE_TTL = 600  # state 有效期 10 分钟，够走完授权
-_HOME = "/board"
+_HOME = "/app"
 
 # 登录后回跳白名单：仅允许站内 /report、/board、/app 路径，防开放重定向。
 _SAFE_NEXT_RE = re.compile(r"^/(report|board|app)(/|$|\?)")

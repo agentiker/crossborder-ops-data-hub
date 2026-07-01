@@ -74,7 +74,7 @@ def _clear_overrides():
 
 def test_no_cookie_redirects_to_login():
     client = TestClient(app, follow_redirects=False)
-    r = client.get("/board")
+    r = client.get("/board/data")
     assert r.status_code == 302
     assert "/board/auth/feishu/login" in r.headers["location"]
 
@@ -85,7 +85,7 @@ def test_logged_in_pending_403_friendly(monkeypatch):
     monkeypatch.setattr(web_security, "get_user_permission", lambda oid, **k: None)
     monkeypatch.setattr(web_security, "get_registration_status", lambda oid, **k: "pending")
     client = TestClient(app, follow_redirects=False)
-    r = client.get("/board", cookies={settings.feishu_oauth.cookie_name: "whatever"})
+    r = client.get("/board/data", cookies={settings.feishu_oauth.cookie_name: "whatever"})
     assert r.status_code == 403
     assert "等待管理员开通" in r.text  # 待审批友好文案
     assert "ou_unknown" not in r.text  # 不再回显 open_id
@@ -98,33 +98,9 @@ def test_logged_in_unregistered_403_generic(monkeypatch):
     monkeypatch.setattr(web_security, "get_user_permission", lambda oid, **k: None)
     monkeypatch.setattr(web_security, "get_registration_status", lambda oid, **k: "none")
     client = TestClient(app, follow_redirects=False)
-    r = client.get("/board", cookies={settings.feishu_oauth.cookie_name: "whatever"})
+    r = client.get("/board/data", cookies={settings.feishu_oauth.cookie_name: "whatever"})
     assert r.status_code == 403
     assert "暂无看板权限" in r.text
-
-
-def test_boss_renders_200(monkeypatch):
-    app.dependency_overrides[require_web_user] = lambda: BOSS
-
-    async def fake_collect(perm, period, scope, *args, **kwargs):
-        return _FAKE_PAYLOAD
-
-    monkeypatch.setattr("web.routes.board._collect", fake_collect)
-    r = TestClient(app).get("/board")
-    assert r.status_code == 200
-    assert "运营看板" in r.text
-
-
-def test_operator_out_of_scope_html_403(monkeypatch):
-    app.dependency_overrides[require_web_user] = lambda: OPER
-
-    async def boom(perm, period, scope, *args, **kwargs):
-        raise ScopeError("指定店铺不在 scope 范围内")
-
-    monkeypatch.setattr("web.routes.board._collect", boom)
-    r = TestClient(app).get("/board?scope=other-scope")
-    assert r.status_code == 403
-    assert "超出你的权限范围" in r.text
 
 
 def test_operator_out_of_scope_data_403_json(monkeypatch):
