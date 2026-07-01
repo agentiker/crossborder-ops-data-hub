@@ -2527,12 +2527,10 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
                             <div className="flex items-center gap-2.5">
                               <StockThumb src={it.image_url} />
                               <div className="min-w-0">
-                                <div
-                                  className="truncate font-medium leading-snug text-foreground"
-                                  title={it.product_name || it.sku_id}
-                                >
-                                  {it.product_name || it.sku_id}
-                                </div>
+                                <TruncatedName
+                                  text={it.product_name || it.sku_id}
+                                  className="font-medium leading-snug text-foreground"
+                                />
                                 <div className="truncate text-xs text-foreground-secondary" title={it.sku_name || it.sku_id}>
                                   {it.sku_name || it.sku_id}
                                 </div>
@@ -2568,12 +2566,10 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
                       <StockThumb src={it.image_url} />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-2">
-                          <div
-                            className="min-w-0 flex-1 truncate text-sm font-medium leading-snug text-foreground"
-                            title={it.product_name || it.sku_id}
-                          >
-                            {it.product_name || it.sku_id}
-                          </div>
+                          <TruncatedName
+                            text={it.product_name || it.sku_id}
+                            className="text-sm font-medium leading-snug text-foreground"
+                          />
                           <span
                             className={"shrink-0 inline-flex rounded px-2 py-0.5 text-xs font-medium " + badge.cls}
                           >
@@ -2641,6 +2637,27 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
 function coverLabel(days: number | null | undefined): string {
   if (days == null) return "—";
   return Number(days).toFixed(1);
+}
+
+// 商品名截断：默认只显前 max 个字符 + 省略号；超长时用 InfoTooltip（hover / 触屏点击，
+// 气泡默认在文字上方）预览全称。不超长则纯文本、无浮层开销。
+function TruncatedName({
+  text,
+  max = 10,
+  className,
+}: {
+  text: string;
+  max?: number;
+  className?: string;
+}) {
+  const over = text.length > max;
+  if (!over) return <span className={className}>{text}</span>;
+  const short = text.slice(0, max) + "…";
+  return (
+    <InfoTooltip content={text} side="top" align="start" triggerClassName={className}>
+      <span className="cursor-default">{short}</span>
+    </InfoTooltip>
+  );
 }
 
 // 库存明细行小图：缺图 / 加载失败 → ShoppingBag 占位（自管失败态）。

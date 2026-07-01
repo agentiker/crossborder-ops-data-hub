@@ -21,6 +21,7 @@ export function InfoTooltip({
   className,
   side = "top",
   align = "center",
+  triggerClassName,
 }: {
   content: React.ReactNode;
   children: React.ReactNode;
@@ -28,6 +29,8 @@ export function InfoTooltip({
   side?: "top" | "bottom";
   // 水平对齐初始偏好：center 居中（默认）/ start 左缘贴触发点 / end 右缘贴触发点；越界自动夹紧。
   align?: "center" | "start" | "end";
+  // 触发元素（button）的样式覆盖：默认是图标灰字热区；文字触发（如截断商品名）可传入正常文字样式。
+  triggerClassName?: string;
 }) {
   const [open, setOpen] = React.useState(false);
   const [pos, setPos] = React.useState<{ top: number; left: number } | null>(null);
@@ -96,7 +99,10 @@ export function InfoTooltip({
         type="button"
         aria-label="说明"
         // -m-1 p-1：放大触控热区（移动端老板手指点得到）而不撑动行内排版。
-        className="-m-1 inline-flex items-center p-1 text-foreground-secondary transition-colors hover:text-foreground focus:outline-none"
+        className={cn(
+          "-m-1 inline-flex items-center p-1 text-foreground-secondary transition-colors hover:text-foreground focus:outline-none",
+          triggerClassName,
+        )}
         onClick={(e) => {
           e.stopPropagation();
           setOpen((v) => !v);
