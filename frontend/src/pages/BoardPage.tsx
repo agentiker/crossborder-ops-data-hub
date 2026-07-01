@@ -1174,14 +1174,29 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
 
   // fork 的「销售趋势」：GMV 平滑面积折线。配色照搬 fork StoreClaw 的靛蓝 #6366f1
   // （用户拍板：此处不走品牌墨绿，1:1 复刻 fork 的鲜亮彩色面积效果）。
-  // 上期对比虚线：单天=前一天逐小时、多天=等长上一期逐日，按索引与当期 x 轴对齐（等长窗口）。
-  //   - 仅当 prevPts 存在且长度与当期一致时画，避免错位；
-  //   - 同色（靛蓝）浅化 + dashed，视觉上明确是「参照」而非主体；
-  //   - tooltip 同时列出当期/上期 GMV，便于逐点对比。
-  const hasPrev = prevPts.length > 0 && prevPts.length === pts.length;
-  const salesPrevLabel = hasPrev
-    ? (data?.trend.granularity === "hour" ? "前一天" : "上期")
-    : null;
+  // 上期对比虚线：单天=前一天逐小时、多天=等长上一期逐日。对齐口径按粒度分两种：
+  //   - 逐小时（单天）：按 label（HH:00）对齐。今天只到当前小时（如 17 点→0~16 点），
+  //     前一天却是整天 24 点，长度必然不等——旧的「长度相等才画」会导致「看当天永远不显示
+  //     对比线」（2026-07-01 真机发现的 bug）。改为按当期每个小时去前一天取同一小时的值，
+  //     对齐成与当期等长的数组（前一天缺该小时则 null，不画未来时段），语义=当天累计 vs
+  //     昨天同一时段，与日报 intraday 环比同口径。
+  //   - 逐日（多天）：上期是「等长上一期」，其 date 与当期不同、无法按 label 配对，仍按索引
+  //     位置对齐（第 i 天 vs 上期第 i 天），要求等长；不等长（异常）则不画。
+  const isHourly = data?.trend.granularity === "hour";
+  const prevAligned: (number | null)[] = isHourly
+    ? (() => {
+        const byLabel = new Map(prevPts.map((p) => [p.label ?? p.date.slice(5), p.gmv]));
+        return pts.map((p) => {
+          const v = byLabel.get(p.label ?? p.date.slice(5));
+          return v == null ? null : v;
+        });
+      })()
+    : prevPts.length === pts.length
+      ? prevPts.map((p) => p.gmv)
+      : [];
+  // 至少有一个对齐上的点才画对比线（逐小时按 label 交集、逐日按等长索引）。
+  const hasPrev = prevAligned.some((v) => v != null);
+  const salesPrevLabel = hasPrev ? (isHourly ? "前一天" : "上期") : null;
   const salesOption = useMemo(
     () => ({
       tooltip: {
@@ -1242,7 +1257,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
                 type: "line" as const,
                 smooth: true,
                 showSymbol: false,
-                data: prevPts.map((p) => p.gmv),
+                data: prevAligned,
                 // 同色靛蓝浅化（indigo-300 #a5b4fc）+ dashed + 更细，明确「参照」语义。
                 lineStyle: { color: "#a5b4fc", width: 2, type: "dashed" as const },
                 itemStyle: { color: "#a5b4fc" },
@@ -1253,7 +1268,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           : []),
       ],
     }),
-    [data, t, hasPrev, prevPts, salesPrevLabel],
+    [data, t, hasPrev, prevAligned, salesPrevLabel],
   );
 
   // fork 的「流量趋势」槽位无 UV/PV 数据源 → 换成我方真实的「订单数 + 销量」双系列。
