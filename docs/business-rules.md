@@ -28,7 +28,17 @@
 - 报告里 GMV 缩写展示（`Rp xxK/M/B`）只在前端展示层，后端返回原值。
 - 代码开关：`services/order_metrics.py` 的 `_time_filter(by_create)` / `_time_col(by_create)`；展示函数（`get_gmv_summary`/`_intraday`/`_intraday_range`/`get_gmv_trend`/`get_top_skus`/`get_top_products`/`get_product_sku_breakdown`/`get_units_by_product`/`get_sell_through`/`get_new_product_*`）均带 `by_create` 参数（默认 False 向后兼容），展示端点（`data.py` overview/orders/top-skus/trend、`board.py`、`report.py` 日报周报）统一钉 `by_create=True`。
 
-### 2.1 例外：ROAS 分子 GMV 仍用付款口径
+### 2.1 「过去某天的 GMV 为什么还在变」= 取消/退货滞后，非数据丢失（2026-07-01 对账钉死）
+
+老板疑问：6/29、6/30 都过去了，数据不该定死吗？为什么和后台还差 ~2.5%？**逐单核对结论：下单集合和金额早已定死，变的是订单状态。**
+
+- **定死的**：`create_time` 是历史事实，6/30 就下了 **1393 单、总额 Rp 185.62M**，这个「含所有状态」的 GMV 今天打、下周打都一样。直打 `orders/search`（`create_time` 窗口）与 prod 库**逐单、逐分钱、逐状态 100% 一致**（`total_count=1393` 相等、差集 0 单、金额不一致 0 单）——数据同步零丢失。
+- **在变的**：这 1393 单里 **704 单的 `order_status` 在几天内流转了**——`AWAITING_COLLECTION→IN_TRANSIT`(618)、`→DELIVERED`(46)、`UNPAID→CANCELLED`(30，未付款单挂到期被平台自动取消)、`→CANCELLED`(6)。包裹要几天才送达、未付款单要挂几天才被系统取消、退货更晚才发生——这些后续变化改的是**那张老单子的 status 字段**，不是新增当天的单。
+- **2.5% 差异的唯一来源 = 「排除 CANCELLED」这个动作有滞后**：老板截图后台那一刻 6/30 只有 63 单取消，我们两天后再看已 99 单取消（多的 36 单 ≈ Rp 4.5M 是 UNPAID 挂到期自动取消的）。**谁看得晚，取消单越多，去 CANCELLED 后的 GMV 越小**。不是我们少算，是我们比后台晚看两天、期间又取消了 36 单。
+- **退货同理但更晚**：`RETURN`/`REFUND` 是收货后才发生，近两日订单刚开始流转到 `DELIVERED`，**退货状态一单都还没出现**；且后台下单口径 GMV 本就不含退货（退货体现在结算/利润，不在 GMV）。故退货不是 2.5% 的原因。
+- **可接受性**：这是任何「实时后台 vs 定时同步快照」都必然存在的漂移，属正常对账噪声，无需修。若要两边严格相等，只能同一时刻各拉一次——无意义。**含所有状态的下单 GMV 才是稳定可复现的锚**（185.62M）；去 CANCELLED 后的数会随时间缓慢下探。
+
+### 2.2 例外：ROAS 分子 GMV 仍用付款口径
 
 - **展示类 GMV 全部下单口径**（日报/周报/看板/AI 对话/爆款榜/动销率/新品），统一对齐后台，消除"我们的数和后台对不上"。
 - **例外 = ROAS 的 GMV 分子**（`services/ad_metrics.py`）：保留**付款口径**。因为分母广告消耗是**结算口径**（按结算日），分子 GMV 需与之同口径对齐；若改下单口径会把未付款 COD 在途单算进分子 → ROAS 虚高。故 ROAS 卡的 GMV 会**小于**经营概览 GMV，这是有意的、非 bug。
@@ -285,4 +295,5 @@
 | 2026-06-28 | 看板「近 30 天新品」卡：近30天上线在售品的每日销量曲线 + 单日破阈(=50,同爆单告警)界面提醒；飞书爆单告警(规则5)对新品标注 🌟，同阈不重复推送 | 本文 §4.4/§7、`services/order_metrics.py`、`services/hotsell_alerts.py`、`web/routes/board.py` |
 | 2026-06-28 | 广告口径拆分 + ROAS 只对付费投放；结算滞后护栏 complete/settled_through(ad_settle_lag_days=14)，近窗标「结算中」不显环比。真打纠偏:授权OK、付费投放真≈0(达人主导)、本周ROAS暴涨=结算滞后假象 | 本文 §6、`services/ad_metrics.py`、`web/routes/board.py`、`core/config.py` |
 | 2026-06-28 | §6.1 修正 TAP 归类:站内三项只有 GMV Max 是付费投放,TAP(TikTok Affiliate Partner 机构代管达人)+联盟均为达人 CPS 佣金→`paid_ad_spend=仅gmv_max`、`creator_commission=tap+affiliate`;ROAS 未投 GMV Max 时标「未投 GMV Max」;附站内三项本质表+站外不在结算单说明 | 本文 §6.1、`services/ad_metrics.py`、前端广告卡 |
-| 2026-07-01 | 展示类 GMV 统一**下单口径**(`create_time` 归日、排除 CANCELLED、含 COD 在途)对齐 TikTok 后台——COD 主导店(77%)付款口径漏算约 80%(实测日报仅后台 1/5);ROAS 分子仍付款口径(与广告结算对齐);见 §2/§2.1 | `services/order_metrics.py`(`_time_filter`/`_time_col`+各展示函数 `by_create`)、`web/routes/{data,report,board}.py` |
+| 2026-07-01 | 展示类 GMV 统一**下单口径**(`create_time` 归日、排除 CANCELLED、含 COD 在途)对齐 TikTok 后台——COD 主导店(77%)付款口径漏算约 80%(实测日报仅后台 1/5);ROAS 分子仍付款口径(与广告结算对齐);见 §2/§2.2 | `services/order_metrics.py`(`_time_filter`/`_time_col`+各展示函数 `by_create`)、`web/routes/{data,report,board}.py` |
+| 2026-07-01 | 与后台残差 ~2.5% 对账钉死(§2.1):直打 `orders/search` vs prod 库**逐单 100% 一致**(total_count=1393、差集 0、金额不一致 0);差异纯来自「排除 CANCELLED」滞后——过去某天下单集合/金额定死不变,但 order_status 持续流转(704/1393 单变状态,UNPAID 陆续被自动取消),晚看的一方取消单更多、去 CANCELLED 后 GMV 更小;退货一单未出现且下单口径本不含退货。属实时后台 vs 定时快照的正常漂移,无需修 | 对账验证(无代码改动) |
