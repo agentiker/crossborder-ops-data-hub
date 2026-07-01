@@ -81,6 +81,8 @@ def test_no_cookie_redirects_to_login():
 
 def test_logged_in_pending_403_friendly(monkeypatch):
     # cookie 验签通过但权限为 None，且登记状态=pending → 友好"申请已提交"页（不回显 open_id）
+    # host_account 固定为 ecom-app 与 mock 的 cookie 租户一致，避免跨租户防串 302（prod 默认租户是 gtl）。
+    monkeypatch.setattr(web_security, "account_from_request", lambda req: "ecom-app")
     monkeypatch.setattr(web_security, "verify_session_cookie", lambda raw: ("ou_unknown", "ecom-app"))
     monkeypatch.setattr(web_security, "get_user_permission", lambda oid, **k: None)
     monkeypatch.setattr(web_security, "get_registration_status", lambda oid, **k: "pending")
@@ -95,6 +97,7 @@ def test_logged_in_pending_403_friendly(monkeypatch):
 
 def test_logged_in_unregistered_403_generic(monkeypatch):
     # 无登记记录（none）/ 已停用 → 通用"未获授权"页，仍 403 fail closed
+    monkeypatch.setattr(web_security, "account_from_request", lambda req: "ecom-app")
     monkeypatch.setattr(web_security, "verify_session_cookie", lambda raw: ("ou_unknown", "ecom-app"))
     monkeypatch.setattr(web_security, "get_user_permission", lambda oid, **k: None)
     monkeypatch.setattr(web_security, "get_registration_status", lambda oid, **k: "none")
