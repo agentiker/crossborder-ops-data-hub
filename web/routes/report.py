@@ -135,9 +135,9 @@ async def _collect(open_id: str, start_date, end_date, period) -> dict:
         now = business_now()
         cutoff = now.time()
         _sc = dict(platform=scope.platform, country=scope.country, shop_ids=scope.shop_ids)
-        orders_cur = get_gmv_summary_intraday(day=ed, cutoff=cutoff, by_create=True, **_sc)
+        orders_cur = get_gmv_summary_intraday(day=ed, cutoff=cutoff, display=True, **_sc)
         # 基准 = 近 7 天每天截至同一时刻的均值（摊平昨日爆单等单日异常，比单看昨天稳）
-        base_days = [get_gmv_summary_intraday(day=ed - timedelta(days=i), cutoff=cutoff, by_create=True, **_sc)
+        base_days = [get_gmv_summary_intraday(day=ed - timedelta(days=i), cutoff=cutoff, display=True, **_sc)
                      for i in range(1, 8)]
         n = len(base_days) or 1
         orders_prev = {
@@ -360,14 +360,14 @@ async def _collect_weekly(open_id: str, period) -> dict:
 
     # GMV / 订单 / 客单价（当期 + 上期）。intraday 用连续区间截至此刻，否则整天对整天。
     if intraday:
-        cur = get_gmv_summary_intraday_range(start_date=cur_sd, end_date=cur_ed, cutoff=cutoff, by_create=True, **_sc)
-        prev = get_gmv_summary_intraday_range(start_date=prev_sd, end_date=prev_ed, cutoff=cutoff, by_create=True, **_sc)
+        cur = get_gmv_summary_intraday_range(start_date=cur_sd, end_date=cur_ed, cutoff=cutoff, display=True, **_sc)
+        prev = get_gmv_summary_intraday_range(start_date=prev_sd, end_date=prev_ed, cutoff=cutoff, display=True, **_sc)
         change_label = "较上周同期"
         cutoff_label = ("数据截至 " + business_now().strftime("%m-%d %H:%M")
                         + "（印尼时间）· 本周累计 vs 上周同期")
     else:
-        cur = get_gmv_summary(start_date=cur_sd, end_date=cur_ed, by_create=True, **_sc)
-        prev = get_gmv_summary(start_date=prev_sd, end_date=prev_ed, by_create=True, **_sc)
+        cur = get_gmv_summary(start_date=cur_sd, end_date=cur_ed, display=True, **_sc)
+        prev = get_gmv_summary(start_date=prev_sd, end_date=prev_ed, display=True, **_sc)
         change_label = "较上周"
         cutoff_label = None
 

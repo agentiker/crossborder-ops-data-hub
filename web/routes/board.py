@@ -72,11 +72,11 @@ def _overview_window_and_gmv(
         cutoff = business_now().time()
         cur = get_gmv_summary_intraday_range(
             start_date=cur_start, end_date=cur_end, cutoff=cutoff,
-            platform=platform, country=country, shop_ids=shop_ids, by_create=True,
+            platform=platform, country=country, shop_ids=shop_ids, display=True,
         )
         prev = get_gmv_summary_intraday_range(
             start_date=prev_start, end_date=prev_end, cutoff=cutoff,
-            platform=platform, country=country, shop_ids=shop_ids, by_create=True,
+            platform=platform, country=country, shop_ids=shop_ids, display=True,
         )
         as_of_label = (
             f"数据截至 {business_now().strftime('%m-%d %H:%M')}（印尼时间）· 今日为当日累计"
@@ -84,11 +84,11 @@ def _overview_window_and_gmv(
     else:
         cur = get_gmv_summary(
             start_date=cur_start, end_date=cur_end,
-            platform=platform, country=country, shop_ids=shop_ids, by_create=True,
+            platform=platform, country=country, shop_ids=shop_ids, display=True,
         )
         prev = get_gmv_summary(
             start_date=prev_start, end_date=prev_end,
-            platform=platform, country=country, shop_ids=shop_ids, by_create=True,
+            platform=platform, country=country, shop_ids=shop_ids, display=True,
         )
         as_of_label = None
     window_meta = {

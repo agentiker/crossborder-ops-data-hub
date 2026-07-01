@@ -53,16 +53,22 @@ def _scope_filters(query, model, platform, country, shop_id, shop_ids=None):
     return query
 
 
-def _time_filter(by_create: bool, start_dt: datetime, end_dt: datetime):
-    """归日时间过滤：默认按 paid_time（已付款口径，报表用）；by_create 按 create_time
-    （下单口径，含未付款 COD 在途单、排除 CANCELLED）——供预估利润与扣点同队列对齐。
+def _time_filter(by_create: bool, start_dt: datetime, end_dt: datetime, display: bool = False):
+    """归日时间过滤：默认按 paid_time（已付款口径，ROAS 用）；by_create/display 按 create_time
+    （下单口径）。三套语义：
+    - display=True（展示口径）：create_time 归日、**不排除 CANCELLED**（含所有状态，对齐 TikTok
+      后台 GMV），含 COD 在途单。
+    - by_create=True 且 not display（利润口径）：create_time 归日、**排除 CANCELLED**、含 COD 在途。
+    - 两者皆 False（付款/ROAS 口径）：paid_time 非空归日。
     create_time 与 paid_time 同为 naive UTC，归日窗口边界一致复用。"""
-    if by_create:
-        return [
+    if by_create or display:
+        conds = [
             OrderHeader.create_time >= start_dt,
             OrderHeader.create_time <= end_dt,
-            OrderHeader.order_status != "CANCELLED",
         ]
+        if not display:  # 利润口径排除取消；展示口径含取消（后台不扣）
+            conds.append(OrderHeader.order_status != "CANCELLED")
+        return conds
     return [
         OrderHeader.paid_time.isnot(None),
         OrderHeader.paid_time >= start_dt,
@@ -70,10 +76,10 @@ def _time_filter(by_create: bool, start_dt: datetime, end_dt: datetime):
     ]
 
 
-def _time_col(by_create: bool):
-    """归日/归时用的时间列：下单口径取 create_time，付款口径取 paid_time。
+def _time_col(by_create: bool, display: bool = False):
+    """归日/归时用的时间列：下单/展示口径取 create_time，付款口径取 paid_time。
     与 _time_filter 配套——趋势类在 Python 端按该列 to_business_day/hour 归桶。"""
-    return OrderHeader.create_time if by_create else OrderHeader.paid_time
+    return OrderHeader.create_time if (by_create or display) else OrderHeader.paid_time
 
 
 def _gmv_aggregates(
@@ -84,13 +90,24 @@ def _gmv_aggregates(
     shop_id: Optional[str],
     shop_ids: Optional[list[str]],
     by_create: bool = False,
+    display: bool = False,
 ) -> dict:
-    """订单 GMV/订单/销量/客单价聚合（给定 naive UTC 窗口边界）。by_create 见 _time_filter。"""
+    """订单 GMV/订单/销量/客单价聚合（给定 naive UTC 窗口边界）。by_create/display 见 _time_filter。
+
+    display=True（展示口径）金额用 sub_total（商品小计，对齐后台），回填期老单 sub_total 为 NULL
+    时 coalesce 回退到 total_amount，使 GMV 从偏高平滑收敛而非暴跌到 0（回填后新单皆有值，长期无害）。
+    order_count/units_sold 与 GMV 共用同一 tf，display 下自动含取消单（对齐后台"件数"）。
+    """
     session = SessionLocal()
     try:
-        tf = _time_filter(by_create, start_dt, end_dt)
+        tf = _time_filter(by_create, start_dt, end_dt, display=display)
+        amount_col = (
+            func.coalesce(OrderHeader.sub_total, OrderHeader.total_amount)
+            if display
+            else OrderHeader.total_amount
+        )
         header_q = session.query(
-            func.coalesce(func.sum(OrderHeader.total_amount), 0),
+            func.coalesce(func.sum(amount_col), 0),
             func.count(OrderHeader.order_id),
         ).filter(*tf)
         header_q = _scope_filters(header_q, OrderHeader, platform, country, shop_id, shop_ids)
@@ -127,13 +144,14 @@ def get_gmv_summary(
     shop_id: Optional[str] = None,
     shop_ids: Optional[list[str]] = None,
     by_create: bool = False,
+    display: bool = False,
 ) -> dict:
     """Return order GMV aggregates for AI explanation（业务日闭区间，整天口径）。
 
-    默认 by_create=False 为已付款口径（报表）；by_create=True 为下单口径（预估利润，
-    含未付款 COD 在途单、排除 CANCELLED），与扣点 metric_date(创建日) 同队列。"""
+    默认 by_create=False 为已付款口径（ROAS）；by_create=True 为利润口径（下单归日、排除
+    CANCELLED、total_amount）；display=True 为展示口径（下单归日、含所有状态、sub_total 对齐后台）。"""
     start_dt, end_dt = _paid_window(start_date, end_date)
-    agg = _gmv_aggregates(start_dt, end_dt, platform, country, shop_id, shop_ids, by_create)
+    agg = _gmv_aggregates(start_dt, end_dt, platform, country, shop_id, shop_ids, by_create, display)
     return {"start_date": start_date.isoformat(), "end_date": end_date.isoformat(), **agg}
 
 
@@ -146,13 +164,14 @@ def get_gmv_summary_intraday(
     shop_id: Optional[str] = None,
     shop_ids: Optional[list[str]] = None,
     by_create: bool = False,
+    display: bool = False,
 ) -> dict:
     """业务日 day 从 00:00 到 cutoff 时刻的 GMV 聚合（当日累计 / 同期对比用）。
 
-    by_create=True 为下单口径（create_time 落 [00:00, cutoff]，含未付款 COD 在途单、排除
-    CANCELLED），与后台/展示报表对齐；默认已付款口径。见 _time_filter。"""
+    by_create=True 利润口径（排除 CANCELLED、total_amount）；display=True 展示口径（含所有状态、
+    sub_total 对齐后台）；默认已付款口径。见 _time_filter。"""
     start_dt, end_dt = intraday_window_utc(day, cutoff)
-    agg = _gmv_aggregates(start_dt, end_dt, platform, country, shop_id, shop_ids, by_create)
+    agg = _gmv_aggregates(start_dt, end_dt, platform, country, shop_id, shop_ids, by_create, display)
     return {"start_date": day.isoformat(), "end_date": day.isoformat(),
             "cutoff": cutoff.strftime("%H:%M"), **agg}
 
@@ -167,17 +186,18 @@ def get_gmv_summary_intraday_range(
     shop_id: Optional[str] = None,
     shop_ids: Optional[list[str]] = None,
     by_create: bool = False,
+    display: bool = False,
 ) -> dict:
     """业务日区间 [start_date 00:00 → end_date 的 cutoff 时刻] 的 GMV 聚合（连续区间）。
 
     供周维度 intraday 同期对比用：本周一 00:00~今天此刻 vs 上周一 00:00~上周同一相对日此刻。
     注意是**连续区间**——中间各天整天计入，仅末日截到 cutoff；不是"逐天截至 cutoff 求和"
     （那会漏掉中间天 cutoff 之后的单）。起点取 paid_window 的当地 00:00，终点取 intraday 的
-    当地 cutoff 时点，口径与单日 intraday 完全一致。by_create=True 为下单口径（见 _time_filter）。
+    当地 cutoff 时点，口径与单日 intraday 完全一致。by_create/display 见 _time_filter。
     """
     start_dt, _ = paid_window_utc(start_date, start_date)
     _, end_dt = intraday_window_utc(end_date, cutoff)
-    agg = _gmv_aggregates(start_dt, end_dt, platform, country, shop_id, shop_ids, by_create)
+    agg = _gmv_aggregates(start_dt, end_dt, platform, country, shop_id, shop_ids, by_create, display)
     return {"start_date": start_date.isoformat(), "end_date": end_date.isoformat(),
             "cutoff": cutoff.strftime("%H:%M"), **agg}
 
@@ -479,12 +499,13 @@ def get_gmv_trend(
     shop_ids: Optional[list[str]] = None,
     granularity: str = "day",
     by_create: bool = False,
+    display: bool = False,
 ) -> list[dict]:
     """Return an order trend over [start_date, end_date].
 
-    口径与 get_gmv_summary 一致：默认已付款（paid_time 归桶）；by_create=True 为下单口径
-    （create_time 归桶、排除 CANCELLED，含 COD 在途），GMV = total_amount 求和；销量 =
-    订单的 line_item 条数。
+    口径与 get_gmv_summary 一致：默认已付款（paid_time 归桶）；by_create=True 利润口径
+    （create_time 归桶、排除 CANCELLED，total_amount）；display=True 展示口径（create_time 归桶、
+    含所有状态、sub_total 对齐后台）；销量 = 订单的 line_item 条数。
 
     granularity：
     - "day"（默认）：逐日点 `{date, label:None, gmv, order_count, units_sold}`，窗口内无单的日补 0。
@@ -502,15 +523,21 @@ def get_gmv_trend(
             shop_id=shop_id,
             shop_ids=shop_ids,
             by_create=by_create,
+            display=display,
         )
     start_dt, end_dt = _paid_window(start_date, end_date)
-    tcol = _time_col(by_create)
+    tcol = _time_col(by_create, display)
+    amount_col = (
+        func.coalesce(OrderHeader.sub_total, OrderHeader.total_amount)
+        if display
+        else OrderHeader.total_amount
+    )
     session = SessionLocal()
     try:
         # 每笔订单的归日时间 + 金额（Python 端按印尼归日聚合）
         header_q = _scope_filters(
-            session.query(tcol, OrderHeader.total_amount).filter(
-                *_time_filter(by_create, start_dt, end_dt),
+            session.query(tcol, amount_col).filter(
+                *_time_filter(by_create, start_dt, end_dt, display=display),
             ),
             OrderHeader,
             platform,
@@ -530,7 +557,7 @@ def get_gmv_trend(
             session.query(tcol)
             .join(OrderLineItem, OrderLineItem.order_id == OrderHeader.order_id)
             .filter(
-                *_time_filter(by_create, start_dt, end_dt),
+                *_time_filter(by_create, start_dt, end_dt, display=display),
             ),
             OrderHeader,
             platform,
@@ -570,20 +597,26 @@ def _get_gmv_trend_hourly(
     shop_id: Optional[str] = None,
     shop_ids: Optional[list[str]] = None,
     by_create: bool = False,
+    display: bool = False,
 ) -> list[dict]:
     """单天逐小时趋势（印尼当地小时归桶）。被 get_gmv_trend(granularity="hour") 调。
 
     SQL 窗口仍取整天 [day 00:00, day 23:59:59]（印尼），归桶在 Python 端用 to_business_hour。
     补零上界：day 是今天 → 补到当前印尼小时（不画未来空格）；过去某天 → 补满 24 格。
-    by_create=True 为下单口径（create_time 归桶、排除 CANCELLED）。
+    by_create=True 利润口径（排除 CANCELLED）；display=True 展示口径（含所有状态、sub_total）。
     """
     start_dt, end_dt = _paid_window(day, day)
-    tcol = _time_col(by_create)
+    tcol = _time_col(by_create, display)
+    amount_col = (
+        func.coalesce(OrderHeader.sub_total, OrderHeader.total_amount)
+        if display
+        else OrderHeader.total_amount
+    )
     session = SessionLocal()
     try:
         header_q = _scope_filters(
-            session.query(tcol, OrderHeader.total_amount).filter(
-                *_time_filter(by_create, start_dt, end_dt),
+            session.query(tcol, amount_col).filter(
+                *_time_filter(by_create, start_dt, end_dt, display=display),
             ),
             OrderHeader,
             platform,
@@ -602,7 +635,7 @@ def _get_gmv_trend_hourly(
             session.query(tcol)
             .join(OrderLineItem, OrderLineItem.order_id == OrderHeader.order_id)
             .filter(
-                *_time_filter(by_create, start_dt, end_dt),
+                *_time_filter(by_create, start_dt, end_dt, display=display),
             ),
             OrderHeader,
             platform,

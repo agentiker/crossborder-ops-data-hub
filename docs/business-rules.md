@@ -22,28 +22,34 @@
 
 ## 2. GMV 口径
 
-- **GMV = 下单订单的买家实付总额**（`orders.total_amount` = payment.total_amount），**含运费 / 税 / 优惠，非平台结算口径**。
-- **下单口径（2026-07-01 起）**：按 `create_time` 归日、排除 `CANCELLED`，**含货到付款（COD）在途单**（下单即计入，不等付款）。与 **TikTok 后台 GMV 一致**。
-  - **为什么改**：本店（及 COD 主导店）约 **77% 是 COD 单**，下单时 `paid_time` 为空、收货才回填。旧的**付款口径**（`paid_time` 非空归日）会把当天下的 COD 单漏到几周后 → 实测日报 GMV 只有后台的 **~1/5**（6/29：付款口径 Rp37M vs 后台 Rp196M vs 下单口径 Rp195M）。老板用后台对账时严重对不上。
+- **展示 GMV = 下单订单的商品小计**（`orders.sub_total` = payment.sub_total，**不含运费/税/优惠**），按 `create_time` 归日、**含所有订单状态（不排除 CANCELLED）**、含货到付款（COD）在途单。与 **TikTok 后台 GMV 精确一致**（实测 6/29：我们 195.8M vs 后台 196.2M，差 -0.2%；6/30：178.2M vs 178.8M，差 -0.3%）。
+  - **为什么这样定（2026-07-01 两轮对账钉死）**：
+    1. 第一轮：本店（COD 主导店）约 **77% 是 COD 单**，下单时 `paid_time` 为空、收货才回填。旧的**付款口径**（`paid_time` 非空归日）会把当天 COD 单漏到几周后 → 日报 GMV 只有后台 ~1/5。改成 `create_time` 下单口径后量级对上。
+    2. 第二轮：客户反馈「后台 GMV 不会减少」→ 直打 `orders/search` 多口径反推确认，后台 GMV 用的是 **`sub_total`（商品小计）+ 含所有状态（不扣取消）**，不是我们当时用的 `total_amount`（买家实付含运费税）+ 排除取消。两处口径错误（字段偏高 ~4% / 排除取消偏低）方向相反、部分抵消，净差看着像 2.5% 噪声，实为口径错。故改用 `sub_total` + 含取消，精确对齐。
+- **只有 GMV 总额 + 趋势 + 订单数 + 销量**用展示口径。**爆款榜/新品/SKU 拆分口径不同**（行级 `sale_price` + 排除取消），前端 tooltip 已标注差异。
 - 报告里 GMV 缩写展示（`Rp xxK/M/B`）只在前端展示层，后端返回原值。
-- 代码开关：`services/order_metrics.py` 的 `_time_filter(by_create)` / `_time_col(by_create)`；展示函数（`get_gmv_summary`/`_intraday`/`_intraday_range`/`get_gmv_trend`/`get_top_skus`/`get_top_products`/`get_product_sku_breakdown`/`get_units_by_product`/`get_sell_through`/`get_new_product_*`）均带 `by_create` 参数（默认 False 向后兼容），展示端点（`data.py` overview/orders/top-skus/trend、`board.py`、`report.py` 日报周报）统一钉 `by_create=True`。
+- 代码开关：`services/order_metrics.py` 三套口径正交开关 `_time_filter(by_create, display)` / `_time_col(by_create, display)`——见 §2.2 表。展示端点（`data.py` overview/orders/trend、`board.py`、`report.py` 日报周报）钉 `display=True`。回填期老单 `sub_total` 为 NULL 时聚合用 `coalesce(sub_total, total_amount)` 兜底（GMV 平滑收敛不暴跌）。
 
-### 2.1 「过去某天的 GMV 为什么还在变」= 取消/退货滞后，非数据丢失（2026-07-01 对账钉死）
+### 2.1 「过去某天的 GMV 为什么还在变 / 后台为什么不减少」（2026-07-01 逐单对账钉死）
 
-老板疑问：6/29、6/30 都过去了，数据不该定死吗？为什么和后台还差 ~2.5%？**逐单核对结论：下单集合和金额早已定死，变的是订单状态。**
+客户说「后台 GMV 不会减少」——**对的，因为后台按下单锁定商品小计、取消不回扣**。
 
-- **定死的**：`create_time` 是历史事实，6/30 就下了 **1393 单、总额 Rp 185.62M**，这个「含所有状态」的 GMV 今天打、下周打都一样。直打 `orders/search`（`create_time` 窗口）与 prod 库**逐单、逐分钱、逐状态 100% 一致**（`total_count=1393` 相等、差集 0 单、金额不一致 0 单）——数据同步零丢失。
-- **在变的**：这 1393 单里 **704 单的 `order_status` 在几天内流转了**——`AWAITING_COLLECTION→IN_TRANSIT`(618)、`→DELIVERED`(46)、`UNPAID→CANCELLED`(30，未付款单挂到期被平台自动取消)、`→CANCELLED`(6)。包裹要几天才送达、未付款单要挂几天才被系统取消、退货更晚才发生——这些后续变化改的是**那张老单子的 status 字段**，不是新增当天的单。
-- **2.5% 差异的唯一来源 = 「排除 CANCELLED」这个动作有滞后**：老板截图后台那一刻 6/30 只有 63 单取消，我们两天后再看已 99 单取消（多的 36 单 ≈ Rp 4.5M 是 UNPAID 挂到期自动取消的）。**谁看得晚，取消单越多，去 CANCELLED 后的 GMV 越小**。不是我们少算，是我们比后台晚看两天、期间又取消了 36 单。
-- **退货同理但更晚**：`RETURN`/`REFUND` 是收货后才发生，近两日订单刚开始流转到 `DELIVERED`，**退货状态一单都还没出现**；且后台下单口径 GMV 本就不含退货（退货体现在结算/利润，不在 GMV）。故退货不是 2.5% 的原因。
-- **可接受性**：这是任何「实时后台 vs 定时同步快照」都必然存在的漂移，属正常对账噪声，无需修。若要两边严格相等，只能同一时刻各拉一次——无意义。**含所有状态的下单 GMV 才是稳定可复现的锚**（185.62M）；去 CANCELLED 后的数会随时间缓慢下探。
+- **含所有状态的下单 GMV 是稳定锚**：`create_time` 是历史事实，6/30 下单 1393 单、`sub_total` 合计 178.2M，今天打下周打都一样。直打 `orders/search` 与 prod 库**逐单、逐分钱 100% 一致**（`total_count`/差集/金额全等）——数据同步零丢失。
+- **之前我们的数会「变小」的根源**是当时错误地**排除了 CANCELLED**：订单状态持续流转（未付款单挂到期被平台自动取消、买家取消），看得越晚累积取消越多、去 CANCELLED 后 GMV 越小，故显得「我们比后台少、还在降」。**改成含取消后这个问题消失**——和后台一样，取消单锁定不回扣。
+- **退货**：`RETURN`/`REFUND` 收货后才发生，下单口径 GMV 本就不含退货（退货体现在结算/利润，不在 GMV），故不影响展示 GMV。
+- 残差 ±0.3% = `sub_total` 反推的截图取整 + 秒级边界，属正常对账噪声。
 
-### 2.2 例外：ROAS 分子 GMV 仍用付款口径
+### 2.2 三套 GMV 口径并存（正交开关，勿混用）
 
-- **展示类 GMV 全部下单口径**（日报/周报/看板/AI 对话/爆款榜/动销率/新品），统一对齐后台，消除"我们的数和后台对不上"。
-- **例外 = ROAS 的 GMV 分子**（`services/ad_metrics.py`）：保留**付款口径**。因为分母广告消耗是**结算口径**（按结算日），分子 GMV 需与之同口径对齐；若改下单口径会把未付款 COD 在途单算进分子 → ROAS 虚高。故 ROAS 卡的 GMV 会**小于**经营概览 GMV，这是有意的、非 bug。
-- **利润卡 GMV**：读预聚合表 `fact_profit_daily`（`services/profit_summary.py:get_profit_card` ← `flows/aggregate_profit`），本就是**下单口径**（`by_create=True`，与扣点 `metric_date` 创建日同队列）。改造后与经营概览 GMV **同口径**，不再有"利润卡 GMV ≠ 概览 GMV"的困惑。
-- **覆盖天数护栏**：利润卡读预聚合表，若 `aggregate_profit` 漏跑/未回填某天，会**静默少算**。`get_profit_card` 返回 `expected_days`/`covered_days`/`coverage_complete`；前端在 `coverage_complete=false` 时显 `TriangleAlert` + 「数据不完整：近 N 天仅 M 天已聚合」横幅。**根治靠 `aggregate_profit` timer 常态跑 + 回填**（`uv run python -m flows.aggregate_profit --days 30`）。
+| 口径 | 用途 | 归日 | 取消单 | 金额列 | 开关 |
+|---|---|---|---|---|---|
+| **展示** | 日报/周报/看板 GMV 总额·趋势·订单数·销量 | `create_time` | **含** | **`sub_total`** | `display=True` |
+| **利润** | 预估利润 GMV（与扣点同队列） | `create_time` | 排除 | `total_amount` | `by_create=True` |
+| **ROAS/付款** | ROAS 分子 GMV | `paid_time` | （付款即非取消）| `total_amount` | 都 False（默认）|
+
+- **ROAS 分子**（`services/ad_metrics.py`）保留**付款口径**：分母广告消耗是结算口径（按结算日），分子需同口径；改展示口径会把未付款 COD / 取消单算进分子 → ROAS 虚高。故 ROAS 卡 GMV **小于**经营概览 GMV，有意为之、非 bug。
+- **利润卡 GMV**（`services/profit_summary.py:get_profit_card` ← `flows/aggregate_profit`，`by_create=True`）：`total_amount` + 排除取消。会**小于**展示 GMV（展示用 sub_total 且含取消），差异 = 运费税 −取消单，属口径差、非 bug。
+- **覆盖天数护栏**：利润卡读预聚合表，若 `aggregate_profit` 漏跑某天会静默少算。`get_profit_card` 返回 `coverage_complete`；前端 false 时显横幅。根治靠 `aggregate_profit` timer 常态跑 + 回填（`uv run python -m flows.aggregate_profit --days 30`）。
 
 ---
 
@@ -297,3 +303,4 @@
 | 2026-06-28 | §6.1 修正 TAP 归类:站内三项只有 GMV Max 是付费投放,TAP(TikTok Affiliate Partner 机构代管达人)+联盟均为达人 CPS 佣金→`paid_ad_spend=仅gmv_max`、`creator_commission=tap+affiliate`;ROAS 未投 GMV Max 时标「未投 GMV Max」;附站内三项本质表+站外不在结算单说明 | 本文 §6.1、`services/ad_metrics.py`、前端广告卡 |
 | 2026-07-01 | 展示类 GMV 统一**下单口径**(`create_time` 归日、排除 CANCELLED、含 COD 在途)对齐 TikTok 后台——COD 主导店(77%)付款口径漏算约 80%(实测日报仅后台 1/5);ROAS 分子仍付款口径(与广告结算对齐);见 §2/§2.2 | `services/order_metrics.py`(`_time_filter`/`_time_col`+各展示函数 `by_create`)、`web/routes/{data,report,board}.py` |
 | 2026-07-01 | 与后台残差 ~2.5% 对账钉死(§2.1):直打 `orders/search` vs prod 库**逐单 100% 一致**(total_count=1393、差集 0、金额不一致 0);差异纯来自「排除 CANCELLED」滞后——过去某天下单集合/金额定死不变,但 order_status 持续流转(704/1393 单变状态,UNPAID 陆续被自动取消),晚看的一方取消单更多、去 CANCELLED 后 GMV 更小;退货一单未出现且下单口径本不含退货。属实时后台 vs 定时快照的正常漂移,无需修 | 对账验证(无代码改动) |
+| 2026-07-01 | **展示 GMV 改用 `sub_total`(商品小计)+含所有状态(不排除取消)，精确对齐后台**(实测 6/29 195.8M vs 后台 196.2M、6/30 178.2M vs 178.8M，差 <0.5%)。客户「后台不减少」→反推后台口径=sub_total+含取消，我们旧口径 total_amount(偏高~4%)+排除取消(偏低)两错抵消成假 2.5%。新增正交开关 `display`(=create_time+含取消+sub_total)，仅 GMV 总额/趋势/订单数/销量用；爆款榜等口径不变靠 tooltip 标注；ROAS/利润口径不动。加 `orders.sub_total` 列(手写迁移 migrate_gmv_sub_total)+回填。见 §2/§2.1/§2.2 | `models/base_models.py`、`core/domain.py`、`platforms/tiktok_shop/normalize.py`、`services/order_store.py`、`services/order_metrics.py`(`_time_filter`/`_gmv_aggregates`/5 get_gmv_* 加 `display`)、`web/routes/{data,board,report}.py`、`scripts/migrate_gmv_sub_total.py`、`frontend/.../BoardPage.tsx` |

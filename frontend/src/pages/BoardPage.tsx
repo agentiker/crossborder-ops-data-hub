@@ -908,7 +908,7 @@ function ProfitCard({
                 <span className="inline-flex items-center gap-2.5">
                   <InfoTooltip
                     align="start"
-                    content="按下单时间统计，含货到付款（COD）尚未付款的在途订单，所以会比上方「经营概览」里只算已付款的 GMV 大。"
+                    content="利润卡的 GMV = 买家实付（含运费/税）、按下单统计但排除已取消单；与上方「经营概览」GMV（商品小计、含取消）口径不同，故两个数不相等，属正常。"
                   >
                     <Info className="h-3.5 w-3.5" />
                   </InfoTooltip>
@@ -1339,7 +1339,21 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
       {/* KPI 固定 2 列：第一行 GMV/广告消耗、第二行 订单/销量；ROAS 综合指标独占整行。
           ROI 口径未定，不在英雄行留占位死格（定口径后再加），避免一瞥落在空值上。 */}
       <div className="mb-4 grid grid-cols-2 gap-3">
-        <MetricCard loading={loading} change={ch?.gmv} title="GMV（已付款）" value={fmtMoney(o?.gmv)} icon={<DollarSign size={14} />} />
+        <MetricCard
+          loading={loading}
+          change={ch?.gmv}
+          title="GMV"
+          value={fmtMoney(o?.gmv)}
+          icon={<DollarSign size={14} />}
+          info={
+            <InfoTooltip
+              align="start"
+              content="按下单时间统计，包含所有订单（含已取消、货到付款在途单），金额为商品小计（不含运费/税/优惠）——与 TikTok 后台的 GMV 口径一致。"
+            >
+              <Info className="h-3.5 w-3.5" />
+            </InfoTooltip>
+          }
+        />
         <MetricCard
           loading={loading}
           change={hasAdSpend && adComplete ? ch?.ad_cost : undefined}
@@ -1349,8 +1363,36 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           info={hasAdSpend ? adInfoBtn : undefined}
           icon={<Megaphone size={14} />}
         />
-        <MetricCard loading={loading} change={ch?.order_count} title="订单数" value={fmtInt(o?.order_count)} icon={<ShoppingCart size={14} />} />
-        <MetricCard loading={loading} change={ch?.units_sold} title="销量" value={fmtInt(o?.units_sold)} icon={<TrendingUp size={14} />} />
+        <MetricCard
+          loading={loading}
+          change={ch?.order_count}
+          title="订单数"
+          value={fmtInt(o?.order_count)}
+          icon={<ShoppingCart size={14} />}
+          info={
+            <InfoTooltip
+              align="start"
+              content="按下单时间统计，包含所有订单（含已取消），与后台的订单件数口径一致。"
+            >
+              <Info className="h-3.5 w-3.5" />
+            </InfoTooltip>
+          }
+        />
+        <MetricCard
+          loading={loading}
+          change={ch?.units_sold}
+          title="销量"
+          value={fmtInt(o?.units_sold)}
+          icon={<TrendingUp size={14} />}
+          info={
+            <InfoTooltip
+              align="start"
+              content="按下单时间统计的商品件数，包含所有订单（含已取消），与后台件数口径一致。"
+            >
+              <Info className="h-3.5 w-3.5" />
+            </InfoTooltip>
+          }
+        />
         <MetricCard
           className="col-span-2"
           loading={loading}
@@ -1822,7 +1864,17 @@ function HotProducts({
   return (
     <BoardCard>
       <CardHead
-        title="爆款商品"
+        title={
+          <span className="inline-flex items-center gap-1.5">
+            爆款商品
+            <InfoTooltip
+              align="start"
+              content="按商品售价统计、已排除取消单，与上方「GMV」总额口径不同（GMV 含取消、按商品小计）；此处只展示销量最高的部分商品，非全店汇总。"
+            >
+              <Info className="h-3.5 w-3.5 text-foreground-secondary" />
+            </InfoTooltip>
+          </span>
+        }
         right={
           <TabPills
             tabs={rankOptions}

@@ -618,6 +618,9 @@ class OrderHeader(Base):
     currency = Column(String(8))
     # 买家实付总额（payment.total_amount），已付款口径下的 GMV 来源
     total_amount = Column(Numeric(18, 4), nullable=False, default=0)
+    # 商品小计（payment.sub_total，不含运费/税/优惠）——展示 GMV 对齐 TikTok 后台口径。
+    # nullable：加列迁移后老单为 NULL，回填前聚合靠 coalesce(sub_total, total_amount) 兜底。
+    sub_total = Column(Numeric(18, 4), nullable=True)
     is_cod = Column(Boolean, default=False)
     buyer_message = Column(Text)
     warehouse_id = Column(String(64))

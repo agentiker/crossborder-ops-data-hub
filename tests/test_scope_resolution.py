@@ -146,11 +146,13 @@ def _dt(y, m, d):
     return datetime(y, m, d, 12, 0)
 
 
-def _order(order_id, *, total, shop, paid=True, status="COMPLETED"):
-    """paid=False → paid_time=None（模拟 COD 未付款在途单）；status 可传 CANCELLED。"""
+def _order(order_id, *, total, shop, paid=True, status="COMPLETED", sub=None):
+    """paid=False → paid_time=None（模拟 COD 未付款在途单）；status 可传 CANCELLED。
+    sub=None → sub_total 落 total（默认相等）；显式传 sub 模拟商品小计 < 实付（含运费税）。"""
     return DomainOrder(
         order_id=order_id, order_status=status,
         currency="IDR", total_amount=Decimal(total),
+        sub_total=Decimal(sub if sub is not None else total),
         create_time=_dt(2026, 6, 3),
         paid_time=_dt(2026, 6, 3) if paid else None,
         update_time=_dt(2026, 6, 3),
@@ -209,3 +211,55 @@ def test_display_metrics_by_create_vs_paid(session, monkeypatch):
     # 但下单口径下即便 paid1 不存在也应因 cod1 计入（验证 by_create 生效不因未付款而漏）。
     st_create = order_metrics.get_sell_through(**kw, by_create=True)
     assert st_create["active_sku"] == 1  # sku-A（paid1+cod1 同 SKU）
+
+
+def test_display_caliber_uses_sub_total_and_includes_cancelled(session, monkeypatch):
+    """展示口径 display=True：金额用 sub_total、含所有状态（不排除取消）、含 COD 在途；
+    对齐 TikTok 后台 GMV。与利润口径(by_create,排除取消,total_amount)、付款口径(ROAS)三方并存不串味。
+    """
+    # paid1：已付款 total=50/sub=40；cod1：COD 在途 total=100/sub=90；cx1：取消 total=999/sub=900
+    upsert_orders(session, [_order("paid1", total="50", sub="40", shop="s1", paid=True, status="DELIVERED")],
+                  country="ID", shop_id="s1")
+    upsert_orders(session, [_order("cod1", total="100", sub="90", shop="s1", paid=False, status="IN_TRANSIT")],
+                  country="ID", shop_id="s1")
+    upsert_orders(session, [_order("cx1", total="999", sub="900", shop="s1", paid=False, status="CANCELLED")],
+                  country="ID", shop_id="s1")
+    session.commit()
+    monkeypatch.setattr(order_metrics, "SessionLocal", lambda: session)
+
+    kw = dict(start_date=date(2026, 6, 1), end_date=date(2026, 6, 5), country="ID", shop_ids=["s1"])
+
+    # 展示口径：sub_total 求和 40+90+900=1030、含取消、order_count=3、units_sold=3
+    disp = order_metrics.get_gmv_summary(**kw, display=True)
+    assert disp["gmv"] == 1030.0
+    assert disp["order_count"] == 3
+    assert disp["units_sold"] == 3
+
+    # 利润口径：total_amount、排除取消 → 50+100=150（不受 display 改动影响，回归护栏）
+    profit = order_metrics.get_gmv_summary(**kw, by_create=True)
+    assert profit["gmv"] == 150.0
+    assert profit["order_count"] == 2  # 排除 cx1
+
+    # 付款/ROAS 口径：仅已付款 paid1 total=50（不受影响）
+    paid = order_metrics.get_gmv_summary(**kw)
+    assert paid["gmv"] == 50.0
+
+    # 趋势展示口径同样 sub_total + 含取消，逐日 GMV 和=1030
+    trend_disp = order_metrics.get_gmv_trend(**kw, display=True)
+    assert sum(p["gmv"] for p in trend_disp) == 1030.0
+
+
+def test_display_caliber_sub_total_null_falls_back_to_total(session, monkeypatch):
+    """回填期兜底：sub_total 为 NULL 的老单，display 口径 coalesce 退回 total_amount，不丢金额。"""
+    o = _order("old1", total="70", shop="s1", paid=True, status="DELIVERED")
+    upsert_orders(session, [o], country="ID", shop_id="s1")
+    session.commit()
+    # 模拟迁移后未回填：把 sub_total 置 NULL
+    from models.base_models import OrderHeader
+    session.query(OrderHeader).filter(OrderHeader.order_id == "old1").update({OrderHeader.sub_total: None})
+    session.commit()
+    monkeypatch.setattr(order_metrics, "SessionLocal", lambda: session)
+
+    kw = dict(start_date=date(2026, 6, 1), end_date=date(2026, 6, 5), country="ID", shop_ids=["s1"])
+    disp = order_metrics.get_gmv_summary(**kw, display=True)
+    assert disp["gmv"] == 70.0  # coalesce(NULL, total_amount) → total_amount

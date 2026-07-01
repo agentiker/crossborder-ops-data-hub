@@ -47,6 +47,7 @@ def upsert_orders(
             existing.order_status = order.order_status
             existing.currency = order.currency
             existing.total_amount = order.total_amount
+            existing.sub_total = order.sub_total
             existing.is_cod = order.is_cod
             existing.buyer_message = order.buyer_message
             existing.warehouse_id = order.warehouse_id
@@ -68,6 +69,7 @@ def upsert_orders(
                     order_status=order.order_status,
                     currency=order.currency,
                     total_amount=order.total_amount,
+                    sub_total=order.sub_total,
                     is_cod=order.is_cod,
                     buyer_message=order.buyer_message,
                     warehouse_id=order.warehouse_id,

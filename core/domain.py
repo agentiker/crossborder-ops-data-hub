@@ -38,6 +38,7 @@ class DomainOrder:
     order_status: Optional[str] = None
     currency: Optional[str] = None
     total_amount: Decimal = Decimal("0")
+    sub_total: Decimal = Decimal("0")  # 商品小计（payment.sub_total，不含运费/税/优惠）——展示 GMV 对齐后台口径
     is_cod: bool = False
     buyer_message: Optional[str] = None
     warehouse_id: Optional[str] = None

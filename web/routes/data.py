@@ -145,9 +145,9 @@ def _resolve_window(start_date, end_date, period, default_back_days):
 
 # ── 数据口径常量（随响应 caliber 字段下发，agent 直接复述，无需在 skill 散文里背） ──
 ORDERS_CALIBER = (
-    "下单口径（create_time 归日、排除已取消，含 COD 货到付款在途单，印尼当地时间 UTC+7，与 TikTok 后台一致）；"
-    "GMV=订单 total_amount（买家实付，含运费税优惠，非平台结算）；"
-    "销量=line_item 条数；客单价=GMV/订单数；来源 TikTok /order/202309/orders/search"
+    "展示口径（create_time 归日、含所有订单状态含已取消、含 COD 货到付款在途单，印尼当地时间 UTC+7，与 TikTok 后台 GMV 精确一致）；"
+    "GMV=订单 sub_total（商品小计，不含运费/税/优惠）；"
+    "销量=line_item 条数（含取消）；客单价=GMV/订单数；来源 TikTok /order/202309/orders/search"
 )
 TOP_SKUS_CALIBER = (
     "下单口径（create_time 归日、排除已取消，含 COD 在途，统计窗口按印尼当地时间 UTC+7）；单品 GMV=该 SKU 各 line_item 的 sale_price 之和"
@@ -662,14 +662,14 @@ async def get_overview(
     finally:
         session.close()
 
-    # 近 7 天订单（下单口径 by_create：含 COD 在途单，与 TikTok 后台一致，见 business-rules §2）
+    # 近 7 天订单（展示口径 display：sub_total 商品小计、含所有状态含 COD 在途，与 TikTok 后台 GMV 一致，见 business-rules §2）
     orders = get_gmv_summary(
         start_date=week_ago,
         end_date=today,
         platform=scope.platform,
         country=scope.country,
         shop_ids=scope.shop_ids,
-        by_create=True,
+        display=True,
     )
 
     return {
@@ -720,7 +720,7 @@ async def get_orders_summary(
         platform=scope.platform,
         country=scope.country,
         shop_ids=scope.shop_ids,
-        by_create=True,
+        display=True,
     )
     return OrderSummary(
         **data,
@@ -891,7 +891,7 @@ async def get_orders_trend(
         country=scope.country,
         shop_ids=scope.shop_ids,
         granularity=gran,
-        by_create=True,
+        display=True,
     )
     return TrendResponse(
         start_date=sd.isoformat(),

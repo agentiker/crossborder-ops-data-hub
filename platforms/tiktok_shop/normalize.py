@@ -81,6 +81,7 @@ def _order_to_domain(order: OrderSchema) -> DomainOrder:
         order_status=order.status,
         currency=currency,
         total_amount=_to_decimal(payment.total_amount if payment else None),
+        sub_total=_to_decimal(payment.sub_total if payment else None),
         is_cod=bool(order.is_cod),
         buyer_message=order.buyer_message,
         warehouse_id=order.warehouse_id,
