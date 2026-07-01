@@ -2528,7 +2528,7 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
                               <StockThumb src={it.image_url} />
                               <div className="min-w-0">
                                 <div
-                                  className="line-clamp-2 font-medium leading-snug text-foreground"
+                                  className="truncate font-medium leading-snug text-foreground"
                                   title={it.product_name || it.sku_id}
                                 >
                                   {it.product_name || it.sku_id}
@@ -2569,7 +2569,7 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-2">
                           <div
-                            className="line-clamp-2 text-sm font-medium leading-snug text-foreground"
+                            className="min-w-0 flex-1 truncate text-sm font-medium leading-snug text-foreground"
                             title={it.product_name || it.sku_id}
                           >
                             {it.product_name || it.sku_id}
