@@ -2248,6 +2248,8 @@ const LOW_BADGE: Record<string, { label: string; cls: string }> = {
   stockout: { label: "缺货", cls: "bg-negative/15 text-negative" },
   critical: { label: "告急", cls: "bg-warning/15 text-warning" },
   warning: { label: "偏低", cls: "bg-caution/15 text-caution" },
+  ok: { label: "充足", cls: "bg-positive/15 text-positive" },
+  idle: { label: "无销量", cls: "bg-fill-default text-foreground-secondary" },
 };
 
 type SortField = "days_of_cover" | "available_stock" | "name";
@@ -2260,7 +2262,7 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
   const [sortField, setSortField] = useState<SortField>("days_of_cover");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [page, setPage] = useState(1);
-  const PAGE_SIZE = 20;
+  const PAGE_SIZE = 5;
 
   const inv = data?.overview.inventory;
   const b = data?.low.buckets;
@@ -2282,6 +2284,7 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
   const idleCount = Math.max(skuCount - healthyCount - atRisk, 0);
   const criticalDays = data?.low?.critical_days ?? 3;
   const warningDays = data?.low?.warning_days ?? 7;
+  const velocityDays = data?.low?.velocity_window_days ?? 7;
 
   // 健康度分档变色：≥85 绿 / 60–85 黄 / <60 红（阈值为默认值，可按客户观感调）。
   const HEALTH_GOOD = 85;
@@ -2398,10 +2401,11 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
             库存健康
             <InfoTooltip
               align="start"
-              content={`健康度 = 不缺货的在售商品占比。对近期有销量的商品，按「可售天数 = 当前库存 ÷ 日均销量」判断：断货（库存 0）、告急（可售 < ${criticalDays} 天）、偏低（可售 < ${warningDays} 天）算风险，其余算健康。近期无销量的商品不参与风险判断。`}
+              content={`健康度 = 不缺货的在售商品占比。对近期有销量的商品，按「可售天数 = 当前库存 ÷ 日均销量」判断：断货（库存 0）、告急（可售 < ${criticalDays} 天）、偏低（可售 < ${warningDays} 天）算风险，其余算健康。近期无销量的商品不参与风险判断。日均销量 = 近 ${velocityDays} 天已付款销量 ÷ ${velocityDays}。`}
             >
               <Info className="h-3.5 w-3.5 text-foreground-tertiary" />
             </InfoTooltip>
+            <AskAiLink question={`看板「库存健康」里的「日均销量/销售速度」是用多大的时间窗口算的？「可售天数」和「断货/告急/偏低」的口径分别是什么？`} />
           </span>
         }
         right={
@@ -2488,6 +2492,8 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
               <option value="stockout">缺货</option>
               <option value="critical">告急</option>
               <option value="warning">偏低</option>
+              <option value="ok">充足</option>
+              <option value="idle">无销量</option>
             </select>
           </div>
 

@@ -163,6 +163,7 @@ async def _collect(
         platform=platform, country=country, shop_id=None,
         scope_id=None, shop_ids=shop_ids,
         critical_days=None, warning_days=None, open_id=None,
+        include_all=True,  # 看板「商品明细」列全部在库 SKU（配合筛选/分页）；buckets 计数仍只算风险桶
     )
     fulfillment = await get_fulfillments_pending(
         platform=platform, country=country, shop_id=None,

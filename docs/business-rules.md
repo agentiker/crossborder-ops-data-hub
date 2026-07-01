@@ -166,8 +166,9 @@
 代码：`services/stock_metrics.py:get_stock_risk`（取数）、前端 `BoardPage.tsx:InventoryHealth`。
 
 - **健康度定义**：`健康度 = 不缺货的在售商品占比 = (总在售 SKU − 风险 SKU) / 总在售 SKU`。「风险」= 断货（库存 0）+ 告急（可售 < `critical_days`，默认 3 天）+ 偏低（可售 < `warning_days`，默认 7 天）；近期无销量（`idle`）不参与风险判断。可售天数 = 当前库存 ÷ 日均销量（见上「销速模型」）。
+- **日均销量（销售速度）窗口**：`日均销量 = 近 velocity_window_days 天的已付款销量 ÷ velocity_window_days`，`velocity_window_days = settings.stock_velocity_window_days`（**默认 7 天**，按印尼业务日、含今天）。前端健康度 tooltip + 「问 AI」链接均据实显示该窗口天数。改窗口改一处配置全局一致。
 - **分档变色**（前端仪表盘）：**≥85% 绿 / 60–85% 黄 / <60% 红**（阈值为默认值、可按客户观感调）。原本恒绿会误导（30% 也显绿）。仪表盘旁 InfoTooltip 用业务白话解释口径；下方图例把百分比拆成「健康 X · 风险 Y（断货/告急/偏低）· 无销量 Z」的绝对数。
-- **商品明细**：`get_stock_risk` 的 item 带 `sku_name`（`Inventory.sku_name`，变体名如「红色 / M」，缺失回退 `sku_id`）+ `image_url`（product 级主图，批量查 `Product.main_image_url`、带 scope 过滤防 N+1/跨租户）。前端明细：PC 表格 / 移动端卡片式（响应式，不横滚）、长商品名 2 行截断、前端分页（每页 20）。
+- **商品明细**：`get_stock_risk` 的 item 带 `sku_name`（`Inventory.sku_name`，变体名如「红色 / M」，缺失回退 `sku_id`）+ `image_url`（product 级主图，批量查 `Product.main_image_url`、带 scope 过滤防 N+1/跨租户）。看板明细走**展示口径 `include_all=True`**（列全部在库 SKU，配合状态筛选/分页；含 `ok` 充足 / `idle` 无销量两桶，前端有对应 badge），**buckets 计数仍只算风险桶**。前端明细：PC 表格 / 移动端卡片式（响应式，不横滚）、长商品名 2 行截断、**前端分页（每页 5）**。
 
 ### 4.5 AI 洞察
 

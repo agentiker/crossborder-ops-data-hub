@@ -161,7 +161,7 @@ export interface LowStockItem {
   sku_name?: string; // SKU 变体名（颜色/尺码），缺失回退 sku_id
   product_name?: string;
   image_url?: string | null; // 商品主图缩略图，缺图前端占位
-  bucket: "stockout" | "critical" | "warning";
+  bucket: "stockout" | "critical" | "warning" | "ok" | "idle";
   available_stock: number;
   daily_velocity: number;
   days_of_cover: number;
@@ -236,6 +236,7 @@ export interface BoardData {
     buckets: { stockout: number; critical: number; warning: number };
     critical_days?: number; // 告急阈值（可售天数），健康度图例/tooltip 用
     warning_days?: number; // 偏低阈值（可售天数）
+    velocity_window_days?: number; // 日均销量的统计窗口天数（近 N 天已付款销量 ÷ N）
   };
   fulfillment: {
     items: PendingItem[];
