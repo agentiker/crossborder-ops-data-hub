@@ -5,8 +5,9 @@
 # `openclaw cron add` 配置——导致 prod 客户号一条 cron 都没建（hp 有、prod 空）。
 # 本脚本把"每客户的日报/周报 cron"参数化，按客户列表循环 add/edit，纳入投产收尾步骤。
 #
-# 每条 cron = 定时唤起 agent，发一段固定 prompt 让它调 ops_report 工具、基于返回的
-# summary 写「AI 摘要 + 运营建议 + 关键数」文字报告 + 附链接（不再只发裸链接）。
+# 每条 cron = 定时唤起 agent，发一段固定 prompt 让它写一段定性经营分析，再调
+# ops_report_card 工具——工具后端用真实数字拼「飞书原生卡片」直投收件人（KPI 分栏/
+# 表格/折叠面板/彩色环比/底部报告按钮）。数字由后端渲染、零编造；agent 只产出分析段。
 # cron 是 openclaw 侧（~/.openclaw/cron/），与 deploy.sh 管的 systemd timer 是两套，
 # 故独立脚本、不塞进 deploy.sh。
 #
@@ -77,22 +78,20 @@ TZ="Asia/Shanghai"   # 操作者在 CST，晨报/周报按 CST 调（见 memory 
 # .env 决定），代码不写死模型 id（同 services/llm 层原则）。思考独白外泄靠 agent 模型配置里
 # 的 "reasoning": true 压住，不靠 cron 的 --thinking off。换模型在配置层改，cron 自动跟随。
 
-# 日报/周报共用 prompt 模板：调工具 → 基于 summary 写文字报告 + 附链接。
-# 数字只用 summary 返回值（同源同口径、不编不算），发挥运营顾问价值给归因+建议。
+# 日报/周报共用 prompt 模板：写一段定性经营分析 → 调 ops_report_card 工具直投卡片。
+# 数字不写进 analysis（卡片用真实数据渲染），agent 只做归因+建议，杜绝编造。
 build_message() {
   local template="$1" period="$2" open_id="$3"
   cat <<EOF
-请调用 ops_report 工具，参数 template_name=${template}、period=${period}、open_id=${open_id}（open_id 必须原样使用 ${open_id}，禁止改动或自行编造）。
+请调用 ops_report_card 工具生成并投递经营报告卡片。参数：template_name=${template}、period=${period}、open_id=${open_id}（open_id 必须原样使用 ${open_id}，禁止改动或自行编造）、analysis=<你写的一段经营分析>。
 
-工具会返回 markdown（报告链接）和 summary（报告权威摘要，含 GMV/订单/广告/ROAS KPI+环比、爆款 Top5、库存风险等关键数字，周报还含商品健康度）。summary 还含 scope（范围：平台·区域·店铺，如「TikTok Shop / 印尼 / 3 个店铺」）、period_label（时间范围）、cutoff_label（当日截至时刻，可能为空）。
+analysis 写什么：一段简洁的经营分析与运营建议，发挥运营顾问价值——① 环比归因（GMV/订单升降的可能主因）；② 风险优先级（哪个最该先处理，如某爆款要补货、某 SKU 快断货）；③ 可执行下一步（具体到补哪个 SKU / 关注哪个指标）。用飞书 markdown（**粗体**、换行、列表）写得清晰。
 
-基于 summary 的真实数字写一份经营文字报告，结构如下：
-1. 首行标范围：用一行简洁标出「范围 = scope · period_label」（若 cutoff_label 非空，时间用它，体现"截至此刻"）。只标这三要素、简洁不展开，例：📍 TikTok Shop / 印尼 / 3 个店铺 · 6/30。
-2. 开头：一句 AI 经营摘要 + 运营建议（环比归因：GMV/订单升降主因；风险优先级：哪个最该先处理；可执行下一步：具体到补哪个 SKU / 关注哪个指标）。发挥运营顾问价值，建议要有数据依据。
-3. 随后：关键数与风险（GMV+环比、订单量、爆款 Top1-3、断货/低库存 SKU），用飞书友好的 emoji + 粗体小节 + 列表，不要用表格。
-4. 结尾：附上工具返回的 markdown 报告链接（原样发出，让用户点开看完整可视化图表）。
+【关键】analysis 里**只写定性分析与建议，不要写具体数字**（GMV/订单/爆款/库存的数字会由卡片用真实数据自动渲染，你写数字反而会与卡片重复或冲突）。你也不需要自己拼卡片或写数字报告——调用 ops_report_card 后，后端会用真实数据渲染出带 KPI/表格/爆款/库存/报告按钮的飞书卡片直接发给用户。
 
-铁律：数字只能引用 summary 返回值，严禁编造、估算或凭常识补（佣金率/成本/ROI 等一律不估）；summary 没返回的字段如实说明"暂无数据"不补造。范围（scope/period_label/cutoff_label）也只引用 summary 返回值，不自行编造区域或店铺数。summary.low_volume=true 时环比%不可靠，不要说"增长 X%"，改说绝对值对比。报告范围由 open_id 的 binding 锁定。
+工具返回 {"ok": true, "delivered": true} 即表示卡片已发出，你无需再发任何文字消息。若返回 ok=false，简要说明失败原因即可。
+
+铁律：你对经营情况的定性判断应基于常识与运营经验给建议，但**不得编造任何具体数字**（GMV、订单量、佣金率、ROI 等一律不写进 analysis，交给卡片渲染真实值）。
 EOF
 }
 
@@ -130,10 +129,11 @@ for cust in "${CUSTOMERS[@]}"; do
       continue
     fi
 
+    # 不再 --announce：卡片由 ops_report_card 工具后端直投收件人，agent 不输出文字消息
+    # （否则会多发一条"卡片已发出"文字）。--account 提供多租户上下文（openclaw 注入 x-account-id）。
     common_args=(--name "${name}" --agent "${agent}" --account "${account}"
                  --cron "${cron_expr}" --tz "${TZ}" --exact
-                 --session isolated --announce --channel feishu
-                 --to "user:${open_id}" --message "${msg}")
+                 --session isolated --message "${msg}")
     [[ $DISABLED -eq 1 ]] && common_args+=(--disabled)
 
     if [[ -z "$existing" ]]; then

@@ -1226,6 +1226,54 @@ async def get_report_link(
     return ReportLinkResponse(url=link, expires_in=ttl, markdown=markdown, summary=summary)
 
 
+class ReportCardResponse(BaseModel):
+    ok: bool
+    delivered: bool = False
+    message_id: Optional[str] = None
+    error: Optional[str] = None
+
+
+@router.get(
+    "/report/card", response_model=ReportCardResponse, operation_id="ops_report_card"
+)
+async def send_report_card(
+    open_id: str = Query(..., description="飞书用户 open_id（收件人，报告范围由其 binding 锁定）"),
+    template_name: str = Query("daily_brief", description="daily_brief=日报；weekly_review=周报"),
+    period: str = Query("yesterday", description="时间窗口：yesterday（昨日日报）/last_week（上周周报）/today/last_7d/last_30d 等"),
+    analysis: str = Query("", description="一段经营分析（AI 摘要+运营建议），只写定性分析、不写数字——KPI/爆款/库存数字由卡片用真实数据渲染"),
+):
+    """【定时日报/周报专用】把经营报告以结构化飞书卡片直投给收件人。
+
+    数字由后端用真实数据（与可视化页同源的 summary）渲染，`analysis` 是唯一来自 LLM 的
+    定性分析段。调用后卡片即发出，agent 无需再自己写数字报告。范围由 open_id 的 binding 锁定。
+    """
+    from web.report_card_builder import build_report_card
+    from web.feishu_card_sender import send_interactive_card, FeishuSendError
+
+    account_id = current_account()
+    # 复用 get_report_link 拿 summary + 裸链（wrap_applink=False：卡片按钮用 open_url 走原始链接）
+    link = await get_report_link(
+        open_id=open_id, template_name=template_name,
+        start_date=None, end_date=None, period=period, wrap_applink=False,
+    )
+    if not link.summary:
+        return ReportCardResponse(ok=False, error="报告摘要生成失败，未发送卡片")
+    ttl = link.expires_in or 0
+    if ttl >= 86400:
+        ttl_text = f"{ttl // 86400} 天"
+    elif ttl >= 3600:
+        ttl_text = f"{ttl // 3600} 小时"
+    else:
+        ttl_text = f"{max(1, ttl // 60)} 分钟"
+    card = build_report_card(link.summary, analysis or "", link.url, ttl_text=ttl_text)
+    try:
+        msg_id = send_interactive_card(account_id, open_id, card)
+    except FeishuSendError as exc:
+        logger.error("ops_report_card 投递失败 open_id=%s: %s", open_id, exc)
+        return ReportCardResponse(ok=False, error=f"卡片投递失败：{exc}")
+    return ReportCardResponse(ok=True, delivered=True, message_id=msg_id)
+
+
 @router.get(
     "/dashboard/summary",
     response_model=DashboardSummaryResponse,

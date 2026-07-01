@@ -107,6 +107,24 @@ TOOL_SPECS: list[ToolSpec] = [
         },
     ),
     ToolSpec(
+        name="ops_report_card",
+        description=(
+            "【定时日报/周报专用】把经营报告以**结构化飞书卡片**直接投递给收件人（原生 KPI 分栏/"
+            "表格/折叠面板/彩色环比/底部报告按钮，观感远好于纯文字）。数字由后端用真实数据渲染，"
+            "你只需传 analysis（一段定性经营分析）。调用后卡片即发出，无需再自己写数字报告。"
+            "仅在定时任务里用；普通对话问报告仍用 ops_report 发链接。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "template_name": {"type": "string", "enum": ["daily_brief", "weekly_review"], "description": "daily_brief=日报；weekly_review=周报。"},
+                "period": {"type": "string", "description": "时间窗口：yesterday（昨日日报）/last_week（上周周报）/today/last_7d/last_30d 等。"},
+                "analysis": {"type": "string", "description": "一段经营分析（AI 摘要+运营建议：环比归因、风险优先级、可执行下一步）。**只写定性分析与建议，不要写具体数字**——KPI/爆款/库存数字由卡片用真实数据渲染。可用飞书 markdown（**粗体**、列表）。"},
+            },
+            "required": ["template_name", "analysis"],
+        },
+    ),
+    ToolSpec(
         name="ops_business_rules",
         description=(
             "业务规则 / 数据口径知识库（来自仓库 docs/business-rules.md）。"
@@ -212,6 +230,34 @@ def run_tool(name: str, arguments: dict, perm: UserPermission) -> dict:
         if getattr(result, "summary", None):
             return {"markdown": result.markdown, "summary": result.summary}
         return result.markdown
+    elif name == "ops_report_card":
+        # 定时日报/周报专用：后端拼 v2 卡片 + 直投飞书（数字来自 summary，analysis 来自 LLM）
+        from web.routes.data import get_report_link
+        from web.report_card_builder import build_report_card
+        from web.feishu_card_sender import send_interactive_card, FeishuSendError
+        template = args.get("template_name", "daily_brief")
+        period_val = args.get("period") or ("last_week" if template == "weekly_review" else "yesterday")
+        analysis = args.get("analysis") or ""
+        link = _run(get_report_link(
+            open_id=perm.open_id, template_name=template, period=period_val,
+            wrap_applink=False))
+        summary = getattr(link, "summary", None)
+        if not summary:
+            return {"ok": False, "error": "报告摘要生成失败，未发送卡片"}
+        ttl = getattr(link, "expires_in", 0) or 0
+        if ttl >= 86400:
+            ttl_text = f"{ttl // 86400} 天"
+        elif ttl >= 3600:
+            ttl_text = f"{ttl // 3600} 小时"
+        else:
+            ttl_text = f"{max(1, ttl // 60)} 分钟"
+        card = build_report_card(summary, analysis, link.url, ttl_text=ttl_text)
+        try:
+            msg_id = send_interactive_card(perm.account_id, perm.open_id, card)
+        except FeishuSendError as exc:
+            logger.error("ops_report_card 投递失败: %s", exc)
+            return {"ok": False, "error": f"卡片投递失败：{exc}"}
+        return {"ok": True, "delivered": True, "message_id": msg_id}
     else:  # 不会到这（已校验），保险
         raise ValueError(f"未实现工具：{name}")
 

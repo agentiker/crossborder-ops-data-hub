@@ -120,6 +120,7 @@ mcp = FastApiMCP(
         "ops_set_scope_binding",
         "ops_dashboard_link",
         "ops_report_link",
+        "ops_report_card",
     ],
     headers=["x-internal-token", "x-account-id"],  # x-account-id 多租户：openclaw 注入当前租户
 )
