@@ -1419,7 +1419,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           change={ch?.units_sold}
           title="销量（件）"
           value={fmtInt(o?.units_sold)}
-          subtitle="已付款件数·排除取消/未付款"
+          subtitle="不含已取消和未付款"
           icon={<Package size={14} />}
           info={
             <InfoTooltip
