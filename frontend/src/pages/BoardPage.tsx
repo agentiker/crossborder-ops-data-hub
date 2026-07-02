@@ -1106,7 +1106,9 @@ function MetricCard({
       {loading ? (
         <Skeleton className="my-1 h-7 w-24" />
       ) : (
-        <div className="tabnum text-2xl font-bold text-foreground">{value}</div>
+        <div className="tabnum whitespace-nowrap text-xl font-bold leading-tight text-foreground lg:text-2xl">
+          {value}
+        </div>
       )}
       {/* 底部信息块贴底对齐（mt-auto）：卡片等高时，各卡的副标注/环比落在同一基线，
           不因上方 value 折行或有无副标注而错位（GMV 无副标注、广告只有副标注也能对齐）。 */}
@@ -1363,11 +1365,13 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
         }
       />
 
-      {/* KPI 响应式：移动端 2 列、PC(lg) 5 列一行铺满（GMV/广告/订单数/销量/ROAS 五张等宽卡）。
+      {/* KPI 响应式：移动端 2 列、PC(lg) 6 列一行铺满。GMV 金额位数最多（可达十亿级 Rp），
+          PC 下独占 2 列避免长数字被挤折行；广告/订单数/销量/ROAS 各 1 列 → 2+1+1+1+1=6。
           卡片等高 + 底部信息块贴底（见 MetricCard），使各卡「副标注 / vs 上期」落在同一基线、不错位。
           ROI 口径未定，不留占位死格。 */}
-      <div className="mb-4 grid auto-rows-fr grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="mb-4 grid auto-rows-fr grid-cols-2 gap-3 lg:grid-cols-6">
         <MetricCard
+          className="col-span-2 lg:col-span-2"
           loading={loading}
           change={ch?.gmv}
           title="GMV"
@@ -1424,7 +1428,6 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           }
         />
         <MetricCard
-          className="col-span-2 lg:col-span-1"
           loading={loading}
           change={noPaidSpend || !adComplete ? undefined : ch?.roas}
           title="ROAS"
