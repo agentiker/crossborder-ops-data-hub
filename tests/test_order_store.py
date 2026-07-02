@@ -347,6 +347,8 @@ def test_display_units_exclude_cancelled_unpaid_gmv_and_orders_keep(session, mon
     assert summary["order_count"] == 3
     # 销量（件）：只算已付款正常单的 2 件（取消 1 + 未付款 1 被排除）
     assert summary["units_sold"] == 2
+    # 已取消单数（灰字标注用）：cxl 一单
+    assert summary["cancelled_count"] == 1
 
     # 趋势 units 桶同口径：当日 order_count=3、units_sold=2
     points = order_metrics.get_gmv_trend(
@@ -374,3 +376,5 @@ def test_nondisplay_units_unchanged_by_status_filter(session, monkeypatch):
         country="ID", shop_id="shop-1",
     )
     assert summary["order_count"] == 1 and summary["units_sold"] == 1
+    # 非展示口径不算取消单数（恒 0，前端据此不显灰字）
+    assert summary["cancelled_count"] == 0

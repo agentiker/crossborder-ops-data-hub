@@ -201,6 +201,7 @@ export interface BoardData {
       order_count: number;
       units_sold: number;
       avg_order_value: number;
+      cancelled_count?: number;
     };
     inventory: { total_sku?: number; total_stock?: number; low_stock_count?: number };
     // 广告消耗（结算口径）：无结算数据时 total_ad_spend=0、roas=null，前端降级为「—」。

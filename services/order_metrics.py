@@ -143,6 +143,16 @@ def _gmv_aggregates(
         line_q = _scope_filters(line_q, OrderHeader, platform, country, shop_id, shop_ids)
         units_sold = line_q.scalar() or 0
 
+        # 已取消单数（仅展示口径有意义：GMV/订单数含取消，此处单列出其中取消的单数供前端灰字标注）。
+        # 非展示口径（利润排除取消、付款口径无取消单）恒为 0，前端据此不显。
+        cancelled_count = 0
+        if display:
+            cxl_q = session.query(func.count(OrderHeader.order_id)).filter(
+                *tf, OrderHeader.order_status == "CANCELLED"
+            )
+            cxl_q = _scope_filters(cxl_q, OrderHeader, platform, country, shop_id, shop_ids)
+            cancelled_count = int(cxl_q.scalar() or 0)
+
         order_count = int(order_count or 0)
         gmv_f = _to_float(gmv)
         avg_order_value = round(gmv_f / order_count, 2) if order_count else 0.0
@@ -150,6 +160,7 @@ def _gmv_aggregates(
             "gmv": gmv_f,
             "order_count": order_count,
             "units_sold": int(units_sold),
+            "cancelled_count": cancelled_count,
             "avg_order_value": avg_order_value,
         }
     finally:

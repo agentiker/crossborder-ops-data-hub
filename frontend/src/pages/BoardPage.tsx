@@ -1135,16 +1135,24 @@ function OrderMetricsCard({
   unitsSold,
   orderChange,
   unitsChange,
+  cancelledCount,
   loading,
 }: {
   orderCount?: number;
   unitsSold?: number;
   orderChange?: number | null;
   unitsChange?: number | null;
+  cancelledCount?: number;
   loading?: boolean;
 }) {
-  const cells: { label: string; value?: number; change?: number | null }[] = [
-    { label: "订单数", value: orderCount, change: orderChange },
+  const cells: { label: string; value?: number; change?: number | null; note?: string }[] = [
+    {
+      label: "订单数",
+      value: orderCount,
+      change: orderChange,
+      // 含取消口径下，灰字标出其中已取消单数（>0 才显），让运营一眼知道有多少水单。
+      note: cancelledCount && cancelledCount > 0 ? `含已取消 ${fmtInt(cancelledCount)}` : undefined,
+    },
     { label: "销量（件）", value: unitsSold, change: unitsChange },
   ];
   return (
@@ -1169,6 +1177,9 @@ function OrderMetricsCard({
                 <Skeleton className="my-1 h-7 w-16" />
               ) : (
                 <div className="tabnum text-2xl font-bold text-foreground">{fmtInt(c.value)}</div>
+              )}
+              {!loading && c.note && (
+                <div className="text-xs text-foreground-tertiary">{c.note}</div>
               )}
               {!loading && dir && (
                 <div
@@ -1411,9 +1422,10 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
         }
       />
 
-      {/* KPI 固定 2 列：第一行 GMV/广告消耗、第二行 订单/销量；ROAS 综合指标独占整行。
-          ROI 口径未定，不在英雄行留占位死格（定口径后再加），避免一瞥落在空值上。 */}
-      <div className="mb-4 grid grid-cols-2 gap-3">
+      {/* KPI 响应式：移动端 2 列（GMV/广告一行、成交概况整行含订单数+销量、ROAS 整行），
+          PC(lg) 拉成 5 列一行铺满：GMV(1)+广告(1)+成交概况(2)+ROAS(1)，不再让宽卡横占整行浪费空间。
+          ROI 口径未定，不留占位死格。 */}
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
         <MetricCard
           loading={loading}
           change={ch?.gmv}
@@ -1444,9 +1456,10 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           unitsSold={o?.units_sold}
           orderChange={ch?.order_count}
           unitsChange={ch?.units_sold}
+          cancelledCount={o?.cancelled_count}
         />
         <MetricCard
-          className="col-span-2"
+          className="col-span-2 lg:col-span-1"
           loading={loading}
           change={noPaidSpend || !adComplete ? undefined : ch?.roas}
           title="ROAS"
