@@ -251,6 +251,7 @@ async def _collect(
         "gmv": cur["gmv"], "order_count": cur["order_count"],
         "units_sold": cur["units_sold"], "avg_order_value": cur["avg_order_value"],
         "cancelled_count": cur.get("cancelled_count", 0),
+        "unpaid_count": cur.get("unpaid_count", 0),
     }
     overview["ads"] = {
         "total_ad_spend": cur_ads["total_ad_spend"],

@@ -1136,6 +1136,7 @@ function OrderMetricsCard({
   orderChange,
   unitsChange,
   cancelledCount,
+  unpaidCount,
   loading,
 }: {
   orderCount?: number;
@@ -1143,15 +1144,23 @@ function OrderMetricsCard({
   orderChange?: number | null;
   unitsChange?: number | null;
   cancelledCount?: number;
+  unpaidCount?: number;
   loading?: boolean;
 }) {
+  // 订单数灰字：把从「订单数」到「销量口径成交单」的两个扣减项都摊开（已取消 + 未付款），
+  // 避免客户只看到取消数、算 订单数−取消 仍 > 销量 而误以为矛盾（未付款单藏在差里）。
+  const orderNote = [
+    cancelledCount && cancelledCount > 0 ? `已取消 ${fmtInt(cancelledCount)}` : null,
+    unpaidCount && unpaidCount > 0 ? `未付款 ${fmtInt(unpaidCount)}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const cells: { label: string; value?: number; change?: number | null; note?: string }[] = [
     {
       label: "订单数",
       value: orderCount,
       change: orderChange,
-      // 含取消口径下，灰字标出其中已取消单数（>0 才显），让运营一眼知道有多少水单。
-      note: cancelledCount && cancelledCount > 0 ? `含已取消 ${fmtInt(cancelledCount)}` : undefined,
+      note: orderNote ? `含${orderNote}` : undefined,
     },
     { label: "销量（件）", value: unitsSold, change: unitsChange },
   ];
@@ -1162,7 +1171,7 @@ function OrderMetricsCard({
         <span className="text-xs">成交概况</span>
         <InfoTooltip
           align="start"
-          content="订单数：按下单时间统计、含所有状态（含已取消），与 TikTok 后台「订单管理」列表口径一致。销量（件）：实际售出的商品件数（买 3 件同款算 3），按已付款口径统计、排除已取消/未付款单，与后台「数据罗盘 / Analytics」的 Items sold 口径一致。两者口径不同，故不成简单倍数关系，属正常。"
+          content="订单数：按下单时间统计、含所有状态（含已取消、未付款），与 TikTok 后台「订单管理」列表口径一致。销量（件）：实际售出的商品件数（买 3 件同款算 3），按已付款口径统计、排除已取消/未付款单，与后台「数据罗盘 / Analytics」的 Items sold 口径一致。故「订单数 − 已取消 − 未付款 = 已成交单」，件数按已成交口径统计（一单可含多件），两者口径不同、不成简单倍数关系，属正常。"
         >
           <Info className="h-3.5 w-3.5" />
         </InfoTooltip>
@@ -1457,6 +1466,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           orderChange={ch?.order_count}
           unitsChange={ch?.units_sold}
           cancelledCount={o?.cancelled_count}
+          unpaidCount={o?.unpaid_count}
         />
         <MetricCard
           className="col-span-2 lg:col-span-1"

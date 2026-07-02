@@ -143,15 +143,20 @@ def _gmv_aggregates(
         line_q = _scope_filters(line_q, OrderHeader, platform, country, shop_id, shop_ids)
         units_sold = line_q.scalar() or 0
 
-        # 已取消单数（仅展示口径有意义：GMV/订单数含取消，此处单列出其中取消的单数供前端灰字标注）。
-        # 非展示口径（利润排除取消、付款口径无取消单）恒为 0，前端据此不显。
+        # 已取消/未付款单数（仅展示口径有意义）：GMV/订单数含这两类，但销量（件）已把它们排除，
+        # 故前端在订单数下灰字标出「含已取消 X · 未付款 Y」——让客户能自行 order_count − X − Y
+        # 对上销量口径的成交单数，不至于误以为「订单数−取消 仍 > 销量」是矛盾（未付款单藏在差里）。
+        # 非展示口径（利润排除取消、付款口径无这两类）恒为 0，前端据此不显。
         cancelled_count = 0
+        unpaid_count = 0
         if display:
-            cxl_q = session.query(func.count(OrderHeader.order_id)).filter(
-                *tf, OrderHeader.order_status == "CANCELLED"
-            )
-            cxl_q = _scope_filters(cxl_q, OrderHeader, platform, country, shop_id, shop_ids)
-            cancelled_count = int(cxl_q.scalar() or 0)
+            st_q = session.query(OrderHeader.order_status, func.count(OrderHeader.order_id)).filter(
+                *tf, OrderHeader.order_status.in_(_UNITS_EXCLUDED_STATUSES)
+            ).group_by(OrderHeader.order_status)
+            st_q = _scope_filters(st_q, OrderHeader, platform, country, shop_id, shop_ids)
+            by_status = {s: int(c or 0) for s, c in st_q.all()}
+            cancelled_count = by_status.get("CANCELLED", 0)
+            unpaid_count = by_status.get("UNPAID", 0)
 
         order_count = int(order_count or 0)
         gmv_f = _to_float(gmv)
@@ -161,6 +166,7 @@ def _gmv_aggregates(
             "order_count": order_count,
             "units_sold": int(units_sold),
             "cancelled_count": cancelled_count,
+            "unpaid_count": unpaid_count,
             "avg_order_value": avg_order_value,
         }
     finally:

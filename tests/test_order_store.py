@@ -349,6 +349,8 @@ def test_display_units_exclude_cancelled_unpaid_gmv_and_orders_keep(session, mon
     assert summary["units_sold"] == 2
     # 已取消单数（灰字标注用）：cxl 一单
     assert summary["cancelled_count"] == 1
+    # 未付款单数（灰字标注用）：unp 一单
+    assert summary["unpaid_count"] == 1
 
     # 趋势 units 桶同口径：当日 order_count=3、units_sold=2
     points = order_metrics.get_gmv_trend(
