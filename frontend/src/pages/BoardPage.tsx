@@ -14,6 +14,7 @@ import {
   MapPin,
   Megaphone,
   MessageCircleQuestion,
+  Package,
   Search,
   ShoppingBag,
   ShoppingCart,
@@ -1096,7 +1097,7 @@ function MetricCard({
 }) {
   const dir = change == null ? null : change > 0 ? "up" : change < 0 ? "down" : "flat";
   return (
-    <div className={cn("flex flex-col gap-1 rounded-xl bg-fill-shallow p-4", className)}>
+    <div className={cn("flex h-full flex-col gap-1 rounded-xl bg-fill-shallow p-4", className)}>
       <div className="flex items-center gap-2 text-foreground-secondary">
         {icon}
         <span className="text-xs">{title}</span>
@@ -1107,18 +1108,22 @@ function MetricCard({
       ) : (
         <div className="tabnum text-2xl font-bold text-foreground">{value}</div>
       )}
-      {!loading && subtitle && (
-        <div className="text-xs text-foreground-secondary">{subtitle}</div>
-      )}
-      {!loading && dir && (
-        <div
-          className={`flex items-center gap-1 text-xs ${
-            dir === "up" ? "text-positive" : dir === "down" ? "text-negative" : "text-foreground-secondary"
-          }`}
-        >
-          <span>{dir === "up" ? "↑" : dir === "down" ? "↓" : "−"}</span>
-          <span className="tabnum">{Math.abs(change as number).toFixed(1)}%</span>
-          <span className="text-foreground-secondary">vs 上期</span>
+      {/* 底部信息块贴底对齐（mt-auto）：卡片等高时，各卡的副标注/环比落在同一基线，
+          不因上方 value 折行或有无副标注而错位（GMV 无副标注、广告只有副标注也能对齐）。 */}
+      {!loading && (subtitle || dir) && (
+        <div className="mt-auto flex flex-col gap-1 pt-1">
+          {subtitle && <div className="text-xs text-foreground-tertiary">{subtitle}</div>}
+          {dir && (
+            <div
+              className={`flex items-center gap-1 text-xs ${
+                dir === "up" ? "text-positive" : dir === "down" ? "text-negative" : "text-foreground-secondary"
+              }`}
+            >
+              <span>{dir === "up" ? "↑" : dir === "down" ? "↓" : "−"}</span>
+              <span className="tabnum">{Math.abs(change as number).toFixed(1)}%</span>
+              <span className="text-foreground-secondary">vs 上期</span>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1127,88 +1132,6 @@ function MetricCard({
 
 type OverviewTab = "sales" | "orders" | "traffic" | "funnel";
 
-// 成交概况卡：订单数 + 销量（件）双主指标并排（网格分主次）。合并原「订单数」「销量」两张独立卡，
-// 因两者口径不同（订单数含取消·对齐后台订单管理；销量为已付款口径·对齐后台 Items sold），
-// 放一张卡里配一个口径 tooltip 讲清差异，比两张卡各挂一个说明更省空间、也更易对照。
-function OrderMetricsCard({
-  orderCount,
-  unitsSold,
-  orderChange,
-  unitsChange,
-  cancelledCount,
-  unpaidCount,
-  loading,
-}: {
-  orderCount?: number;
-  unitsSold?: number;
-  orderChange?: number | null;
-  unitsChange?: number | null;
-  cancelledCount?: number;
-  unpaidCount?: number;
-  loading?: boolean;
-}) {
-  // 订单数灰字：把从「订单数」到「销量口径成交单」的两个扣减项都摊开（已取消 + 未付款），
-  // 避免客户只看到取消数、算 订单数−取消 仍 > 销量 而误以为矛盾（未付款单藏在差里）。
-  const orderNote = [
-    cancelledCount && cancelledCount > 0 ? `已取消 ${fmtInt(cancelledCount)}` : null,
-    unpaidCount && unpaidCount > 0 ? `未付款 ${fmtInt(unpaidCount)}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  const cells: { label: string; value?: number; change?: number | null; note?: string }[] = [
-    {
-      label: "订单数",
-      value: orderCount,
-      change: orderChange,
-      note: orderNote ? `含${orderNote}` : undefined,
-    },
-    { label: "销量（件）", value: unitsSold, change: unitsChange },
-  ];
-  return (
-    <div className="col-span-2 flex flex-col gap-2 rounded-xl bg-fill-shallow p-4">
-      <div className="flex items-center gap-2 text-foreground-secondary">
-        <ShoppingCart size={14} />
-        <span className="text-xs">成交概况</span>
-        <InfoTooltip
-          align="start"
-          content="订单数：按下单时间统计、含所有状态（含已取消、未付款），与 TikTok 后台「订单管理」列表口径一致。销量（件）：实际售出的商品件数（买 3 件同款算 3），按已付款口径统计、排除已取消/未付款单，与后台「数据罗盘 / Analytics」的 Items sold 口径一致。故「订单数 − 已取消 − 未付款 = 已成交单」，件数按已成交口径统计（一单可含多件），两者口径不同、不成简单倍数关系，属正常。"
-        >
-          <Info className="h-3.5 w-3.5" />
-        </InfoTooltip>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        {cells.map((c) => {
-          const dir = c.change == null ? null : c.change > 0 ? "up" : c.change < 0 ? "down" : "flat";
-          return (
-            <div key={c.label} className="flex flex-col gap-1">
-              <span className="text-xs text-foreground-tertiary">{c.label}</span>
-              {loading ? (
-                <Skeleton className="my-1 h-7 w-16" />
-              ) : (
-                <div className="tabnum text-2xl font-bold text-foreground">{fmtInt(c.value)}</div>
-              )}
-              {!loading && c.note && (
-                <div className="text-xs text-foreground-tertiary">{c.note}</div>
-              )}
-              {!loading && dir && (
-                <div
-                  className={`flex items-center gap-1 text-xs ${
-                    dir === "up" ? "text-positive" : dir === "down" ? "text-negative" : "text-foreground-secondary"
-                  }`}
-                >
-                  <span>{dir === "up" ? "↑" : dir === "down" ? "↓" : "−"}</span>
-                  <span className="tabnum">{Math.abs(c.change as number).toFixed(1)}%</span>
-                  <span className="text-foreground-secondary">vs 上期</span>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function BusinessOverview({ data, loading }: { data: BoardData | null; loading: boolean }) {
   const t = useChartTokens();
   const [activeTab, setActiveTab] = useState<OverviewTab>("sales");
@@ -1216,6 +1139,15 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
   const o = data?.overview.orders;
   const ads = data?.overview.ads;
   const ch = data?.overview.change;
+  // 订单数灰字：把从「订单数」到销量口径成交单的两个扣减项都摊开（已取消 + 未付款），
+  // 避免客户只看到取消数、算 订单数−取消 仍 > 销量 而误以为矛盾（未付款单藏在差里）。
+  const orderDeductions = [
+    o?.cancelled_count ? `已取消 ${fmtInt(o.cancelled_count)}` : null,
+    o?.unpaid_count ? `未付款 ${fmtInt(o.unpaid_count)}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const orderSubtitle = orderDeductions ? `含${orderDeductions}` : undefined;
   const pts = data?.trend.points ?? [];
   // 上期对比线（销售趋势）：单天=前一天逐小时、多天=等长上一期逐日。后端可能不返回（取数失败）。
   const prevPts = data?.trend.prev_points ?? [];
@@ -1431,10 +1363,10 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
         }
       />
 
-      {/* KPI 响应式：移动端 2 列（GMV/广告一行、成交概况整行含订单数+销量、ROAS 整行），
-          PC(lg) 拉成 5 列一行铺满：GMV(1)+广告(1)+成交概况(2)+ROAS(1)，不再让宽卡横占整行浪费空间。
+      {/* KPI 响应式：移动端 2 列、PC(lg) 5 列一行铺满（GMV/广告/订单数/销量/ROAS 五张等宽卡）。
+          卡片等高 + 底部信息块贴底（见 MetricCard），使各卡「副标注 / vs 上期」落在同一基线、不错位。
           ROI 口径未定，不留占位死格。 */}
-      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="mb-4 grid auto-rows-fr grid-cols-2 gap-3 lg:grid-cols-5">
         <MetricCard
           loading={loading}
           change={ch?.gmv}
@@ -1459,14 +1391,37 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           info={hasAdSpend ? adInfoBtn : undefined}
           icon={<Megaphone size={14} />}
         />
-        <OrderMetricsCard
+        <MetricCard
           loading={loading}
-          orderCount={o?.order_count}
-          unitsSold={o?.units_sold}
-          orderChange={ch?.order_count}
-          unitsChange={ch?.units_sold}
-          cancelledCount={o?.cancelled_count}
-          unpaidCount={o?.unpaid_count}
+          change={ch?.order_count}
+          title="订单数"
+          value={fmtInt(o?.order_count)}
+          subtitle={orderSubtitle}
+          icon={<ShoppingCart size={14} />}
+          info={
+            <InfoTooltip
+              align="start"
+              content="按下单时间统计、含所有状态（含已取消、未付款），与 TikTok 后台「订单管理」列表口径一致。「订单数 − 已取消 − 未付款 = 已成交单」，故会大于按已付款统计的销量口径成交单数。"
+            >
+              <Info className="h-3.5 w-3.5" />
+            </InfoTooltip>
+          }
+        />
+        <MetricCard
+          loading={loading}
+          change={ch?.units_sold}
+          title="销量（件）"
+          value={fmtInt(o?.units_sold)}
+          subtitle="已付款件数·排除取消/未付款"
+          icon={<Package size={14} />}
+          info={
+            <InfoTooltip
+              align="start"
+              content="实际售出的商品件数（买 3 件同款算 3），按已付款口径统计、排除已取消/未付款单，与后台「数据罗盘 / Analytics」的 Items sold 口径一致。一单可含多件，故与订单数不成简单倍数关系。"
+            >
+              <Info className="h-3.5 w-3.5" />
+            </InfoTooltip>
+          }
         />
         <MetricCard
           className="col-span-2 lg:col-span-1"
