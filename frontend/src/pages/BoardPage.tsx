@@ -1365,13 +1365,13 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
         }
       />
 
-      {/* KPI 响应式：移动端 2 列、PC(lg) 6 列一行铺满。GMV 金额位数最多（可达十亿级 Rp），
-          PC 下独占 2 列避免长数字被挤折行；广告/订单数/销量/ROAS 各 1 列 → 2+1+1+1+1=6。
+      {/* KPI 响应式：移动端 2 列、PC(lg) 用 11 列网格让 GMV 占 1.5 卡宽（GMV=3、其余各=2 →
+          3+2+2+2+2=11），GMV 金额位数最多（十亿级 Rp）故略宽避免折行、又不像整 2 列那样过空。
           卡片等高 + 底部信息块贴底（见 MetricCard），使各卡「副标注 / vs 上期」落在同一基线、不错位。
           ROI 口径未定，不留占位死格。 */}
-      <div className="mb-4 grid auto-rows-fr grid-cols-2 gap-3 lg:grid-cols-6">
+      <div className="mb-4 grid auto-rows-fr grid-cols-2 gap-3 lg:grid-cols-11">
         <MetricCard
-          className="col-span-2 lg:col-span-2"
+          className="col-span-2 lg:col-span-3"
           loading={loading}
           change={ch?.gmv}
           title="GMV"
@@ -1387,6 +1387,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           }
         />
         <MetricCard
+          className="lg:col-span-2"
           loading={loading}
           change={hasAdSpend && adComplete ? ch?.ad_cost : undefined}
           title="广告消耗"
@@ -1396,6 +1397,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           icon={<Megaphone size={14} />}
         />
         <MetricCard
+          className="lg:col-span-2"
           loading={loading}
           change={ch?.order_count}
           title="订单数"
@@ -1412,6 +1414,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           }
         />
         <MetricCard
+          className="lg:col-span-2"
           loading={loading}
           change={ch?.units_sold}
           title="销量（件）"
@@ -1428,6 +1431,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           }
         />
         <MetricCard
+          className="lg:col-span-2"
           loading={loading}
           change={noPaidSpend || !adComplete ? undefined : ch?.roas}
           title="ROAS"
