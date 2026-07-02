@@ -19,7 +19,6 @@ import {
   ShoppingCart,
   Sparkles,
   Store,
-  TrendingUp,
   TriangleAlert,
   Wrench,
   X,
@@ -1128,6 +1127,68 @@ function MetricCard({
 
 type OverviewTab = "sales" | "orders" | "traffic" | "funnel";
 
+// 成交概况卡：订单数 + 销量（件）双主指标并排（网格分主次）。合并原「订单数」「销量」两张独立卡，
+// 因两者口径不同（订单数含取消·对齐后台订单管理；销量为已付款口径·对齐后台 Items sold），
+// 放一张卡里配一个口径 tooltip 讲清差异，比两张卡各挂一个说明更省空间、也更易对照。
+function OrderMetricsCard({
+  orderCount,
+  unitsSold,
+  orderChange,
+  unitsChange,
+  loading,
+}: {
+  orderCount?: number;
+  unitsSold?: number;
+  orderChange?: number | null;
+  unitsChange?: number | null;
+  loading?: boolean;
+}) {
+  const cells: { label: string; value?: number; change?: number | null }[] = [
+    { label: "订单数", value: orderCount, change: orderChange },
+    { label: "销量（件）", value: unitsSold, change: unitsChange },
+  ];
+  return (
+    <div className="col-span-2 flex flex-col gap-2 rounded-xl bg-fill-shallow p-4">
+      <div className="flex items-center gap-2 text-foreground-secondary">
+        <ShoppingCart size={14} />
+        <span className="text-xs">成交概况</span>
+        <InfoTooltip
+          align="start"
+          content="订单数：按下单时间统计、含所有状态（含已取消），与 TikTok 后台「订单管理」列表口径一致。销量（件）：实际售出的商品件数（买 3 件同款算 3），按已付款口径统计、排除已取消/未付款单，与后台「数据罗盘 / Analytics」的 Items sold 口径一致。两者口径不同，故不成简单倍数关系，属正常。"
+        >
+          <Info className="h-3.5 w-3.5" />
+        </InfoTooltip>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        {cells.map((c) => {
+          const dir = c.change == null ? null : c.change > 0 ? "up" : c.change < 0 ? "down" : "flat";
+          return (
+            <div key={c.label} className="flex flex-col gap-1">
+              <span className="text-xs text-foreground-tertiary">{c.label}</span>
+              {loading ? (
+                <Skeleton className="my-1 h-7 w-16" />
+              ) : (
+                <div className="tabnum text-2xl font-bold text-foreground">{fmtInt(c.value)}</div>
+              )}
+              {!loading && dir && (
+                <div
+                  className={`flex items-center gap-1 text-xs ${
+                    dir === "up" ? "text-positive" : dir === "down" ? "text-negative" : "text-foreground-secondary"
+                  }`}
+                >
+                  <span>{dir === "up" ? "↑" : dir === "down" ? "↓" : "−"}</span>
+                  <span className="tabnum">{Math.abs(c.change as number).toFixed(1)}%</span>
+                  <span className="text-foreground-secondary">vs 上期</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function BusinessOverview({ data, loading }: { data: BoardData | null; loading: boolean }) {
   const t = useChartTokens();
   const [activeTab, setActiveTab] = useState<OverviewTab>("sales");
@@ -1291,7 +1352,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
       tooltip: { trigger: "axis" as const, ...tip },
       // 图例置顶（原 bottom:0 会和 X 轴标签重叠压字）：与 X 轴彻底分离。
       legend: {
-        data: ["订单数", "销量"],
+        data: ["订单数", "销量（件）"],
         top: 0,
         left: "center",
         textStyle: { color: t.sub, fontSize: 11 },
@@ -1311,7 +1372,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           itemStyle: { color: t.positive },
         },
         {
-          name: "销量",
+          name: "销量（件）",
           type: "bar",
           data: pts.map((p) => p.units_sold),
           itemStyle: { color: t.warning, borderRadius: [4, 4, 0, 0] },
@@ -1324,7 +1385,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
 
   const tabs: { id: OverviewTab; label: string }[] = [
     { id: "sales", label: "销售趋势" },
-    { id: "orders", label: "订单 / 销量" },
+    { id: "orders", label: "订单 / 销量（件）" },
     { id: "traffic", label: "流量趋势" },
     { id: "funnel", label: "转化漏斗" },
   ];
@@ -1377,35 +1438,12 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           info={hasAdSpend ? adInfoBtn : undefined}
           icon={<Megaphone size={14} />}
         />
-        <MetricCard
+        <OrderMetricsCard
           loading={loading}
-          change={ch?.order_count}
-          title="订单数"
-          value={fmtInt(o?.order_count)}
-          icon={<ShoppingCart size={14} />}
-          info={
-            <InfoTooltip
-              align="start"
-              content="按下单时间统计，包含所有订单（含已取消），与后台的订单件数口径一致。"
-            >
-              <Info className="h-3.5 w-3.5" />
-            </InfoTooltip>
-          }
-        />
-        <MetricCard
-          loading={loading}
-          change={ch?.units_sold}
-          title="销量"
-          value={fmtInt(o?.units_sold)}
-          icon={<TrendingUp size={14} />}
-          info={
-            <InfoTooltip
-              align="start"
-              content="按下单时间统计的商品件数，包含所有订单（含已取消），与后台件数口径一致。"
-            >
-              <Info className="h-3.5 w-3.5" />
-            </InfoTooltip>
-          }
+          orderCount={o?.order_count}
+          unitsSold={o?.units_sold}
+          orderChange={ch?.order_count}
+          unitsChange={ch?.units_sold}
         />
         <MetricCard
           className="col-span-2"

@@ -26,7 +26,7 @@
   - **为什么这样定（2026-07-01 两轮对账钉死）**：
     1. 第一轮：本店（COD 主导店）约 **77% 是 COD 单**，下单时 `paid_time` 为空、收货才回填。旧的**付款口径**（`paid_time` 非空归日）会把当天 COD 单漏到几周后 → 日报 GMV 只有后台 ~1/5。改成 `create_time` 下单口径后量级对上。
     2. 第二轮：客户反馈「后台 GMV 不会减少」→ 直打 `orders/search` 多口径反推确认，后台 GMV 用的是 **`sub_total`（商品小计）+ 含所有状态（不扣取消）**，不是我们当时用的 `total_amount`（买家实付含运费税）+ 排除取消。两处口径错误（字段偏高 ~4% / 排除取消偏低）方向相反、部分抵消，净差看着像 2.5% 噪声，实为口径错。故改用 `sub_total` + 含取消，精确对齐。
-- **只有 GMV 总额 + 趋势 + 订单数 + 销量**用展示口径。**爆款榜/新品/SKU 拆分口径不同**（行级 `sale_price` + 排除取消），前端 tooltip 已标注差异。
+- **GMV 总额 + 趋势 + 订单数**用展示口径（含取消）。**销量（件）** 同为展示口径但**单独收紧**——排除取消/未付款（已付款口径），对齐后台 Analytics 的 Items sold（见 §2.3）。**爆款榜/新品/SKU 拆分口径不同**（行级 `sale_price` + 排除取消），前端 tooltip 已标注差异。
 - 报告里 GMV 缩写展示（`Rp xxK/M/B`）只在前端展示层，后端返回原值。
 - 代码开关：`services/order_metrics.py` 三套口径正交开关 `_time_filter(by_create, display)` / `_time_col(by_create, display)`——见 §2.2 表。展示端点（`data.py` overview/orders/trend、`board.py`、`report.py` 日报周报）钉 `display=True`。回填期老单 `sub_total` 为 NULL 时聚合用 `coalesce(sub_total, total_amount)` 兜底（GMV 平滑收敛不暴跌）。
 
@@ -43,13 +43,46 @@
 
 | 口径 | 用途 | 归日 | 取消单 | 金额列 | 开关 |
 |---|---|---|---|---|---|
-| **展示** | 日报/周报/看板 GMV 总额·趋势·订单数·销量 | `create_time` | **含** | **`sub_total`** | `display=True` |
+| **展示** | 日报/周报/看板 GMV 总额·趋势·**订单数** | `create_time` | **含** | **`sub_total`** | `display=True` |
+| **展示·销量** | 看板/报告「销量（件）」| `create_time` | **排除**（连未付款 UNPAID 一起排除）| —（计 line_item 条数）| `display=True` + `_units_status_filter` |
 | **利润** | 预估利润 GMV（与扣点同队列） | `create_time` | 排除 | `total_amount` | `by_create=True` |
 | **ROAS/付款** | ROAS 分子 GMV | `paid_time` | （付款即非取消）| `total_amount` | 都 False（默认）|
+
+- **销量（件）为何和订单数口径不同**（2026-07-02）：后台 Analytics 的 GMV 含取消（我们对得上），但同页 Orders/Items sold 是**已付款口径**（官方定义含 "paid" 限定，见 §2.3）。为让「销量（件）」能被运营用 Analytics 的 Items sold 核对，销量单独排除 CANCELLED/UNPAID；GMV/订单数保持含取消（分别对齐后台 GMV 与订单管理列表）。实现：`services/order_metrics.py::_units_status_filter(display)`，只作用于 units 的 line_item 计数，三处（汇总/日趋势/时趋势）复用；GMV/订单数的 header 查询不受影响。
 
 - **ROAS 分子**（`services/ad_metrics.py`）保留**付款口径**：分母广告消耗是结算口径（按结算日），分子需同口径；改展示口径会把未付款 COD / 取消单算进分子 → ROAS 虚高。故 ROAS 卡 GMV **小于**经营概览 GMV，有意为之、非 bug。
 - **利润卡 GMV**（`services/profit_summary.py:get_profit_card` ← `flows/aggregate_profit`，`by_create=True`）：`total_amount` + 排除取消。会**小于**展示 GMV（展示用 sub_total 且含取消），差异 = 运费税 −取消单，属口径差、非 bug。
 - **覆盖天数护栏**：利润卡读预聚合表，若 `aggregate_profit` 漏跑某天会静默少算。`get_profit_card` 返回 `coverage_complete`；前端 false 时显横幅。根治靠 `aggregate_profit` timer 常态跑 + 回填（`uv run python -m flows.aggregate_profit --days 30`）。
+
+### 2.3 TikTok 后台口径对照（官方定义 + 我方对应，2026-07-02 钉死）
+
+运营常拿后台数核对，但**后台自己有两个不同的页、口径不一致**，且我们不同指标锚定不同页，务必区分：
+
+- **Analytics / 数据罗盘（Shop analytics）** ← 已付款口径（官方定义 Orders = "the total number of **paid** SKU orders placed"）。
+- **订单管理（Manage orders）列表** ← 宽口径，含未付款/取消，只有订单数、无件数汇总。
+
+| 后台指标 | 官方定义 | 我方对应 | 口径 |
+|---|---|---|---|
+| **GMV** | 买家支付额，**含退款退货**（"including refunds and returns"）| 展示 GMV | 含取消（对得上，实测差 0.06%）|
+| **Items sold** | 售出**单件总数**（买 3A + 2B = 5）| **销量（件）** | 已付款：排除取消/未付款 |
+| **SKU orders** | 每单**去重 SKU 数**累加（周一买 A=1；周二买 5A+6B=2；合计 3）| 暂未做 | — |
+| **Orders** | 已付款**订单**数（1 次结账 = 1）| — | Analytics 口径我方未单列 |
+| （我方）订单数 | — | 对齐**订单管理列表** | 含取消（**非** Analytics 的 Orders）|
+
+**⚠️ 关键差异**：我方「订单数」锚定的是**订单管理列表**（含取消，与后台列表计数一致），**不是** Analytics 的 Orders（已付款、更小）。而「销量（件）」锚定 Analytics 的 Items sold。故运营若拿我方订单数去比 Analytics 的 Orders 会觉得偏大，属口径不同、非错。
+
+**7/1 实测对照**（prod 单店 gtl，SasaQueen.id）：
+
+| 我方口径 | 订单数 | SKU 单数 | 销量（件）| GMV |
+|---|---|---|---|---|
+| 含取消（现 GMV/订单数）| 768 | 783 | 791 | 97,288,528 |
+| 排除取消+未付款（现销量）| 707 | 722 | **729** | — |
+| **后台 Analytics** | 696 | 709 | **717** | 97,231,338 |
+| **后台 Manage orders** | **768** | — | — | — |
+
+- 订单数 768 = Manage orders 768 ✅；GMV 差 0.06% ✅；销量（件）729 vs Items sold 717 差 ~1.6%（归日边界/平台归因延迟，非 bug）。
+- 逐件计数已证实：768 单中 750 单单行、18 单多行，其中 7 组同 SKU 买多件逐行展开（TikTok order/202309 无 quantity 字段、每件一个独立 line_item.id）→ line_item 条数 = 实物件数 = Items sold 口径。
+- 来源：官方定义见 [TikTok Seller University](https://seller-us.tiktok.com/university/essay?knowledge_id=6276577063585582&lang=en)。
 
 ---
 
@@ -313,4 +346,5 @@
 | 2026-07-01 | 展示类 GMV 统一**下单口径**(`create_time` 归日、排除 CANCELLED、含 COD 在途)对齐 TikTok 后台——COD 主导店(77%)付款口径漏算约 80%(实测日报仅后台 1/5);ROAS 分子仍付款口径(与广告结算对齐);见 §2/§2.2 | `services/order_metrics.py`(`_time_filter`/`_time_col`+各展示函数 `by_create`)、`web/routes/{data,report,board}.py` |
 | 2026-07-01 | 与后台残差 ~2.5% 对账钉死(§2.1):直打 `orders/search` vs prod 库**逐单 100% 一致**(total_count=1393、差集 0、金额不一致 0);差异纯来自「排除 CANCELLED」滞后——过去某天下单集合/金额定死不变,但 order_status 持续流转(704/1393 单变状态,UNPAID 陆续被自动取消),晚看的一方取消单更多、去 CANCELLED 后 GMV 更小;退货一单未出现且下单口径本不含退货。属实时后台 vs 定时快照的正常漂移,无需修 | 对账验证(无代码改动) |
 | 2026-07-01 | **展示 GMV 改用 `sub_total`(商品小计)+含所有状态(不排除取消)，精确对齐后台**(实测 6/29 195.8M vs 后台 196.2M、6/30 178.2M vs 178.8M，差 <0.5%)。客户「后台不减少」→反推后台口径=sub_total+含取消，我们旧口径 total_amount(偏高~4%)+排除取消(偏低)两错抵消成假 2.5%。新增正交开关 `display`(=create_time+含取消+sub_total)，仅 GMV 总额/趋势/订单数/销量用；爆款榜等口径不变靠 tooltip 标注；ROAS/利润口径不动。加 `orders.sub_total` 列(手写迁移 migrate_gmv_sub_total)+回填。见 §2/§2.1/§2.2 | `models/base_models.py`、`core/domain.py`、`platforms/tiktok_shop/normalize.py`、`services/order_store.py`、`services/order_metrics.py`(`_time_filter`/`_gmv_aggregates`/5 get_gmv_* 加 `display`)、`web/routes/{data,board,report}.py`、`scripts/migrate_gmv_sub_total.py`、`frontend/.../BoardPage.tsx` |
+| 2026-07-02 | **销量改「已付款口径」+ 更名「销量（件）」+ 订单指标合并卡 + 后台口径对照固化**(§2.3)。运营用 Analytics 的 Items sold=717 核对，我方显示 791(高 74)。查实:后台 Analytics GMV 含取消(我方对得上 0.06%)但同页 Orders/Items sold 是**已付款口径**(官方定义含 "paid")。故销量单独排除 CANCELLED/UNPAID(→729，对 Items sold 717 差 1.6%)对齐 Analytics；GMV/订单数保持含取消(订单数 768=Manage orders)不动。新增 `_units_status_filter(display)` 只作用 units 三处查询;看板订单数+销量合并成「成交概况」卡(网格分主次)+口径 tooltip;固化 TikTok 官方定义(Items sold/SKU orders/Orders/GMV)。见 §2/§2.2/§2.3 | `services/order_metrics.py`(`_units_status_filter`+`_gmv_aggregates`/`get_gmv_trend`/`_get_gmv_trend_hourly`)、`web/routes/data.py`(ORDERS_CALIBER)、`frontend/.../BoardPage.tsx`(`OrderMetricsCard`)、本文 §2.3 |
 | 2026-07-01 | 看板「库存健康」卡优化(§4.4)：健康度口径显式定义(=不缺货在售商品占比)+仪表盘分档变色(≥85绿/60-85黄/<60红,原恒绿误导)+口径 tooltip/图例；商品明细补 `sku_name`(变体名)+主图小图(批量查 Product 防 N+1/带 scope)、响应式(PC表格/移动卡片不横滚)、长名截断、前端分页(每页20)。无 schema 变更(Inventory.sku_name 早已建表) | `services/stock_metrics.py`、`web/routes/data.py`(`LowStockItem`)、`frontend/src/{api.ts,pages/BoardPage.tsx}`、`tests/test_stock_alerts.py` |

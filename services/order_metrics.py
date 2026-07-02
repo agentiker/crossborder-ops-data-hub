@@ -3,7 +3,8 @@
 口径（已与业务确认）：
 - 已付款订单：`paid_time` 非空且落在统计窗口内（按 paid_time 归日，**印尼当地时间 UTC+7**）。
 - GMV：订单 `total_amount`（买家实付）求和。
-- 销量：line_item 条数（每条 = 售出一件）。
+- 销量：line_item 条数（每条 = 售出一件）；**展示口径下销量单独收紧**——排除取消/未付款单，
+  对齐 TikTok 后台 Analytics 的 Items sold（GMV/订单数仍含取消，见 `_units_status_filter`）。
 
 时区：paid_time 存 naive UTC，归日按印尼 UTC+7（见 core.timezone）。窗口边界经 paid_window_utc
 转成 UTC 查询；趋势按天归日在 Python 端用 to_business_day 完成（规避 SQL date() 的方言差异）。
@@ -82,6 +83,24 @@ def _time_col(by_create: bool, display: bool = False):
     return OrderHeader.create_time if (by_create or display) else OrderHeader.paid_time
 
 
+# 展示口径下「销量（件）」额外排除的订单状态：与 TikTok 后台 Analytics 的 Items sold 对齐。
+# 后台 Items sold/Orders 是「已付款」口径（官方定义 "paid SKU orders placed"），排除未付款与
+# 取消单；而我们展示口径的 GMV/订单数刻意保留取消单（对齐后台 GMV「含退款退货」及订单管理列表）。
+# 故仅销量单独收紧：display=True 时排除 CANCELLED/UNPAID，其余口径（付款/下单）不受影响。
+_UNITS_EXCLUDED_STATUSES = ("CANCELLED", "UNPAID")
+
+
+def _units_status_filter(display: bool):
+    """销量（line_item 计数）在展示口径下额外排除取消/未付款单；非展示口径返回空（不额外过滤）。
+
+    只作用于「销量（件）」，不动 GMV/订单数——三处 units 查询（汇总/日趋势/时趋势）复用此函数，
+    保证「销量对齐后台 Items sold、GMV/订单数仍含取消」这条口径分叉在一处定义、不散落魔法值。
+    """
+    if not display:
+        return []
+    return [OrderHeader.order_status.notin_(_UNITS_EXCLUDED_STATUSES)]
+
+
 def _gmv_aggregates(
     start_dt: datetime,
     end_dt: datetime,
@@ -96,7 +115,8 @@ def _gmv_aggregates(
 
     display=True（展示口径）金额用 sub_total（商品小计，对齐后台），回填期老单 sub_total 为 NULL
     时 coalesce 回退到 total_amount，使 GMV 从偏高平滑收敛而非暴跌到 0（回填后新单皆有值，长期无害）。
-    order_count/units_sold 与 GMV 共用同一 tf，display 下自动含取消单（对齐后台"件数"）。
+    order_count 与 GMV 共用同一 tf（display 下含取消，对齐后台）；**units_sold 在 display 下额外排除
+    取消/未付款**（对齐后台 Items sold，见 `_units_status_filter`），故销量与订单数口径刻意不同。
     """
     session = SessionLocal()
     try:
@@ -113,11 +133,12 @@ def _gmv_aggregates(
         header_q = _scope_filters(header_q, OrderHeader, platform, country, shop_id, shop_ids)
         gmv, order_count = header_q.one()
 
-        # 销量 = 窗口内订单下的 line_item 条数
+        # 销量（件）= 窗口内订单下的 line_item 条数；展示口径额外排除取消/未付款（对齐后台 Items sold），
+        # 故 units 的过滤 = tf + _units_status_filter，而 GMV/订单数仍用原 tf（含取消）。
         line_q = (
             session.query(func.count(OrderLineItem.line_item_id))
             .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
-            .filter(*tf)
+            .filter(*tf, *_units_status_filter(display))
         )
         line_q = _scope_filters(line_q, OrderHeader, platform, country, shop_id, shop_ids)
         units_sold = line_q.scalar() or 0
@@ -552,12 +573,13 @@ def get_gmv_trend(
             agg[0] += _to_float(amount)
             agg[1] += 1
 
-        # 每日销量 = 订单下的 line_item 条数，按订单归日时间归日
+        # 每日销量（件）= 订单下的 line_item 条数，按订单归日时间归日；展示口径排除取消/未付款
         line_q = _scope_filters(
             session.query(tcol)
             .join(OrderLineItem, OrderLineItem.order_id == OrderHeader.order_id)
             .filter(
                 *_time_filter(by_create, start_dt, end_dt, display=display),
+                *_units_status_filter(display),
             ),
             OrderHeader,
             platform,
@@ -636,6 +658,7 @@ def _get_gmv_trend_hourly(
             .join(OrderLineItem, OrderLineItem.order_id == OrderHeader.order_id)
             .filter(
                 *_time_filter(by_create, start_dt, end_dt, display=display),
+                *_units_status_filter(display),
             ),
             OrderHeader,
             platform,

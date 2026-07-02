@@ -229,11 +229,13 @@ def test_display_caliber_uses_sub_total_and_includes_cancelled(session, monkeypa
 
     kw = dict(start_date=date(2026, 6, 1), end_date=date(2026, 6, 5), country="ID", shop_ids=["s1"])
 
-    # 展示口径：sub_total 求和 40+90+900=1030、含取消、order_count=3、units_sold=3
+    # 展示口径：sub_total 求和 40+90+900=1030、GMV/订单数含取消、order_count=3
     disp = order_metrics.get_gmv_summary(**kw, display=True)
     assert disp["gmv"] == 1030.0
     assert disp["order_count"] == 3
-    assert disp["units_sold"] == 3
+    # 销量（件）单独收紧（2026-07-02）：排除取消/未付款 → paid1(1)+cod1(1)=2，cx1(CANCELLED)被排除。
+    # cod1 是 IN_TRANSIT（在途、非 UNPAID/CANCELLED）仍计入。
+    assert disp["units_sold"] == 2
 
     # 利润口径：total_amount、排除取消 → 50+100=150（不受 display 改动影响，回归护栏）
     profit = order_metrics.get_gmv_summary(**kw, by_create=True)

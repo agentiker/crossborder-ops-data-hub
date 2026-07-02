@@ -313,3 +313,64 @@ def test_gmv_trend_day_default_unchanged(session, monkeypatch):
     assert points == [
         {"date": "2026-06-03", "label": None, "gmv": 100000.0, "order_count": 1, "units_sold": 1},
     ]
+
+
+def test_display_units_exclude_cancelled_unpaid_gmv_and_orders_keep(session, monkeypatch):
+    """展示口径（display=True）：销量（件）排除取消/未付款，GMV/订单数仍含取消（2026-07-02）。
+
+    对齐后台——GMV/订单数含取消（后台 GMV/订单管理），销量对齐 Analytics 的 Items sold（已付款口径）。
+    """
+    # 正常已付款单：2 件（多 line_item 逐件展开）
+    paid = _order("ok", paid=_dt(2026, 6, 3), total="100000", status="COMPLETED",
+                  lines=[{"id": "l1", "sku_id": "sku-A", "sale_price": "60000"},
+                         {"id": "l2", "sku_id": "sku-A", "sale_price": "40000"}])
+    # 取消单：1 件（有 create_time、也有 paid_time——买家付了又取消）
+    cancelled = _order("cxl", paid=_dt(2026, 6, 3), total="50000", status="CANCELLED",
+                       lines=[{"id": "l3", "sku_id": "sku-B", "sale_price": "50000"}])
+    # 未付款单：1 件（paid_time 为空）
+    unpaid = DomainOrder(
+        order_id="unp", order_status="UNPAID", currency="IDR",
+        total_amount=Decimal("30000"), sub_total=Decimal("30000"),
+        create_time=_dt(2026, 6, 3), paid_time=None,
+        line_items=(DomainOrderLineItem(line_item_id="l4", sku_id="sku-C",
+                                        sale_price=Decimal("30000"), currency="IDR"),),
+    )
+    upsert_orders(session, [paid, cancelled, unpaid], country="ID", shop_id="shop-1")
+    session.commit()
+    monkeypatch.setattr(order_metrics, "SessionLocal", lambda: session)
+
+    summary = order_metrics.get_gmv_summary(
+        start_date=date(2026, 6, 3), end_date=date(2026, 6, 3),
+        country="ID", shop_id="shop-1", display=True,
+    )
+    # GMV/订单数：3 单全含（含取消 + 未付款）
+    assert summary["order_count"] == 3
+    # 销量（件）：只算已付款正常单的 2 件（取消 1 + 未付款 1 被排除）
+    assert summary["units_sold"] == 2
+
+    # 趋势 units 桶同口径：当日 order_count=3、units_sold=2
+    points = order_metrics.get_gmv_trend(
+        start_date=date(2026, 6, 3), end_date=date(2026, 6, 3),
+        country="ID", shop_id="shop-1", display=True,
+    )
+    day = next(p for p in points if p["date"] == "2026-06-03")
+    assert day["order_count"] == 3 and day["units_sold"] == 2
+
+
+def test_nondisplay_units_unchanged_by_status_filter(session, monkeypatch):
+    """回归护栏：非展示口径（付款口径，display=False）不受新增状态过滤影响。
+
+    付款口径本就靠 paid_time 非空隐含排除未付款；此处确认取消单（有 paid_time）在付款口径下
+    仍按原行为计入 units（新加的 _units_status_filter 只在 display=True 生效，不误伤付款口径）。"""
+    cancelled = _order("cxl2", paid=_dt(2026, 6, 3), total="50000", status="CANCELLED",
+                       lines=[{"id": "m1", "sku_id": "sku-B", "sale_price": "50000"}])
+    upsert_orders(session, [cancelled], country="ID", shop_id="shop-1")
+    session.commit()
+    monkeypatch.setattr(order_metrics, "SessionLocal", lambda: session)
+
+    # 付款口径（默认 display=False, by_create=False）：取消单有 paid_time，仍计入
+    summary = order_metrics.get_gmv_summary(
+        start_date=date(2026, 6, 3), end_date=date(2026, 6, 3),
+        country="ID", shop_id="shop-1",
+    )
+    assert summary["order_count"] == 1 and summary["units_sold"] == 1

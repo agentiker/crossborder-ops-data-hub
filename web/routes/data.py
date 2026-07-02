@@ -145,9 +145,11 @@ def _resolve_window(start_date, end_date, period, default_back_days):
 
 # ── 数据口径常量（随响应 caliber 字段下发，agent 直接复述，无需在 skill 散文里背） ──
 ORDERS_CALIBER = (
-    "展示口径（create_time 归日、含所有订单状态含已取消、含 COD 货到付款在途单，印尼当地时间 UTC+7，与 TikTok 后台 GMV 精确一致）；"
-    "GMV=订单 sub_total（商品小计，不含运费/税/优惠）；"
-    "销量=line_item 条数（含取消）；客单价=GMV/订单数；来源 TikTok /order/202309/orders/search"
+    "展示口径（create_time 归日、印尼当地时间 UTC+7）；"
+    "GMV=订单 sub_total（商品小计，不含运费/税/优惠）、含所有订单状态含已取消、含 COD 在途单，与 TikTok 后台 GMV 精确一致；"
+    "订单数同口径含取消（对齐后台订单管理列表）；"
+    "销量（件）=已付款口径 line_item 条数（排除已取消/未付款），对齐 TikTok 后台 Analytics 的 Items sold，故销量与订单数口径刻意不同；"
+    "客单价=GMV/订单数；来源 TikTok /order/202309/orders/search"
 )
 TOP_SKUS_CALIBER = (
     "下单口径（create_time 归日、排除已取消，含 COD 在途，统计窗口按印尼当地时间 UTC+7）；单品 GMV=该 SKU 各 line_item 的 sale_price 之和"
@@ -703,12 +705,11 @@ async def get_orders_summary(
     shop_ids: Optional[str] = Query(None, description="店铺ID集合，逗号分隔"),
     open_id: Optional[str] = Query(None, description="飞书用户 open_id（ou_xxx，用于自动应用会话默认范围）"),
 ):
-    """订单 GMV/订单量/销量/客单价汇总，默认最近7天（下单口径，create_time 归日，印尼当地时间 UTC+7）。
+    """订单 GMV/订单量/销量/客单价汇总，默认最近7天（展示口径，create_time 归日，印尼当地时间 UTC+7）。
 
     相对时间（今天/本周/近7天…）传 `period` 参数，服务端按印尼时区+周一起算，**不要自己算日期**。
-    口径（随响应 caliber 字段返回）：下单口径（create_time 归日、排除已取消，含 COD 货到付款在途单，
-    与 TikTok 后台 GMV 一致）；GMV=订单 total_amount（买家实付，非平台结算）；销量=line_item 条数；
-    客单价=GMV/订单数。
+    口径见响应 `caliber` 字段（ORDERS_CALIBER）：GMV/订单数含取消对齐后台，销量（件）为已付款口径
+    排除取消/未付款对齐后台 Items sold。
     """
     scope = _resolve_scope(
         scope_id=scope_id, platform=platform, country=country,
@@ -871,7 +872,7 @@ async def get_orders_trend(
     open_id: Optional[str] = Query(None, description="飞书用户 open_id（ou_xxx，用于自动应用会话默认范围）"),
     granularity: Optional[str] = Query("day", description="粒度：day（逐日，默认）/ hour（单天逐小时，要求 start_date==end_date；多天时静默回退 day）。逐小时点的 label 为 HH:00 展示串。"),
 ):
-    """订单按天的 GMV/单量/销量趋势，默认近 7 天（下单口径，含 COD 在途；窗口内无单的日期补 0）。
+    """订单按天的 GMV/单量/销量趋势，默认近 7 天（展示口径，含 COD 在途；窗口内无单的日期补 0）。
 
     相对时间（近3天/近7天/本周/本月…）传 `period` 参数，服务端按印尼时区+周一起算，**不要自己算日期**；
     店铺 GMV 趋势传 shop_id 或 scope_id/shop_ids。口径与 ops_orders_summary 一致，随响应 caliber 字段返回。
