@@ -170,6 +170,7 @@ export interface LowStockItem {
 export interface PendingItem {
   order_id: string | number;
   shop_id?: string | number;
+  shop_name?: string; // 店铺可读名（后端从 platform_tokens.seller_name 富化），缺失回落 shop_id
   first_product_name?: string;
   item_count: number;
   total_amount: number;

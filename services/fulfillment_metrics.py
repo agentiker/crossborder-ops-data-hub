@@ -21,6 +21,7 @@ from core.db import SessionLocal
 from core.timezone import OFFSET
 from models.base_models import PendingFulfillment
 from services.biz_config import get_config_int
+from services.shop_directory import get_shop_names
 
 # 超时分桶判定用的 SLA 字段（待真实店铺核对，需切换只改此处 + caliber 文案）
 SLA_FIELD = "tts_sla_time"
@@ -140,11 +141,17 @@ def get_pending_fulfillments(
 
     buckets["total"] = sum(v for k, v in buckets.items() if k != "total")
 
+    # 富化店名：shop_id → seller_name（platform_tokens），查不到回落裸 id 由前端处理。
+    names = get_shop_names()
+    for it in items:
+        it["shop_name"] = names.get(str(it["shop_id"])) if it.get("shop_id") else None
+
     return {
         "items": items,
         "buckets": buckets,
         "by_shop": [
-            {"shop_id": shop_id, **agg} for shop_id, agg in sorted(by_shop.items())
+            {"shop_id": shop_id, "shop_name": names.get(str(shop_id)), **agg}
+            for shop_id, agg in sorted(by_shop.items())
         ],
         "snapshot_at": _to_local_iso(snapshot_at),
         "warning_hours": warning_hours,

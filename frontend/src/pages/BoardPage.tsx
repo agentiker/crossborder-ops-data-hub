@@ -2838,7 +2838,9 @@ function OrderSection({ data, loading }: { data: BoardData | null; loading: bool
                             {String(r.order_id).slice(-8)}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-foreground-secondary">{r.shop_id ?? "—"}</td>
+                        <td className="px-3 py-2 text-foreground-secondary">
+                          {r.shop_name || r.shop_id || "—"}
+                        </td>
                         <td className="px-3 py-2 text-foreground">
                           {(r.first_product_name || "—").slice(0, 20)}
                         </td>

@@ -262,6 +262,7 @@ class TopSkuResponse(BaseModel):
 class PendingFulfillmentItem(BaseModel):
     order_id: str
     shop_id: Optional[str] = None
+    shop_name: Optional[str] = None  # 店铺可读名（platform_tokens.seller_name），查不到为 None
     order_status: Optional[str] = None
     delivery_option_name: Optional[str] = None
     item_count: int = 0
@@ -285,6 +286,7 @@ class FulfillmentBuckets(BaseModel):
 
 class ShopFulfillmentBucket(BaseModel):
     shop_id: str
+    shop_name: Optional[str] = None  # 店铺可读名，查不到为 None
     overdue: int = 0
     critical: int = 0
     normal: int = 0
