@@ -91,7 +91,7 @@ export function BizConfigPage() {
       <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6">
         <PageHeader
           title="业务阈值配置"
-          scope="仅本店铺生效，改后立即应用于看板与告警"
+          scope="本账号全部店铺统一生效，改后立即应用于看板与告警"
         />
 
         <div className="mt-5 space-y-6">
