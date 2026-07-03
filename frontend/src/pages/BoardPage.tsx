@@ -2768,11 +2768,150 @@ const ORDER_TABS: { id: OrderTab; label: string }[] = [
   { id: "refunds", label: "退款分析" },
 ];
 
+const PAGE_SIZES: { value: number; label: string }[] = [
+  { value: 5, label: "5" },
+  { value: 10, label: "10" },
+  { value: 20, label: "20" },
+  { value: 0, label: "全部" },
+];
+
+// 待发货表分页条：左=范围+每页条数，右=翻页+页码。客户端分页，遵循 DESIGN.md
+// （bg-fill/bg-accent 填充区分、tabnum、触控 44px、窄屏页码收敛）。
+function FulfillmentPager({
+  total,
+  rangeStart,
+  rangeEnd,
+  page,
+  pageCount,
+  pageSize,
+  onPageSize,
+  onPage,
+}: {
+  total: number;
+  rangeStart: number;
+  rangeEnd: number;
+  page: number;
+  pageCount: number;
+  pageSize: number;
+  onPageSize: (n: number) => void;
+  onPage: (updater: (p: number) => number) => void;
+}) {
+  const btn =
+    "inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-lg px-2 text-sm text-foreground-secondary transition-colors hover:bg-fill hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-11";
+
+  // 页码窗口：当前页 ±1，首尾恒显，省略段用 …（多页时不溢出窄屏）。
+  const pages: (number | "…")[] = [];
+  if (pageCount <= 7) {
+    for (let i = 1; i <= pageCount; i++) pages.push(i);
+  } else {
+    const near = [1, 2, page - 1, page, page + 1, pageCount - 1, pageCount].filter(
+      (n) => n >= 1 && n <= pageCount,
+    );
+    const uniq = [...new Set(near)].sort((a, b) => a - b);
+    let prev = 0;
+    for (const n of uniq) {
+      if (n - prev > 1) pages.push("…");
+      pages.push(n);
+      prev = n;
+    }
+  }
+
+  return (
+    <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      {/* 左：范围 + 每页条数 */}
+      <div className="flex items-center gap-3 text-xs text-foreground-secondary">
+        <span className="tabnum">
+          第 <span className="text-foreground">{rangeStart}</span>–
+          <span className="text-foreground">{rangeEnd}</span> 条 · 共{" "}
+          <span className="tabnum text-foreground">{total}</span> 条
+        </span>
+        <label className="flex items-center gap-1.5">
+          <span className="hidden sm:inline">每页</span>
+          <select
+            value={pageSize}
+            onChange={(e) => onPageSize(Number(e.target.value))}
+            aria-label="每页条数"
+            className="h-8 rounded-lg border border-border bg-card px-2 text-xs text-foreground transition-colors hover:border-border-deep focus:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11"
+          >
+            {PAGE_SIZES.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {/* 右：翻页 + 页码（pageSize=全部 或单页时隐藏） */}
+      {pageSize !== 0 && pageCount > 1 && (
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            className={btn}
+            onClick={() => onPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1}
+            aria-label="上一页"
+          >
+            <ChevronLeft className="size-4" />
+          </button>
+          {pages.map((p, i) =>
+            p === "…" ? (
+              <span key={`gap-${i}`} className="px-1 text-xs text-foreground-tertiary">
+                …
+              </span>
+            ) : (
+              <button
+                key={p}
+                type="button"
+                onClick={() => onPage(() => p)}
+                aria-label={`第 ${p} 页`}
+                aria-current={p === page ? "page" : undefined}
+                className={
+                  "inline-flex h-8 min-w-8 items-center justify-center rounded-lg px-2 text-sm tabnum transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-11 " +
+                  (p === page
+                    ? "bg-accent font-medium text-foreground"
+                    : "text-foreground-secondary hover:bg-fill hover:text-foreground")
+                }
+              >
+                {p}
+              </button>
+            ),
+          )}
+          <button
+            type="button"
+            className={btn}
+            onClick={() => onPage((p) => Math.min(pageCount, p + 1))}
+            disabled={page >= pageCount}
+            aria-label="下一页"
+          >
+            <ChevronRight className="size-4" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OrderSection({ data, loading }: { data: BoardData | null; loading: boolean }) {
   const [tab, setTab] = useState<OrderTab>("fulfillment");
   const b = data?.fulfillment.buckets;
   const items = data?.fulfillment.items ?? [];
   const isDemo = tab !== "fulfillment";
+
+  // 客户端分页（数据一次性到前端，切页零延迟）。0 = 全部。
+  const [pageSize, setPageSize] = useState(5);
+  const [page, setPage] = useState(1);
+  const total = items.length;
+  const pageCount = pageSize === 0 ? 1 : Math.max(1, Math.ceil(total / pageSize));
+  // 页码越界纠正（换筛选/条数后 total 变小时）；tab 或数据变化时回第 1 页。
+  const safePage = Math.min(page, pageCount);
+  useEffect(() => {
+    setPage(1);
+  }, [tab, total, pageSize]);
+  const pageItems =
+    pageSize === 0 ? items : items.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const rangeStart = total === 0 ? 0 : (safePage - 1) * (pageSize || total) + 1;
+  const rangeEnd = pageSize === 0 ? total : Math.min(safePage * pageSize, total);
 
   return (
     <BoardCard>
@@ -2826,7 +2965,7 @@ function OrderSection({ data, loading }: { data: BoardData | null; loading: bool
                     </td>
                   </tr>
                 ) : (
-                  items.map((r) => {
+                  pageItems.map((r) => {
                     const badge = r.bucket ? PEND_BADGE[r.bucket] : null;
                     return (
                       <tr
@@ -2864,6 +3003,19 @@ function OrderSection({ data, loading }: { data: BoardData | null; loading: bool
               </tbody>
             </table>
           </div>
+          {/* 分页条：非加载、有数据时显示。左=范围+每页条数，右=翻页/页码。 */}
+          {!loading && total > 0 && (
+            <FulfillmentPager
+              total={total}
+              rangeStart={rangeStart}
+              rangeEnd={rangeEnd}
+              page={safePage}
+              pageCount={pageCount}
+              pageSize={pageSize}
+              onPageSize={setPageSize}
+              onPage={setPage}
+            />
+          )}
         </>
       )}
 
