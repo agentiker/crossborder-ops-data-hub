@@ -107,8 +107,9 @@ export function DateRangePicker({
     const [s, e] = calc();
     setDraft({ start: s, end: e });
     setSelecting(false);
-    setCm(e.getMonth());
-    setCy(e.getFullYear());
+    // 视图定位到区间「起始」月：双月并排渲染 起始月 + 下月，跨月区间（如近 7 天跨月）也能整段看全。
+    setCm(s.getMonth());
+    setCy(s.getFullYear());
     emit(s, e);
     setOpen(false);
   }
@@ -120,15 +121,77 @@ export function DateRangePicker({
     if (cm === 11) { setCm(0); setCy(cy + 1); } else setCm(cm + 1);
   }
 
-  const dim = daysInMonth(cy, cm);
-  const fd = firstDayOfMonth(cy, cm);
   const today = new Date();
   // 选区进行中用 hover 预览另一端
   const ds = selecting && hover && draft.start && hover < draft.start ? hover : draft.start;
   const de = selecting && hover && draft.start && hover > draft.start ? hover : draft.end;
 
+  // 下一月（右侧面板 / 移动端第二格）：当前月 +1，跨年进位。
+  const nm = cm === 11 ? 0 : cm + 1;
+  const ny = cm === 11 ? cy + 1 : cy;
+
   const label =
     draft.start && draft.end ? `${fmt(draft.start)} ~ ${fmt(draft.end)}` : "选择日期范围";
+
+  // 单月网格：抽成内联渲染函数，双月并排复用（各自 y/m，共享选区/hover/点击态）。
+  function renderMonth(y: number, m: number) {
+    const dim = daysInMonth(y, m);
+    const fd = firstDayOfMonth(y, m);
+    return (
+      <div className="flex-1">
+        <div className="mb-3 flex h-7 items-center justify-center">
+          <span className="text-sm font-semibold text-foreground">
+            {y}年{MONTHS[m]}
+          </span>
+        </div>
+        <div className="mb-1 grid grid-cols-7 gap-0">
+          {DOW.map((d) => (
+            <div
+              key={d}
+              className="flex h-8 w-10 items-center justify-center text-xs font-medium text-foreground-secondary"
+            >
+              {d}
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-7 gap-0">
+          {Array.from({ length: fd }).map((_, i) => (
+            <div key={`e-${i}`} className="h-10 w-10" />
+          ))}
+          {Array.from({ length: dim }).map((_, i) => {
+            const day = i + 1;
+            const date = new Date(y, m, day);
+            const isToday = sameDay(date, today);
+            const isStart = ds && sameDay(date, ds);
+            const isEnd = de && sameDay(date, de);
+            const within = inRange(date, ds, de);
+            const sel = isStart || isEnd;
+            return (
+              <button
+                type="button"
+                key={day}
+                onClick={() => clickDay(date)}
+                onMouseEnter={() => setHover(date)}
+                aria-label={fmt(date)}
+                aria-pressed={!!sel}
+                className={
+                  "flex h-10 w-10 items-center justify-center rounded-lg text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring " +
+                  (sel
+                    ? "bg-success font-semibold text-white "
+                    : within
+                      ? "bg-success/15 text-foreground "
+                      : "text-foreground hover:bg-fill-default ") +
+                  (isToday && !sel ? "font-semibold text-success ring-1 ring-success/40" : "")
+                }
+              >
+                {day}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative w-full sm:w-auto" ref={ref}>
@@ -148,7 +211,7 @@ export function DateRangePicker({
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-2 w-[min(480px,calc(100vw-2rem))] animate-fade-up rounded-xl border border-border bg-card p-4 shadow-lg sm:p-5">
+        <div className="absolute left-0 top-full z-50 mt-2 w-[min(680px,calc(100vw-2rem))] animate-fade-up rounded-xl border border-border bg-card p-4 shadow-lg sm:p-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:gap-5">
             {/* 快捷项（窄屏顶部横排 wrap，sm 起左侧竖列） */}
             <div className="flex flex-wrap gap-1 border-b border-border-shallow pb-3 sm:min-w-[110px] sm:flex-col sm:flex-nowrap sm:border-b-0 sm:border-r sm:pb-0 sm:pr-5">
@@ -162,9 +225,9 @@ export function DateRangePicker({
                 </button>
               ))}
             </div>
-            {/* 日历 */}
+            {/* 双月日历：翻页箭头跨在两月之上（一次翻一个月，两月联动）。 */}
             <div className="flex-1">
-              <div className="mb-4 flex items-center justify-between">
+              <div className="mb-1 flex items-center justify-between">
                 <button
                   type="button"
                   onClick={prev}
@@ -173,9 +236,6 @@ export function DateRangePicker({
                 >
                   <ChevronLeft size={18} aria-hidden />
                 </button>
-                <span className="text-sm font-semibold text-foreground">
-                  {cy}年{MONTHS[cm]}
-                </span>
                 <button
                   type="button"
                   onClick={next}
@@ -185,50 +245,10 @@ export function DateRangePicker({
                   <ChevronRight size={18} aria-hidden />
                 </button>
               </div>
-              <div className="mb-1 grid grid-cols-7 gap-0">
-                {DOW.map((d) => (
-                  <div
-                    key={d}
-                    className="flex h-8 w-10 items-center justify-center text-xs font-medium text-foreground-secondary"
-                  >
-                    {d}
-                  </div>
-                ))}
-              </div>
-              <div className="grid grid-cols-7 gap-0">
-                {Array.from({ length: fd }).map((_, i) => (
-                  <div key={`e-${i}`} className="h-10 w-10" />
-                ))}
-                {Array.from({ length: dim }).map((_, i) => {
-                  const day = i + 1;
-                  const date = new Date(cy, cm, day);
-                  const isToday = sameDay(date, today);
-                  const isStart = ds && sameDay(date, ds);
-                  const isEnd = de && sameDay(date, de);
-                  const within = inRange(date, ds, de);
-                  const sel = isStart || isEnd;
-                  return (
-                    <button
-                      type="button"
-                      key={day}
-                      onClick={() => clickDay(date)}
-                      onMouseEnter={() => setHover(date)}
-                      aria-label={fmt(date)}
-                      aria-pressed={!!sel}
-                      className={
-                        "flex h-10 w-10 items-center justify-center rounded-lg text-sm text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring " +
-                        (sel
-                          ? "bg-foreground font-medium text-background "
-                          : within
-                            ? "bg-fill-default "
-                            : "hover:bg-fill-default ") +
-                        (isToday && !sel ? "ring-1 ring-foreground" : "")
-                      }
-                    >
-                      {day}
-                    </button>
-                  );
-                })}
+              {/* 两月：sm 起左右并排、窄屏纵向堆叠（第二月与第一月间加分隔留白） */}
+              <div className="flex flex-col gap-4 sm:flex-row sm:gap-5">
+                {renderMonth(cy, cm)}
+                {renderMonth(ny, nm)}
               </div>
             </div>
           </div>
