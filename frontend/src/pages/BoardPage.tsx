@@ -40,8 +40,10 @@ import { DateRangePicker, type DateRangeValue } from "@/components/board/DateRan
 import { InfoTooltip } from "@/components/ui/tooltip";
 import { EChart, useChartTokens } from "@/components/EChart";
 import { AskAiSheet } from "@/components/board/AskAiSheet";
+import { useImageViewer } from "@/components/ImageViewer";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { hiResUrl } from "@/lib/img";
 
 // 照搬 forkStoreClaw/src/components/Dashboard/* 的版式/卡片/分段 tab/图表观感（1:1）。
 // 三处按本项目落差替换并注释：
@@ -1500,8 +1502,10 @@ function styleCodeLabel(i: TopSku): string | null {
 }
 
 // 商品小图：有图显缩略图(object-cover)，加载失败/无图回落「序号色块」。前 3 名色块用实心强调。
+// 有图时可点击看高清大图（origin 原图，全局灯箱）。
 function ProductThumb({ src, rank }: { src?: string; rank: number }) {
   const [failed, setFailed] = useState(false);
+  const { open } = useImageViewer();
   const showImg = src && !failed;
   return (
     <div className="relative size-11 shrink-0 overflow-hidden rounded-lg">
@@ -1511,7 +1515,8 @@ function ProductThumb({ src, rank }: { src?: string; rank: number }) {
           alt=""
           loading="lazy"
           onError={() => setFailed(true)}
-          className="size-full object-cover"
+          onClick={() => open(hiResUrl(src), "商品大图")}
+          className="size-full cursor-zoom-in object-cover transition-opacity hover:opacity-80"
         />
       ) : (
         <div
@@ -1643,7 +1648,7 @@ function ProductDetailDialog({
   const [imgFailed, setImgFailed] = useState(false);
   const [granularity, setGranularity] = useState<"coarse" | "fine">("coarse"); // 渠道粒度：粗 4 / 细 6
   const [skuOpen, setSkuOpen] = useState(false); // SKU 明细默认收起，点击展开
-  const [lightbox, setLightbox] = useState(false); // 主图灯箱（站内弹大图，不开新标签页）
+  const { open: openImage } = useImageViewer(); // 主图灯箱走全局查看器（高清 origin）
 
   // body 锁滚（fork Dialog 行为）
   useEffect(() => {
@@ -1653,17 +1658,14 @@ function ProductDetailDialog({
     };
   }, []);
 
-  // Esc：先关灯箱，再关弹窗。（滚动锁已由上面的空依赖 effect 处理，勿在此重复锁——
-  // 否则 lightbox 变化时 cleanup 会把 overflow 错误地还原成已被锁的 "hidden",关弹窗后页面卡死。）
+  // Esc 关弹窗。（大图灯箱走全局 ImageViewer，自己处理 Esc/遮罩关闭；此处只管本弹窗。）
   useEffect(() => {
     const onEsc = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      if (lightbox) setLightbox(false);
-      else onClose();
+      if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onEsc);
     return () => window.removeEventListener("keydown", onEsc);
-  }, [lightbox, onClose]);
+  }, [onClose]);
 
   // 懒加载：打开时拉详情（渠道 + 各 SKU）
   useEffect(() => {
@@ -1703,7 +1705,7 @@ function ProductDetailDialog({
           {showImg ? (
             <button
               type="button"
-              onClick={() => setLightbox(true)}
+              onClick={() => openImage(hiResUrl(product.image_url), productLabel(product))}
               title="查看大图"
               aria-label="查看大图"
               className="group relative size-20 shrink-0 overflow-hidden rounded-xl ring-1 ring-border-shallow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -1839,32 +1841,6 @@ function ProductDetailDialog({
           )}
         </div>
       </div>
-
-      {/* 主图灯箱：站内全屏弹大图（点遮罩/X/Esc 关闭，不离开看板） */}
-      {lightbox && showImg && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-6"
-          onClick={() => setLightbox(false)}
-          role="dialog"
-          aria-modal="true"
-          aria-label="商品大图"
-        >
-          <img
-            src={product.image_url}
-            alt={productLabel(product)}
-            className="max-h-[86vh] max-w-[92vw] rounded-xl object-contain shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          />
-          <button
-            type="button"
-            aria-label="关闭大图"
-            onClick={() => setLightbox(false)}
-            className="absolute right-4 top-4 rounded-full bg-white/15 p-2 text-white backdrop-blur transition-colors hover:bg-white/25"
-          >
-            <X className="size-5" />
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -2700,6 +2676,7 @@ function TruncatedName({
 // 库存明细行小图：缺图 / 加载失败 → ShoppingBag 占位（自管失败态）。
 function StockThumb({ src }: { src?: string | null }) {
   const [failed, setFailed] = useState(false);
+  const { open } = useImageViewer();
   const ok = src && !failed;
   return ok ? (
     <img
@@ -2707,7 +2684,8 @@ function StockThumb({ src }: { src?: string | null }) {
       alt=""
       loading="lazy"
       onError={() => setFailed(true)}
-      className="size-10 shrink-0 rounded-lg object-cover ring-1 ring-border-shallow"
+      onClick={() => open(hiResUrl(src), "商品大图")}
+      className="size-10 shrink-0 cursor-zoom-in rounded-lg object-cover ring-1 ring-border-shallow transition-opacity hover:opacity-80"
     />
   ) : (
     <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-fill-default text-foreground-tertiary">
@@ -3023,6 +3001,7 @@ function OrderSection({ data, loading }: { data: BoardData | null; loading: bool
 // （该店不走平台退货流程，故无 return_refund 口径；见 docs/board-data-backlog）。
 function RefundPanel({ refund, loading }: { refund: RefundAnalysis | null; loading: boolean }) {
   const t = useChartTokens();
+  const { open } = useImageViewer();
   const trend = refund?.trend ?? [];
   const hasTrend = trend.some((p) => p.refund_amount > 0 || p.refund_order_count > 0);
   const ratePct =
@@ -3153,7 +3132,12 @@ function RefundPanel({ refund, loading }: { refund: RefundAnalysis | null; loadi
             {refund!.top_products!.map((p) => (
               <div key={p.product_id} className="flex items-center gap-3 px-3 py-2">
                 {p.image_url ? (
-                  <img src={p.image_url} alt="" className="size-9 shrink-0 rounded-md object-cover" />
+                  <img
+                    src={p.image_url}
+                    alt=""
+                    onClick={() => open(hiResUrl(p.image_url), p.product_name || "商品大图")}
+                    className="size-9 shrink-0 cursor-zoom-in rounded-md object-cover transition-opacity hover:opacity-80"
+                  />
                 ) : (
                   <div className="size-9 shrink-0 rounded-md bg-fill" />
                 )}
