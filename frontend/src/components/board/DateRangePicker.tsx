@@ -1,9 +1,14 @@
-import { useEffect, useRef, useState } from "react";
-import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Calendar } from "lucide-react";
+import { DayPicker, type DateRange } from "react-day-picker";
+import { zhCN } from "react-day-picker/locale";
+import "react-day-picker/style.css";
+import "./date-range-picker.css";
 
-// 日历范围选择器（移植 forkStoreClaw demo，换我方 token）。
-// 受控：父组件给 value（YYYY-MM-DD 起止），选定后 onChange 回吐同格式字符串。
-// 快捷项语义按"含端点天数"：近 7 天 = 今天往前 6 天 ~ 今天（与后端 last_7d 对齐）。
+// 日期范围选择器：单月日历（react-day-picker，框架组件）+ 我方快捷项侧栏。
+// 受控：父组件给 value（YYYY-MM-DD 起止），选定后 onChange 回吐同格式字符串——
+// 对外契约与旧手写版一致，BoardPage 无需改动。
+// 快捷项语义按「含端点天数」：近 7 天 = 今天往前 6 天 ~ 今天（与后端 last_7d 对齐）。
 
 export interface DateRangeValue {
   start: string | null; // YYYY-MM-DD
@@ -22,24 +27,6 @@ function parse(s: string | null): Date | null {
   return new Date(y, m - 1, d);
 }
 
-function daysInMonth(y: number, m: number) {
-  return new Date(y, m + 1, 0).getDate();
-}
-function firstDayOfMonth(y: number, m: number) {
-  return new Date(y, m, 1).getDay();
-}
-function sameDay(a: Date, b: Date) {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
-}
-function inRange(d: Date, s: Date | null, e: Date | null) {
-  if (!s || !e) return false;
-  return d.getTime() >= s.getTime() && d.getTime() <= e.getTime();
-}
-
 // 快捷项 → 计算含端点的 [start, end]。
 const QUICK: { label: string; calc: () => [Date, Date] }[] = [
   { label: "今天", calc: () => { const t = new Date(); return [t, t]; } },
@@ -50,9 +37,6 @@ const QUICK: { label: string; calc: () => [Date, Date] }[] = [
   { label: "上月", calc: () => { const n = new Date(); const s = new Date(n.getFullYear(), n.getMonth() - 1, 1); const e = new Date(n.getFullYear(), n.getMonth(), 0); return [s, e]; } },
 ];
 
-const MONTHS = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
-const DOW = ["日", "一", "二", "三", "四", "五", "六"];
-
 export function DateRangePicker({
   value,
   onChange,
@@ -61,21 +45,23 @@ export function DateRangePicker({
   onChange: (range: { start: string; end: string }) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const init = parse(value.start) ?? new Date();
-  const [cm, setCm] = useState(init.getMonth());
-  const [cy, setCy] = useState(init.getFullYear());
-  const [hover, setHover] = useState<Date | null>(null);
-  const [selecting, setSelecting] = useState(false);
-  const [draft, setDraft] = useState<{ start: Date | null; end: Date | null }>({
-    start: parse(value.start),
-    end: parse(value.end),
-  });
   const ref = useRef<HTMLDivElement>(null);
 
-  // 父级 value 变化（如初始默认）→ 同步草稿，保证按钮文案与外部一致。
-  useEffect(() => {
-    setDraft({ start: parse(value.start), end: parse(value.end) });
+  // rdp 的选区值：{from,to}。由父级 value 派生（受控）。
+  const selected = useMemo<DateRange | undefined>(() => {
+    const from = parse(value.start);
+    const to = parse(value.end);
+    if (!from) return undefined;
+    return { from, to: to ?? undefined };
   }, [value.start, value.end]);
+
+  // 展示月：定位到区间「结束」月（通常含今天，多数人更关心近几天）；无值回落当月。
+  const [month, setMonth] = useState<Date>(() => parse(value.end) ?? new Date());
+  // 父级 value 变化（如快捷项/外部默认）→ 同步展示月到结束月。
+  useEffect(() => {
+    const end = parse(value.end);
+    if (end) setMonth(new Date(end.getFullYear(), end.getMonth(), 1));
+  }, [value.end]);
 
   useEffect(() => {
     const h = (e: MouseEvent) => {
@@ -85,113 +71,25 @@ export function DateRangePicker({
     return () => document.removeEventListener("mousedown", h);
   }, []);
 
-  function emit(s: Date, e: Date) {
-    onChange({ start: fmt(s), end: fmt(e) });
-  }
-
-  function clickDay(d: Date) {
-    if (!selecting) {
-      setDraft({ start: d, end: null });
-      setSelecting(true);
-    } else {
-      const s = draft.start!;
-      const next = d < s ? { start: d, end: s } : { start: s, end: d };
-      setDraft(next);
-      setSelecting(false);
-      emit(next.start, next.end);
+  function handleSelect(range: DateRange | undefined) {
+    if (!range?.from) return;
+    // 起止都定了才回吐 + 收起；只点了起点时保持打开等第二次点击。
+    if (range.from && range.to) {
+      onChange({ start: fmt(range.from), end: fmt(range.to) });
       setOpen(false);
     }
   }
 
   function quick(calc: () => [Date, Date]) {
     const [s, e] = calc();
-    setDraft({ start: s, end: e });
-    setSelecting(false);
-    // 视图定位到区间「起始」月：双月并排渲染 起始月 + 下月，跨月区间（如近 7 天跨月）也能整段看全。
-    setCm(s.getMonth());
-    setCy(s.getFullYear());
-    emit(s, e);
+    onChange({ start: fmt(s), end: fmt(e) });
+    setMonth(new Date(e.getFullYear(), e.getMonth(), 1));
     setOpen(false);
   }
 
-  function prev() {
-    if (cm === 0) { setCm(11); setCy(cy - 1); } else setCm(cm - 1);
-  }
-  function next() {
-    if (cm === 11) { setCm(0); setCy(cy + 1); } else setCm(cm + 1);
-  }
-
-  const today = new Date();
-  // 选区进行中用 hover 预览另一端
-  const ds = selecting && hover && draft.start && hover < draft.start ? hover : draft.start;
-  const de = selecting && hover && draft.start && hover > draft.start ? hover : draft.end;
-
-  // 下一月（右侧面板 / 移动端第二格）：当前月 +1，跨年进位。
-  const nm = cm === 11 ? 0 : cm + 1;
-  const ny = cm === 11 ? cy + 1 : cy;
-
-  const label =
-    draft.start && draft.end ? `${fmt(draft.start)} ~ ${fmt(draft.end)}` : "选择日期范围";
-
-  // 单月网格：抽成内联渲染函数，双月并排复用（各自 y/m，共享选区/hover/点击态）。
-  function renderMonth(y: number, m: number) {
-    const dim = daysInMonth(y, m);
-    const fd = firstDayOfMonth(y, m);
-    return (
-      <div className="flex-1">
-        <div className="mb-3 flex h-7 items-center justify-center">
-          <span className="text-sm font-semibold text-foreground">
-            {y}年{MONTHS[m]}
-          </span>
-        </div>
-        <div className="mb-1 grid grid-cols-7 gap-0">
-          {DOW.map((d) => (
-            <div
-              key={d}
-              className="flex h-8 w-10 items-center justify-center text-xs font-medium text-foreground-secondary"
-            >
-              {d}
-            </div>
-          ))}
-        </div>
-        <div className="grid grid-cols-7 gap-0">
-          {Array.from({ length: fd }).map((_, i) => (
-            <div key={`e-${i}`} className="h-10 w-10" />
-          ))}
-          {Array.from({ length: dim }).map((_, i) => {
-            const day = i + 1;
-            const date = new Date(y, m, day);
-            const isToday = sameDay(date, today);
-            const isStart = ds && sameDay(date, ds);
-            const isEnd = de && sameDay(date, de);
-            const within = inRange(date, ds, de);
-            const sel = isStart || isEnd;
-            return (
-              <button
-                type="button"
-                key={day}
-                onClick={() => clickDay(date)}
-                onMouseEnter={() => setHover(date)}
-                aria-label={fmt(date)}
-                aria-pressed={!!sel}
-                className={
-                  "flex h-10 w-10 items-center justify-center rounded-lg text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring " +
-                  (sel
-                    ? "bg-success font-semibold text-white "
-                    : within
-                      ? "bg-success/15 text-foreground "
-                      : "text-foreground hover:bg-fill-default ") +
-                  (isToday && !sel ? "font-semibold text-success ring-1 ring-success/40" : "")
-                }
-              >
-                {day}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
+  const from = parse(value.start);
+  const to = parse(value.end);
+  const label = from && to ? `${fmt(from)} ~ ${fmt(to)}` : "选择日期范围";
 
   return (
     <div className="relative w-full sm:w-auto" ref={ref}>
@@ -207,14 +105,14 @@ export function DateRangePicker({
         aria-expanded={open}
         className="flex h-8 w-full items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm text-foreground transition-colors hover:border-border-deep focus:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-auto sm:min-w-[210px] [@media(pointer:coarse)]:h-11"
       >
-        <span className={draft.start && draft.end ? "" : "text-foreground-secondary"}>{label}</span>
+        <span className={from && to ? "" : "text-foreground-secondary"}>{label}</span>
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-2 w-[min(680px,calc(100vw-2rem))] animate-fade-up rounded-xl border border-border bg-card p-4 shadow-lg sm:p-5">
+        <div className="absolute left-0 top-full z-50 mt-2 w-[min(440px,calc(100vw-2rem))] animate-fade-up rounded-xl border border-border bg-card p-4 shadow-lg sm:p-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:gap-5">
             {/* 快捷项（窄屏顶部横排 wrap，sm 起左侧竖列） */}
-            <div className="flex flex-wrap gap-1 border-b border-border-shallow pb-3 sm:min-w-[110px] sm:flex-col sm:flex-nowrap sm:border-b-0 sm:border-r sm:pb-0 sm:pr-5">
+            <div className="flex flex-wrap gap-1 border-b border-border-shallow pb-3 sm:min-w-[92px] sm:flex-col sm:flex-nowrap sm:border-b-0 sm:border-r sm:pb-0 sm:pr-5">
               {QUICK.map((q) => (
                 <button
                   key={q.label}
@@ -225,32 +123,17 @@ export function DateRangePicker({
                 </button>
               ))}
             </div>
-            {/* 双月日历：翻页箭头跨在两月之上（一次翻一个月，两月联动）。 */}
-            <div className="flex-1">
-              <div className="mb-1 flex items-center justify-between">
-                <button
-                  type="button"
-                  onClick={prev}
-                  aria-label="上一月"
-                  className="rounded-lg p-1.5 hover:bg-fill-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <ChevronLeft size={18} aria-hidden />
-                </button>
-                <button
-                  type="button"
-                  onClick={next}
-                  aria-label="下一月"
-                  className="rounded-lg p-1.5 hover:bg-fill-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <ChevronRight size={18} aria-hidden />
-                </button>
-              </div>
-              {/* 两月：sm 起左右并排、窄屏纵向堆叠（第二月与第一月间加分隔留白） */}
-              <div className="flex flex-col gap-4 sm:flex-row sm:gap-5">
-                {renderMonth(cy, cm)}
-                {renderMonth(ny, nm)}
-              </div>
-            </div>
+            {/* 单月日历（react-day-picker，range 模式）。配色由 date-range-picker.css 的 --rdp-* 变量映射到我方绿系 token。 */}
+            <DayPicker
+              mode="range"
+              locale={zhCN}
+              month={month}
+              onMonthChange={setMonth}
+              selected={selected}
+              onSelect={handleSelect}
+              showOutsideDays
+              className="rdp-board"
+            />
           </div>
         </div>
       )}

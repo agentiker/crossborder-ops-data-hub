@@ -1,0 +1,61 @@
+/* react-day-picker 主题：把 rdp 的 CSS 变量映射到我方绿系 token（--success），
+   与看板整体设计语言一致。作用域限定 .rdp-board，不污染全局。
+   选中端点=中绿底白字、区间中段=淡绿底、今天=绿字——与旧手写版辨识度一致。 */
+.rdp-board {
+  --rdp-accent-color: hsl(var(--success)); /* 端点底色 / 今天色：中绿（L36%，比近黑明显更亮好辨识） */
+  --rdp-accent-background-color: hsl(var(--success) / 0.15); /* 区间中段淡绿底 */
+  --rdp-range_start-color: #fff; /* 起点文字白 */
+  --rdp-range_end-color: #fff; /* 终点文字白 */
+  --rdp-range_middle-color: var(--foreground); /* 区间中段沿用正文色（黑数字，和淡绿底对比清晰） */
+  --rdp-selected-border: none; /* 去掉默认 2px 描边，用纯底色更干净 */
+  --rdp-today-color: hsl(var(--success)); /* 今天：绿字 */
+  --rdp-day-width: 2.5rem;
+  --rdp-day-height: 2.5rem;
+  --rdp-nav-height: 2rem;
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--foreground);
+}
+
+/* 月份标题（年月）：贴合我方 semibold + 正文色 */
+.rdp-board .rdp-month_caption {
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+/* 星期表头：次级灰、字号收敛 */
+.rdp-board .rdp-weekday {
+  color: var(--foreground-secondary);
+  font-weight: 500;
+  font-size: 0.75rem;
+  text-transform: none;
+  opacity: 1;
+}
+
+/* 单日 hover：浅填充（与看板其它可点元素一致） */
+.rdp-board .rdp-day_button {
+  border-radius: 0.5rem;
+}
+.rdp-board .rdp-day:not(.rdp-selected) .rdp-day_button:hover {
+  background-color: var(--fill);
+}
+
+/* 导航箭头 hover 反馈 */
+.rdp-board .rdp-button_previous:hover,
+.rdp-board .rdp-button_next:hover {
+  background-color: var(--fill);
+}
+.rdp-board .rdp-chevron {
+  fill: var(--foreground-secondary);
+}
+
+/* 端点圆角：起点左圆、终点右圆，中段方角连成一条（rdp 默认已处理，这里补我方圆角半径） */
+.rdp-board .rdp-range_start .rdp-day_button,
+.rdp-board .rdp-range_end .rdp-day_button {
+  border-radius: 0.5rem;
+}
+
+/* 今天（未选中时）：绿字加粗，不抢选中态 */
+.rdp-board .rdp-today:not(.rdp-selected) .rdp-day_button {
+  font-weight: 600;
+}
