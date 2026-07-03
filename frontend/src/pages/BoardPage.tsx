@@ -2759,11 +2759,10 @@ const PEND_BADGE: Record<string, { label: string; cls: string }> = {
   unknown: { label: "未知", cls: "bg-fill-default text-foreground-secondary" },
 };
 
-type OrderTab = "fulfillment" | "orders" | "returns" | "refunds";
+type OrderTab = "fulfillment" | "returns" | "refunds";
 
 const ORDER_TABS: { id: OrderTab; label: string }[] = [
   { id: "fulfillment", label: "待发货" },
-  { id: "orders", label: "下单趋势" },
   { id: "returns", label: "退货分析" },
   { id: "refunds", label: "退款分析" },
 ];
@@ -3019,13 +3018,7 @@ function OrderSection({ data, loading }: { data: BoardData | null; loading: bool
         </>
       )}
 
-      {/* 下单趋势：后端暂无数据源，诚实空状态（不渲染假数据）。 */}
-      {tab === "orders" && (
-        <DemoPlaceholder
-          title="下单趋势 · 数据源开发中"
-          desc="按平台拆分的下单趋势数据接入开发中，接通后将在此展示真实下单走势。"
-        />
-      )}
+      {/* 下单/销量趋势见顶部「销售趋势 / 订单·销量」大图，此处不重复；单平台下按平台拆分无价值（见 docs/board-data-backlog A1）。 */}
 
       {/* 退货分析：后端暂无数据源，诚实空状态。 */}
       {tab === "returns" && (

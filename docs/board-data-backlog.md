@@ -11,12 +11,11 @@
 
 ## A. 近期可真实化（已有数据源，优先）
 
-### A1. 下单趋势 · 按平台拆分
-- **现状**：演示堆叠柱（Shopify / Amazon / TikTok Shop），`DEMO_ORDERS`。
-- **数据源**：订单表 `OrderHeader` 已有 `platform` 字段——可按 `platform` 分组、按业务日聚合下单数，出**真实**堆叠柱。
-- **落地**：仿 `services/order_metrics.py` 的 `get_orders_trend` 增加 `group_by=platform` 维度（或新函数 `get_orders_by_platform`），
-  `_collect` 注入 `overview` 兄弟节点；前端 `ordersStackOption` 改吃真实序列。
-- **阻塞点**：无（现有数据即可）。当前单平台（TikTok）数据下，多平台堆叠会退化为单色——需确认是否已接入多平台订单，否则该 tab 暂留演示。
+### A1. 下单趋势 · 按平台拆分 —— 已砍 tab（2026-07-03）
+- **决定**：从「订单与履约」卡移除「下单趋势」tab（原演示堆叠柱 Shopify/Amazon/TikTok，`DEMO_ORDERS`）。
+- **原因**：① 时间维度的下单/销量趋势，顶部大图「订单 / 销量（件）」tab 已用**真实数据**画了，再做一个下单趋势 tab 与之重复；② 该 tab 唯一差异价值是「按 platform 拆分」，但当前**单平台（仅 TikTok Shop）**，多平台堆叠退化为单色一根柱、无拆分意义。两点叠加 → 无独立价值，删之避免重复与空洞占位。
+- **何时重做**：将来真正接入第二个平台（如 Shopee）后，可复活「按平台拆分」——那时它相对顶部图有真实增量（多平台构成对比）。落地仍按下方旧方案：`get_orders_trend` 加 `group_by=platform`。
+- **旧落地方案（留存备用）**：仿 `services/order_metrics.py` 的 `get_orders_trend` 增加 `group_by=platform` 维度（或新函数 `get_orders_by_platform`），`_collect` 注入 `overview` 兄弟节点；前端吃真实序列。
 
 ---
 
