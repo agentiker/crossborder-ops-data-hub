@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  ArrowRightLeft,
   Calendar,
   ChevronDown,
   LayoutDashboard,
@@ -45,6 +46,7 @@ const NAV: NavItem[] = [
   { to: "/scheduled", label: "定时任务", icon: Calendar, badge: "待开发" },
   { to: "/skills", label: "技能", icon: Zap, badge: "待开发" },
   { to: "/board", label: "看板", icon: LayoutDashboard },
+  { to: "/fx", label: "汇率", icon: ArrowRightLeft },
 ];
 
 // 「管理」父组（boss-only）：用户管理 + 阈值配置降为子项。父项本身不导航，只做展开开关。

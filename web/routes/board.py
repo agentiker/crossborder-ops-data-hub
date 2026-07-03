@@ -22,6 +22,7 @@ from services.ad_metrics import get_ad_spend_summary, get_roas
 from services.biz_config import get_config_int
 from services.channel_metrics import get_channel_gmv_breakdown
 from services.fee_rate_metrics import get_fee_rate_monitor
+from services.fx_series import get_fx_series, list_currencies
 from services.order_metrics import (
     get_gmv_summary,
     get_gmv_summary_intraday_range,
@@ -436,3 +437,26 @@ async def board_new_products(
         "window": {"lookback_days": lookback_days, "as_of": as_of.isoformat()},
         "available": available,
     })
+
+
+# 汇率走势（/board/fx 页面）：中行牌价日序列。汇率非隔离数据（fact_exchange_rate 无
+# account_id），仅需登录态、不做 scope 夹紧——boss/operator 都能看同一份全局牌价。
+_FX_ALLOWED_DAYS = {30, 90, 365}
+
+
+@router.get("/board/fx/currencies", include_in_schema=False)
+async def board_fx_currencies(perm: UserPermission = Depends(require_web_user)):
+    """汇率页币种下拉：库里有数据的常用币种（IDR 恒在），每项 {code, name}。"""
+    return JSONResponse({"items": list_currencies()})
+
+
+@router.get("/board/fx/series", include_in_schema=False)
+async def board_fx_series(
+    perm: UserPermission = Depends(require_web_user),
+    currency: str = Query("IDR", description="ISO 币种码，如 IDR/USD"),
+    days: int = Query(90, description="回看天数，仅接受 30/90/365"),
+):
+    """汇率走势序列：近 days 天中行折算价日均值（1 外币→CNY）。口径同利润折算 fx_rate。"""
+    if days not in _FX_ALLOWED_DAYS:
+        days = 90
+    return JSONResponse(get_fx_series(currency, days))

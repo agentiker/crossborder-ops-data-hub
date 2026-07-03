@@ -382,6 +382,21 @@ export interface BizConfigRow {
   is_overridden: boolean;
 }
 
+// 汇率走势：币种下拉项 + 日序列。rate = 1 外币→CNY（中行折算价当日均值，口径同利润折算）。
+export interface FxCurrency {
+  code: string;
+  name: string;
+}
+export interface FxSeries {
+  currency: string;
+  name: string;
+  unit: number;
+  points: { date: string; rate: number }[];
+  latest: number | null;
+  start_rate: number | null;
+  change_pct: number | null;
+}
+
 // 看板筛选参数：start/end 显式日期（覆盖 period）；platform/country 平台/区域；scope 店铺。
 // 空值不拼进 querystring（让后端走默认/全部）。period 作无显式日期时的回退。
 export interface BoardQuery {
@@ -437,6 +452,10 @@ export const api = {
     postJSON<BizConfigRow>("/api/admin/biz-configs", { config_key, value }),
   bizConfigReset: (config_key: string) =>
     postJSON<BizConfigRow>("/api/admin/biz-configs/reset", { config_key }),
+  // 汇率走势（/fx 页）：中行牌价日序列 + 币种下拉。汇率非隔离数据，无需传 scope。
+  fxCurrencies: () => getJSON<{ items: FxCurrency[] }>("/board/fx/currencies"),
+  fxSeries: (currency: string, days: number) =>
+    getJSON<FxSeries>(`/board/fx/series?currency=${encodeURIComponent(currency)}&days=${days}`),
   conversations: () => getJSON<{ items: ConversationItem[] }>("/api/conversations"),
   conversation: (id: number) =>
     getJSON<{ id: number; title: string; messages: Message[] }>(

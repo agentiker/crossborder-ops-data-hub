@@ -182,3 +182,81 @@ def test_get_idr_to_rmb_no_date_uses_fixed(monkeypatch):
     fx.clear_rate_cache()
     # 不传 on_date → 直接固定值，不查库
     assert fx.get_idr_to_rmb() == Decimal(str(settings.idr_to_rmb))
+
+
+# ── 4. 汇率走势序列（services/fx_series，供 /board/fx 页面）──────────────────────
+def _seed_fx(session, metric_date, code="IDR", rate_middle="0.0379", unit=100, hour=10):
+    """插一条任意币种样本；published_at 用 metric_date + hour 保证唯一。"""
+    session.add(FactExchangeRate(
+        metric_date=metric_date, source="boc", currency_code=code,
+        currency_name="印尼卢比" if code == "IDR" else code,
+        unit=unit, rate_middle=Decimal(rate_middle),
+        published_at=datetime(metric_date.year, metric_date.month, metric_date.day, hour, 33),
+    ))
+    session.commit()
+
+
+def test_fx_series_averages_same_day_and_orders(fx_session, monkeypatch):
+    """当天多样本取均值、多日按日期升序、change_pct=区间涨跌幅（口径同 fx_rate）。"""
+    from datetime import timedelta
+
+    import services.fx_series as fxs
+
+    today = date.today()
+    d0, d1 = today - timedelta(days=2), today - timedelta(days=1)
+    _seed_fx(fx_session, d0, rate_middle="0.0370", hour=10)
+    _seed_fx(fx_session, d0, rate_middle="0.0380", hour=15)  # d0 均值 0.0375 → /100
+    _seed_fx(fx_session, d1, rate_middle="0.0400", hour=10)  # d1 单样本 0.0400 → /100
+    monkeypatch.setattr("services.fx_series.SessionLocal", lambda: fx_session)
+
+    s = fxs.get_fx_series("IDR", 90)
+    assert [p["date"] for p in s["points"]] == [d0.isoformat(), d1.isoformat()]
+    assert s["points"][0]["rate"] == pytest.approx(0.0375 / 100)
+    assert s["points"][1]["rate"] == pytest.approx(0.0400 / 100)
+    assert s["latest"] == pytest.approx(0.0400 / 100)
+    assert s["start_rate"] == pytest.approx(0.0375 / 100)
+    # 涨跌幅 = (0.0400-0.0375)/0.0375*100 = 6.67%
+    assert s["change_pct"] == pytest.approx(6.67, abs=0.01)
+
+
+def test_fx_series_filters_currency_and_window(fx_session, monkeypatch):
+    """只取指定币种、且窗口外（早于 days）的样本不进序列。"""
+    from datetime import timedelta
+
+    import services.fx_series as fxs
+
+    today = date.today()
+    _seed_fx(fx_session, today - timedelta(days=5), code="USD", rate_middle="680.0", hour=10)
+    _seed_fx(fx_session, today - timedelta(days=5), code="IDR", rate_middle="0.0379", hour=10)
+    _seed_fx(fx_session, today - timedelta(days=100), code="IDR", rate_middle="0.0300", hour=10)  # 窗口外
+    monkeypatch.setattr("services.fx_series.SessionLocal", lambda: fx_session)
+
+    usd = fxs.get_fx_series("USD", 30)
+    assert len(usd["points"]) == 1 and usd["points"][0]["rate"] == pytest.approx(6.8)
+    idr = fxs.get_fx_series("IDR", 30)  # 30 天窗口排除 100 天前那条
+    assert len(idr["points"]) == 1
+
+
+def test_fx_series_empty_when_no_data(fx_session, monkeypatch):
+    """无数据 → 空序列、latest/change 为 None，不抛错（前端走空态）。"""
+    import services.fx_series as fxs
+
+    monkeypatch.setattr("services.fx_series.SessionLocal", lambda: fx_session)
+    s = fxs.get_fx_series("IDR", 90)
+    assert s["points"] == [] and s["latest"] is None and s["change_pct"] is None
+
+
+def test_fx_list_currencies_only_present(fx_session, monkeypatch):
+    """下拉只列库里有数据的常用币种，IDR 恒在、CNY 作对照保留。"""
+    from datetime import timedelta
+
+    import services.fx_series as fxs
+
+    _seed_fx(fx_session, date.today() - timedelta(days=1), code="USD", rate_middle="680.0")
+    monkeypatch.setattr("services.fx_series.SessionLocal", lambda: fx_session)
+    codes = [c["code"] for c in fxs.list_currencies()]
+    assert "USD" in codes and "IDR" in codes and "CNY" in codes
+    assert "MYR" not in codes  # 未入库不进下拉
+    # 每项带中文名
+    usd = next(c for c in fxs.list_currencies() if c["code"] == "USD")
+    assert usd["name"] == "美元"

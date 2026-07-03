@@ -15,6 +15,7 @@ const SkillsPage = lazy(() => import("@/pages/SkillsPage").then((m) => ({ defaul
 const ScheduledPage = lazy(() =>
   import("@/pages/ScheduledPage").then((m) => ({ default: m.ScheduledPage })),
 );
+const FxPage = lazy(() => import("@/pages/FxPage").then((m) => ({ default: m.FxPage })));
 
 // 应用外壳 + 路由（plan/15）。所有页面挂在 AppShell 的 Outlet 下，共用 me/会话列表。
 export function App() {
@@ -28,6 +29,7 @@ export function App() {
           <Route path="skills" element={<SkillsPage />} />
           <Route path="scheduled" element={<ScheduledPage />} />
           <Route path="board" element={<BoardPage />} />
+          <Route path="fx" element={<FxPage />} />
           <Route path="admin" element={<AdminPage />} />
           <Route path="settings" element={<BizConfigPage />} />
           <Route path="*" element={<ChatPage />} />
