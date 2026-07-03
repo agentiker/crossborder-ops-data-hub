@@ -2921,11 +2921,10 @@ function OrderSection({ data, loading }: { data: BoardData | null; loading: bool
       {/* 待发货：真实履约数据（统计分桶 + 明细表） */}
       {tab === "fulfillment" && (
         <>
-          {data?.fulfillment.snapshot_at && (
-            <div className="mb-3 text-xs text-foreground-secondary">
-              快照 {data.fulfillment.snapshot_at}
-            </div>
-          )}
+          <div className="mb-3 text-xs text-foreground-secondary">
+            当前快照 · 不随上方日期筛选变化
+            {data?.fulfillment.snapshot_at && `（同步于 ${data.fulfillment.snapshot_at}）`}
+          </div>
           <div className="mb-4 flex flex-wrap gap-x-8 gap-y-3">
             <Stat label="待发货合计" value={fmtInt(b?.total)} loading={loading} />
             <Stat label="超时" value={fmtInt(b?.overdue)} tone="negative" loading={loading} />
@@ -3074,13 +3073,12 @@ function RefundPanel({ refund, loading }: { refund: RefundAnalysis | null; loadi
     [trend, t],
   );
 
-  // 取消构成占比条（付款后取消 vs 发货前流失）。宽度按占比，颜色克制（无 side-stripe/渐变）。
+  // 取消构成拆分见下方三分堆叠条。
   const cancelledTotal = refund?.cancelled_total ?? 0;
-  const paidPct = cancelledTotal ? ((refund!.paid_cancelled / cancelledTotal) * 100) : 0;
 
   return (
     <div>
-      <div className="mb-3 flex items-center gap-1.5 text-xs text-foreground-secondary">
+      <div className="mb-3 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-foreground-secondary">
         <span>退款 = 付款后取消（买家付款后取消/拒收）</span>
         <InfoTooltip
           align="start"
@@ -3088,6 +3086,8 @@ function RefundPanel({ refund, loading }: { refund: RefundAnalysis | null; loadi
         >
           <Info className="h-3.5 w-3.5" />
         </InfoTooltip>
+        <span className="text-foreground-tertiary">·</span>
+        <span className="text-foreground-tertiary">随上方日期筛选变化</span>
       </div>
 
       <div className="mb-4 flex flex-wrap gap-x-8 gap-y-3">
@@ -3108,29 +3108,65 @@ function RefundPanel({ refund, loading }: { refund: RefundAnalysis | null; loadi
         <EChart option={trendOption} height={200} />
       )}
 
-      {/* 取消构成：付款后取消 vs 发货前流失（+COD 注脚） */}
-      {cancelledTotal > 0 && (
-        <div className="mt-4">
-          <div className="mb-1.5 flex items-center justify-between text-xs text-foreground-secondary">
-            <span>取消构成（共 {fmtInt(cancelledTotal)} 单）</span>
-            <span className="text-foreground-tertiary">其中 COD {fmtInt(refund?.cod_cancelled)} 单</span>
+      {/* 取消构成三分：付款后取消(退款) / COD 拒收 / 其它未付款流失。堆叠条按占比。 */}
+      {cancelledTotal > 0 && (() => {
+        const paid = refund?.paid_cancelled ?? 0;
+        const cod = refund?.cod_cancelled ?? 0;
+        // 其它未付款流失 = 未付款取消 − COD 拒收（COD 取消实测全为未付款/拒收）
+        const otherLost = Math.max(0, (refund?.unpaid_cancelled ?? 0) - cod);
+        const pct = (n: number) => (cancelledTotal ? (n / cancelledTotal) * 100 : 0);
+        const seg = [
+          { label: "付款后取消（退款）", n: paid, cls: "bg-negative/70", dot: "bg-negative/70" },
+          { label: "COD 拒收", n: cod, cls: "bg-warning/60", dot: "bg-warning/60" },
+          { label: "其它未付款流失", n: otherLost, cls: "bg-fill-deep", dot: "bg-fill-deep" },
+        ].filter((s) => s.n > 0);
+        return (
+          <div className="mt-4">
+            <div className="mb-1.5 text-xs text-foreground-secondary">
+              取消构成（共 {fmtInt(cancelledTotal)} 单）
+            </div>
+            <div className="flex h-2.5 overflow-hidden rounded-full bg-fill">
+              {seg.map((s) => (
+                <div key={s.label} className={s.cls} style={{ width: `${pct(s.n)}%` }} title={`${s.label} ${s.n} 单`} />
+              ))}
+            </div>
+            <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+              {seg.map((s) => (
+                <span key={s.label} className="flex items-center gap-1.5">
+                  <span className={"inline-block size-2 rounded-full " + s.dot} />
+                  {s.label}
+                  <span className="tabnum text-foreground">{fmtInt(s.n)}</span>
+                </span>
+              ))}
+            </div>
           </div>
-          <div className="flex h-2.5 overflow-hidden rounded-full bg-fill">
-            <div
-              className="bg-negative/70"
-              style={{ width: `${paidPct}%` }}
-              title={`付款后取消（退款）${refund?.paid_cancelled} 单`}
-            />
+        );
+      })()}
+
+      {/* 退款归因：按商品 Top（付款后取消最多的商品）。有退款单才显示。 */}
+      {(refund?.top_products?.length ?? 0) > 0 && (
+        <div className="mt-5">
+          <div className="mb-2 text-xs font-medium text-foreground-secondary">
+            退款最多的商品（付款后取消）
           </div>
-          <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs">
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block size-2 rounded-full bg-negative/70" />
-              付款后取消（退款）<span className="tabnum text-foreground">{fmtInt(refund?.paid_cancelled)}</span>
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block size-2 rounded-full bg-fill-deep" />
-              发货前流失（未付款）<span className="tabnum text-foreground">{fmtInt(refund?.unpaid_cancelled)}</span>
-            </span>
+          <div className="divide-y divide-border-shallow rounded-lg border border-border-shallow">
+            {refund!.top_products!.map((p) => (
+              <div key={p.product_id} className="flex items-center gap-3 px-3 py-2">
+                {p.image_url ? (
+                  <img src={p.image_url} alt="" className="size-9 shrink-0 rounded-md object-cover" />
+                ) : (
+                  <div className="size-9 shrink-0 rounded-md bg-fill" />
+                )}
+                <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                  {p.product_name || p.product_id}
+                </span>
+                <span className="shrink-0 text-right">
+                  <span className="tabnum text-sm font-semibold text-negative">{fmtInt(p.refund_order_count)}</span>
+                  <span className="ml-1 text-xs text-foreground-tertiary">单</span>
+                  <span className="ml-2 tabnum text-xs text-foreground-secondary">{fmtMoney(p.refund_amount)}</span>
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       )}

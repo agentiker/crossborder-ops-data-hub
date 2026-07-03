@@ -286,6 +286,14 @@ export interface RefundAnalysis {
   cod_cancelled: number;
   currency: string | null;
   trend: { date: string; refund_amount: number; refund_order_count: number }[];
+  // 退款归因：按商品聚合的退款 Top（付款后取消单数/金额降序）
+  top_products?: {
+    product_id: string;
+    product_name: string | null;
+    refund_order_count: number;
+    refund_amount: number;
+    image_url: string | null;
+  }[];
 }
 
 export interface FeeRateComponent {

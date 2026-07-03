@@ -31,7 +31,11 @@ from services.order_metrics import (
 )
 from services.product_channel_metrics import get_product_channel_breakdown
 from services.profit_summary import get_profit_card
-from services.refund_metrics import get_refund_summary, get_refund_trend
+from services.refund_metrics import (
+    get_refund_summary,
+    get_refund_top_products,
+    get_refund_trend,
+)
 from services.scope_resolution import ScopeError, list_scopes
 from services.user_authz import AuthzError, UserPermission, resolve_authorized_scope
 from web.routes.data import (
@@ -236,6 +240,10 @@ async def _collect(
         refund = {
             **refund_summary,
             "trend": get_refund_trend(
+                start_date=cur_start, end_date=cur_end,
+                platform=platform, country=country, shop_ids=shop_id_list,
+            ),
+            "top_products": get_refund_top_products(
                 start_date=cur_start, end_date=cur_end,
                 platform=platform, country=country, shop_ids=shop_id_list,
             ),

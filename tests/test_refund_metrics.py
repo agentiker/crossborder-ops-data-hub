@@ -142,3 +142,35 @@ def test_refund_scope_isolation(session, monkeypatch):
         country="ID", shop_id="shop-1",
     )
     assert s1["refund_amount"] == 50000.0 and s1["refund_order_count"] == 1
+
+
+def test_refund_top_products_by_paid_cancelled(session, monkeypatch):
+    """退款归因 Top：按 product_id 聚合付款后取消单数（去重 order_id）降序；未付款/正常单不计。"""
+    def _o(oid, product_id, sub, status, paid):
+        return DomainOrder(
+            order_id=oid, order_status=status, currency="IDR",
+            total_amount=Decimal(sub), sub_total=Decimal(sub),
+            create_time=_dt(2026, 6, 3), paid_time=paid,
+            line_items=(DomainOrderLineItem(
+                line_item_id=f"{oid}-l1", product_id=product_id, sku_id=f"{product_id}-s",
+                sale_price=Decimal(sub), currency="IDR"),),
+        )
+    orders = [
+        _o("r1", "P-A", "50000", "CANCELLED", _dt(2026, 6, 3)),   # 退款 P-A
+        _o("r2", "P-A", "40000", "CANCELLED", _dt(2026, 6, 3)),   # 退款 P-A（P-A 共 2 单）
+        _o("r3", "P-B", "30000", "CANCELLED", _dt(2026, 6, 3)),   # 退款 P-B（1 单）
+        _o("lost", "P-A", "99999", "CANCELLED", None),            # 未付款取消，不计
+        _o("ok", "P-B", "20000", "COMPLETED", _dt(2026, 6, 3)),   # 正常单，不计
+    ]
+    upsert_orders(session, orders, country="ID", shop_id="shop-1")
+    session.commit()
+    _patch(session, monkeypatch)
+
+    top = refund_metrics.get_refund_top_products(
+        start_date=date(2026, 6, 3), end_date=date(2026, 6, 3),
+        country="ID", shop_id="shop-1",
+    )
+    assert [t["product_id"] for t in top] == ["P-A", "P-B"]  # P-A 2 单 > P-B 1 单
+    assert top[0]["refund_order_count"] == 2
+    assert top[0]["refund_amount"] == 90000.0  # 50000+40000
+    assert top[1]["refund_order_count"] == 1

@@ -24,7 +24,7 @@ from sqlalchemy import func
 
 from core.db import SessionLocal
 from core.timezone import to_business_day
-from models.base_models import OrderHeader
+from models.base_models import OrderHeader, OrderLineItem, Product
 from services.order_metrics import (
     _paid_window,
     _scope_filters,
@@ -195,3 +195,62 @@ def get_refund_trend(
         )
         cursor += timedelta(days=1)
     return points
+
+
+def get_refund_top_products(
+    *,
+    start_date: date,
+    end_date: date,
+    platform: Optional[str] = None,
+    country: Optional[str] = None,
+    shop_id: Optional[str] = None,
+    shop_ids: Optional[list[str]] = None,
+    limit: int = 5,
+) -> list[dict]:
+    """退款归因：按商品（product_id）聚合付款后取消的退款单数 / 退款金额，降序取 Top。
+
+    退款单数 = 该商品出现在多少张「付款后取消」单里（按 order_id 去重，一单多件同商品算一次）；
+    退款金额 = 这些单里该商品行的 sale_price 之和。product_name/主图取聚合值（同 get_top_products）。
+    """
+    start_dt, end_dt = _paid_window(start_date, end_date)
+    session = SessionLocal()
+    try:
+        query = (
+            session.query(
+                OrderLineItem.product_id,
+                func.max(OrderLineItem.product_name),
+                func.count(func.distinct(OrderLineItem.order_id)),
+                func.coalesce(func.sum(OrderLineItem.sale_price), 0),
+                func.max(Product.main_image_url),
+            )
+            .join(OrderHeader, OrderLineItem.order_id == OrderHeader.order_id)
+            .outerjoin(
+                Product,
+                (Product.product_id == OrderLineItem.product_id)
+                & (Product.shop_id == OrderHeader.shop_id),
+            )
+            .filter(
+                OrderHeader.order_status == _CANCELLED,
+                OrderHeader.paid_time.isnot(None),
+                OrderHeader.create_time >= start_dt,
+                OrderHeader.create_time <= end_dt,
+            )
+        )
+        query = _scope_filters(query, OrderHeader, platform, country, shop_id, shop_ids)
+        query = (
+            query.group_by(OrderLineItem.product_id)
+            .order_by(func.count(func.distinct(OrderLineItem.order_id)).desc())
+            .limit(limit)
+        )
+        return [
+            {
+                "product_id": product_id,
+                "product_name": product_name,
+                "refund_order_count": int(cnt or 0),
+                "refund_amount": _to_float(amount),
+                "image_url": image_url,
+            }
+            for product_id, product_name, cnt, amount, image_url in query.all()
+        ]
+    finally:
+        session.close()
