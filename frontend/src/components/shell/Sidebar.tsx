@@ -1,5 +1,7 @@
+import { useState } from "react";
 import {
   Calendar,
+  ChevronDown,
   LayoutDashboard,
   LogOut,
   MessagesSquare,
@@ -10,9 +12,10 @@ import {
   SlidersHorizontal,
   Trash2,
   UserRound,
+  Users,
   Zap,
 } from "lucide-react";
-import { NavLink, useNavigate, useParams } from "react-router-dom";
+import { NavLink, useLocation, useNavigate, useParams } from "react-router-dom";
 import { api, type ConversationItem, type Me } from "@/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,14 +39,23 @@ interface NavItem {
   badge?: string; // 角标，如「待开发」
 }
 
+// 顶级导航（平铺）。管理类页面不在此，见 ADMIN_GROUP（可展开父组）。
 const NAV: NavItem[] = [
   { to: "/", label: "新建对话", icon: Plus, end: true },
   { to: "/scheduled", label: "定时任务", icon: Calendar, badge: "待开发" },
   { to: "/skills", label: "技能", icon: Zap, badge: "待开发" },
   { to: "/board", label: "看板", icon: LayoutDashboard },
-  { to: "/admin", label: "管理", icon: ShieldCheck, bossOnly: true },
-  { to: "/settings", label: "阈值配置", icon: SlidersHorizontal, bossOnly: true },
 ];
+
+// 「管理」父组（boss-only）：用户管理 + 阈值配置降为子项。父项本身不导航，只做展开开关。
+const ADMIN_GROUP = {
+  label: "管理",
+  icon: ShieldCheck,
+  children: [
+    { to: "/admin", label: "用户管理", icon: Users },
+    { to: "/settings", label: "阈值配置", icon: SlidersHorizontal },
+  ] satisfies NavItem[],
+};
 
 interface Props {
   me: Me | null;
@@ -67,9 +79,14 @@ export function SidebarContent({
 }: Props) {
   const navigate = useNavigate();
   const { id } = useParams();
+  const { pathname } = useLocation();
   const activeConvId = id ? Number(id) : null;
 
   const items = NAV.filter((n) => !n.bossOnly || me?.is_boss);
+  // 「管理」父组仅 boss 可见；含当前路径的子项时默认展开。
+  const showAdmin = !!me?.is_boss;
+  const adminActive = ADMIN_GROUP.children.some((c) => pathname.startsWith(c.to));
+  const [adminOpen, setAdminOpen] = useState(adminActive);
 
   async function onDelete(cid: number) {
     if (!confirm("删除该会话？")) return;
@@ -132,6 +149,61 @@ export function SidebarContent({
             )}
           </NavLink>
         ))}
+
+        {/* 「管理」父组（boss-only）：用户管理 + 阈值配置子项 */}
+        {showAdmin && (
+          collapsed ? (
+            // 收起态无文字空间，展开无意义 → 子项直接平铺成图标（各自 title 提示）
+            ADMIN_GROUP.children.map(({ to, label, icon: Icon }) => (
+              <NavLink key={to} to={to} className={navCls} onClick={onNavigate} title={label}>
+                <Icon className="size-[18px] shrink-0" />
+              </NavLink>
+            ))
+          ) : (
+            <>
+              {/* 父项：点击展开/收起，本身不导航；子项激活时高亮 */}
+              <button
+                type="button"
+                onClick={() => setAdminOpen((v) => !v)}
+                aria-expanded={adminOpen}
+                className={cn(
+                  "flex h-9 items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors",
+                  adminActive
+                    ? "font-medium text-foreground"
+                    : "text-foreground-secondary hover:bg-fill hover:text-foreground",
+                )}
+              >
+                <ADMIN_GROUP.icon className="size-[18px] shrink-0" />
+                <span className="truncate">{ADMIN_GROUP.label}</span>
+                <ChevronDown
+                  className={cn(
+                    "ml-auto size-4 shrink-0 text-foreground-tertiary transition-transform",
+                    adminOpen && "rotate-180",
+                  )}
+                />
+              </button>
+              {adminOpen &&
+                ADMIN_GROUP.children.map(({ to, label, icon: Icon }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    onClick={onNavigate}
+                    className={({ isActive }) =>
+                      cn(
+                        "ml-3 flex h-9 items-center gap-2.5 rounded-md border-l border-border-shallow pl-3.5 pr-2.5 text-sm transition-colors",
+                        isActive
+                          ? "bg-fill font-medium text-foreground"
+                          : "text-foreground-secondary hover:bg-fill hover:text-foreground",
+                      )
+                    }
+                  >
+                    <Icon className="size-4 shrink-0" />
+                    <span className="truncate">{label}</span>
+                  </NavLink>
+                ))}
+            </>
+          )
+        )}
       </nav>
 
       {/* 最近对话（收起态隐藏，仅留导航图标） */}
