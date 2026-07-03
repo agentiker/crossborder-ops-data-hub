@@ -86,6 +86,20 @@
 
 ---
 
+### 2.4 退款 / 取消口径（2026-07-03 定，基于订单状态派生）
+
+看板「订单与履约 → 退款/取消」tab 的数据源。**退款 = 付款后取消**，非平台退货流程。
+
+- **为什么不用 TikTok 退货接口**：实测 `return_refund/202603/aftersales/search` 接口打通、授权已含 `seller.return_refund.basic`，但该店（SasaQueen.id）近两年平台退货单数 = **0**——印尼 COD 店买家以「取消/拒收」完成售后，不走「签收后申请退货」。故退货/退款统一按订单状态派生（零新接口/表/授权）。
+- **退款**：`order_status = CANCELLED` 且 `paid_time IS NOT NULL`（付了款又取消 = 事实退款）。金额取 `sub_total`（与展示 GMV 同口径），按 `create_time` 归印尼日。
+- **退款率** = 退款金额 ÷ 展示 GMV（同窗口、同 display 口径，复用 `order_metrics.get_gmv_summary`，避免口径漂移）。
+- **发货前流失** = CANCELLED 且 `paid_time IS NULL`（下单没付 / COD 未确认）——**不是退款**，单列展示避免混淆。
+- **与利润链预估 refund 的区别**：`services/return_rate` 的 refund 是「退货率 × GMV」的**利润占位预估**（避免真实退货滞后高估当期利润）；本口径是**真实发生**的付款后取消。二者不同源、不冲突。
+- **原因分布做不了**：OrderHeader 无「取消原因」字段，reason 仅在平台退货接口（该店为 0）。故不做「退货原因分布」，诚实留白。
+- 代码：`services/refund_metrics.py`（`get_refund_summary` / `get_refund_trend`）。
+
+---
+
 ## 3. 订单同步（增量）
 
 代码：`flows/sync_orders.py`
@@ -348,3 +362,4 @@
 | 2026-07-01 | **展示 GMV 改用 `sub_total`(商品小计)+含所有状态(不排除取消)，精确对齐后台**(实测 6/29 195.8M vs 后台 196.2M、6/30 178.2M vs 178.8M，差 <0.5%)。客户「后台不减少」→反推后台口径=sub_total+含取消，我们旧口径 total_amount(偏高~4%)+排除取消(偏低)两错抵消成假 2.5%。新增正交开关 `display`(=create_time+含取消+sub_total)，仅 GMV 总额/趋势/订单数/销量用；爆款榜等口径不变靠 tooltip 标注；ROAS/利润口径不动。加 `orders.sub_total` 列(手写迁移 migrate_gmv_sub_total)+回填。见 §2/§2.1/§2.2 | `models/base_models.py`、`core/domain.py`、`platforms/tiktok_shop/normalize.py`、`services/order_store.py`、`services/order_metrics.py`(`_time_filter`/`_gmv_aggregates`/5 get_gmv_* 加 `display`)、`web/routes/{data,board,report}.py`、`scripts/migrate_gmv_sub_total.py`、`frontend/.../BoardPage.tsx` |
 | 2026-07-02 | **销量改「已付款口径」+ 更名「销量（件）」+ 订单指标合并卡 + 后台口径对照固化**(§2.3)。运营用 Analytics 的 Items sold=717 核对，我方显示 791(高 74)。查实:后台 Analytics GMV 含取消(我方对得上 0.06%)但同页 Orders/Items sold 是**已付款口径**(官方定义含 "paid")。故销量单独排除 CANCELLED/UNPAID(→729，对 Items sold 717 差 1.6%)对齐 Analytics；GMV/订单数保持含取消(订单数 768=Manage orders)不动。新增 `_units_status_filter(display)` 只作用 units 三处查询;看板订单数+销量合并成「成交概况」卡(网格分主次)+口径 tooltip;固化 TikTok 官方定义(Items sold/SKU orders/Orders/GMV)。见 §2/§2.2/§2.3 | `services/order_metrics.py`(`_units_status_filter`+`_gmv_aggregates`/`get_gmv_trend`/`_get_gmv_trend_hourly`)、`web/routes/data.py`(ORDERS_CALIBER)、`frontend/.../BoardPage.tsx`(`OrderMetricsCard`)、本文 §2.3 |
 | 2026-07-01 | 看板「库存健康」卡优化(§4.4)：健康度口径显式定义(=不缺货在售商品占比)+仪表盘分档变色(≥85绿/60-85黄/<60红,原恒绿误导)+口径 tooltip/图例；商品明细补 `sku_name`(变体名)+主图小图(批量查 Product 防 N+1/带 scope)、响应式(PC表格/移动卡片不横滚)、长名截断、前端分页(每页20)。无 schema 变更(Inventory.sku_name 早已建表) | `services/stock_metrics.py`、`web/routes/data.py`(`LowStockItem`)、`frontend/src/{api.ts,pages/BoardPage.tsx}`、`tests/test_stock_alerts.py` |
+| 2026-07-03 | **退款/取消分析真实化**(§2.4)：看板「退货分析/退款分析」两空占位合并为「退款/取消」tab，用真实数据。调研实测:TikTok 退货接口打通且授权已含 `seller.return_refund.basic`，但该店近两年平台退货单数=0(印尼 COD 店以取消完成售后)。故**退款=付款后取消**(`CANCELLED` 且 `paid_time` 非空,金额取 `sub_total`、率=退款额÷展示GMV)派生;发货前流失(未付款取消)单列不计退款;原因分布无字段诚实留白。零新接口/表/授权。同时删「下单趋势」tab(与顶部趋势图重复+单平台无拆分价值,backlog A1) | `services/refund_metrics.py`(新)、`web/routes/board.py`、`frontend/src/{api.ts,pages/BoardPage.tsx}`、`tests/test_refund_metrics.py`、本文 §2.4 |

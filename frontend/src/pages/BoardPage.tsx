@@ -33,6 +33,7 @@ import {
   type NewProduct,
   type ProductChannels,
   type ProductDetail,
+  type RefundAnalysis,
   type TopSku,
 } from "@/api";
 import { DateRangePicker, type DateRangeValue } from "@/components/board/DateRangePicker";
@@ -2759,12 +2760,11 @@ const PEND_BADGE: Record<string, { label: string; cls: string }> = {
   unknown: { label: "未知", cls: "bg-fill-default text-foreground-secondary" },
 };
 
-type OrderTab = "fulfillment" | "returns" | "refunds";
+type OrderTab = "fulfillment" | "refund";
 
 const ORDER_TABS: { id: OrderTab; label: string }[] = [
   { id: "fulfillment", label: "待发货" },
-  { id: "returns", label: "退货分析" },
-  { id: "refunds", label: "退款分析" },
+  { id: "refund", label: "退款 / 取消" },
 ];
 
 const PAGE_SIZES: { value: number; label: string }[] = [
@@ -2895,7 +2895,6 @@ function OrderSection({ data, loading }: { data: BoardData | null; loading: bool
   const [tab, setTab] = useState<OrderTab>("fulfillment");
   const b = data?.fulfillment.buckets;
   const items = data?.fulfillment.items ?? [];
-  const isDemo = tab !== "fulfillment";
 
   // 客户端分页（数据一次性到前端，切页零延迟）。0 = 全部。
   const [pageSize, setPageSize] = useState(5);
@@ -2916,12 +2915,7 @@ function OrderSection({ data, loading }: { data: BoardData | null; loading: bool
     <BoardCard>
       <CardHead
         title="订单与履约"
-        right={
-          <div className="flex items-center gap-2">
-            {isDemo && <DemoBadge />}
-            <TabPills tabs={ORDER_TABS} value={tab} onChange={setTab} />
-          </div>
-        }
+        right={<TabPills tabs={ORDER_TABS} value={tab} onChange={setTab} />}
       />
 
       {/* 待发货：真实履约数据（统计分桶 + 明细表） */}
@@ -3020,22 +3014,127 @@ function OrderSection({ data, loading }: { data: BoardData | null; loading: bool
 
       {/* 下单/销量趋势见顶部「销售趋势 / 订单·销量」大图，此处不重复；单平台下按平台拆分无价值（见 docs/board-data-backlog A1）。 */}
 
-      {/* 退货分析：后端暂无数据源，诚实空状态。 */}
-      {tab === "returns" && (
-        <DemoPlaceholder
-          title="退货分析 · 数据源开发中"
-          desc="退货数量、退货率与退货原因的数据接入开发中，接通后将在此展示真实退货分析。"
+      {/* 退款/取消：基于订单状态派生的真实数据（退款=付款后取消）。 */}
+      {tab === "refund" && <RefundPanel refund={data?.refund ?? null} loading={loading} />}
+    </BoardCard>
+  );
+}
+
+// 退款/取消面板：退款=付款后取消（真实退款），附取消构成拆分。数据基于订单状态派生
+// （该店不走平台退货流程，故无 return_refund 口径；见 docs/board-data-backlog）。
+function RefundPanel({ refund, loading }: { refund: RefundAnalysis | null; loading: boolean }) {
+  const t = useChartTokens();
+  const trend = refund?.trend ?? [];
+  const hasTrend = trend.some((p) => p.refund_amount > 0 || p.refund_order_count > 0);
+  const ratePct =
+    refund?.refund_rate == null ? null : (refund.refund_rate * 100).toFixed(2) + "%";
+
+  const trendOption = useMemo(
+    () => ({
+      tooltip: {
+        trigger: "axis" as const,
+        backgroundColor: t.card,
+        borderWidth: 0,
+        textStyle: { color: t.text, fontSize: 12 },
+        formatter: (ps: { axisValue: string; data: number }[]) => {
+          const p = ps?.[0];
+          if (!p) return "";
+          return `${p.axisValue}<br/>退款金额　${fmtMoney(p.data)}`;
+        },
+      },
+      grid: { top: 16, right: 12, bottom: 24, left: 8, containLabel: true },
+      xAxis: {
+        type: "category" as const,
+        data: trend.map((p) => p.date.slice(5)),
+        axisLine: { lineStyle: { color: t.grid } },
+        axisLabel: { color: t.sub, fontSize: 11 },
+        axisTick: { show: false },
+      },
+      yAxis: {
+        type: "value" as const,
+        splitLine: { lineStyle: { color: t.grid, type: "dashed" as const } },
+        axisLabel: {
+          color: t.sub,
+          fontSize: 11,
+          formatter: (v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : String(v)),
+        },
+      },
+      series: [
+        {
+          name: "退款金额",
+          type: "line" as const,
+          smooth: true,
+          symbol: "none" as const,
+          data: trend.map((p) => p.refund_amount),
+          lineStyle: { color: t.negative, width: 2 },
+          areaStyle: { color: t.negative, opacity: 0.1 },
+        },
+      ],
+    }),
+    [trend, t],
+  );
+
+  // 取消构成占比条（付款后取消 vs 发货前流失）。宽度按占比，颜色克制（无 side-stripe/渐变）。
+  const cancelledTotal = refund?.cancelled_total ?? 0;
+  const paidPct = cancelledTotal ? ((refund!.paid_cancelled / cancelledTotal) * 100) : 0;
+
+  return (
+    <div>
+      <div className="mb-3 flex items-center gap-1.5 text-xs text-foreground-secondary">
+        <span>退款 = 付款后取消（买家付款后取消/拒收）</span>
+        <InfoTooltip
+          align="start"
+          content="该店买家多以「取消」完成售后，不走平台「签收后申请退货」流程（平台退货口径为 0）。故退款按订单状态派生：退款 = 已付款后被取消的订单，金额取商品小计（与展示 GMV 同口径），退款率 = 退款额 ÷ 展示 GMV。发货前流失（未付款取消）不计入退款。"
+        >
+          <Info className="h-3.5 w-3.5" />
+        </InfoTooltip>
+      </div>
+
+      <div className="mb-4 flex flex-wrap gap-x-8 gap-y-3">
+        <Stat label="退款金额" value={fmtMoney(refund?.refund_amount)} tone="negative" loading={loading} />
+        <Stat label="退款率" value={ratePct ?? "—"} tone="negative" loading={loading} />
+        <Stat label="退款单数" value={fmtInt(refund?.refund_order_count)} loading={loading} />
+        <Stat label="发货前流失" value={fmtInt(refund?.unpaid_cancelled)} loading={loading} />
+      </div>
+
+      {/* 退款金额趋势（按日） */}
+      {loading || !hasTrend ? (
+        <ChartEmpty
+          loading={loading}
+          empty="该时段无付款后取消（退款）记录"
+          height={200}
         />
+      ) : (
+        <EChart option={trendOption} height={200} />
       )}
 
-      {/* 退款分析：后端暂无数据源，诚实空状态。 */}
-      {tab === "refunds" && (
-        <DemoPlaceholder
-          title="退款分析 · 数据源开发中"
-          desc="退款金额与退款率的数据接入开发中，接通后将在此展示真实退款趋势。"
-        />
+      {/* 取消构成：付款后取消 vs 发货前流失（+COD 注脚） */}
+      {cancelledTotal > 0 && (
+        <div className="mt-4">
+          <div className="mb-1.5 flex items-center justify-between text-xs text-foreground-secondary">
+            <span>取消构成（共 {fmtInt(cancelledTotal)} 单）</span>
+            <span className="text-foreground-tertiary">其中 COD {fmtInt(refund?.cod_cancelled)} 单</span>
+          </div>
+          <div className="flex h-2.5 overflow-hidden rounded-full bg-fill">
+            <div
+              className="bg-negative/70"
+              style={{ width: `${paidPct}%` }}
+              title={`付款后取消（退款）${refund?.paid_cancelled} 单`}
+            />
+          </div>
+          <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block size-2 rounded-full bg-negative/70" />
+              付款后取消（退款）<span className="tabnum text-foreground">{fmtInt(refund?.paid_cancelled)}</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block size-2 rounded-full bg-fill-deep" />
+              发货前流失（未付款）<span className="tabnum text-foreground">{fmtInt(refund?.unpaid_cancelled)}</span>
+            </span>
+          </div>
+        </div>
       )}
-    </BoardCard>
+    </div>
   );
 }
 

@@ -32,15 +32,12 @@
 - **数据源缺口**：同 B1（依赖流量/加购埋点）+ 下单/支付（订单侧已有）。漏斗前两层依赖 B1，后两层可由订单数据派生。
 - **阻塞点**：与 B1 同源，建议与 B1 一并规划。
 
-### B3. 退货分析（退货数 / 退货率 / 退货原因分布）
-- **现状**：演示双 Y 柱+折线 + 原因环图，`DEMO_RETURNS`。
-- **数据源缺口**：退货/售后单 + 退货原因枚举。需接入 TikTok Shop 售后（reverse/return）相关接口并落库（参考 `docs/tiktok-shop-openapi-index.json` 的 reverse 类目）。
-- **阻塞点**：尚无退货数据表与同步 flow。
-
-### B4. 退款分析（退款金额 / 退款率，月维度）
-- **现状**：演示双折线（金额面积 + 率虚线），`DEMO_REFUNDS`。
-- **数据源**：TikTok Shop **Finance API** 结算拆项含退款相关金额（见项目记忆「ROI/ROAS 预警数据源」）。
-- **阻塞点**：缺 Finance 授权 scope（code 105005）——需 Partner Center 加 Finance 权限 + 店铺重授权，再写 finance sync。与 ROAS 预警共用该授权解锁。
+### B3 + B4. 退货 / 退款分析 —— 已真实化（2026-07-03，合并为「退款/取消」tab）
+- **决定**：退货、退款两空占位（`DEMO_RETURNS` / `DEMO_REFUNDS`）合并为一个「退款/取消」tab，用真实数据。退货与退款同源（都是取消派生），不再分两 tab。
+- **实测调研**：TikTok `return_refund/202603/aftersales/search` 接口打通、授权**已含** `seller.return_refund.basic` + `seller.finance.info`（推翻本文原「缺 Finance scope 105005 需重授权」判断——已授权）。但该店（SasaQueen.id）近 90/365/730 天**平台退货单数 = 0**：印尼 COD 店买家以「取消/拒收」完成售后，不走「签收后申请退货」流程。
+- **落地口径**：退款 = 付款后取消（`order_status=CANCELLED` 且 `paid_time` 非空，金额取 `sub_total`、率 = 退款额÷展示GMV），基于现有 orders 表派生——**零新接口/表/授权/flow**。发货前流失（未付款取消）单列、不计退款。见 `services/refund_metrics.py` 与 business-rules §2.4。
+- **诚实留白**：OrderHeader 无「取消原因」字段（reason 仅在平台退货接口、该店为 0），故不做「退货原因分布」。
+- **何时补平台退货口径**：将来该店真有平台退货量（return_refund total>0），再接 `sync_aftersales` flow + returns 表补「原因分布」等（接口/授权已就绪，届时只差落库）。
 
 ---
 

@@ -31,6 +31,7 @@ from services.order_metrics import (
 )
 from services.product_channel_metrics import get_product_channel_breakdown
 from services.profit_summary import get_profit_card
+from services.refund_metrics import get_refund_summary, get_refund_trend
 from services.scope_resolution import ScopeError, list_scopes
 from services.user_authz import AuthzError, UserPermission, resolve_authorized_scope
 from web.routes.data import (
@@ -225,6 +226,23 @@ async def _collect(
     except Exception:  # noqa: BLE001 — 单卡兜底，费率取数失败不整页挂
         logger.warning("fee_rate monitor card failed", exc_info=True)
         fee_rate = {"status": "insufficient", "skip_reason": "取数失败", "trend": []}
+    # 退款/取消分析（随 period 变，与 GMV 同窗口）：退款=付款后取消（真实退款），
+    # 附取消构成拆分。出错兜底不阻断整页（仿 fee_rate）。
+    try:
+        refund_summary = get_refund_summary(
+            start_date=cur_start, end_date=cur_end,
+            platform=platform, country=country, shop_ids=shop_id_list,
+        )
+        refund = {
+            **refund_summary,
+            "trend": get_refund_trend(
+                start_date=cur_start, end_date=cur_end,
+                platform=platform, country=country, shop_ids=shop_id_list,
+            ),
+        }
+    except Exception:  # noqa: BLE001 — 单卡兜底
+        logger.warning("refund analysis failed", exc_info=True)
+        refund = None
     cur, prev, window_meta = _overview_window_and_gmv(
         cur_start, cur_end, prev_start, prev_end,
         platform=platform, country=country, shop_ids=shop_id_list,
@@ -299,6 +317,7 @@ async def _collect(
         "channels": channels,
         "profit": profit,
         "fee_rate": fee_rate,
+        "refund": refund,
     }
 
 

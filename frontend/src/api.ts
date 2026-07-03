@@ -247,8 +247,7 @@ export interface BoardData {
     snapshot_at?: string;
   };
   // 渠道 GMV 占比（直播/视频/商品卡）。沙箱店无 analytics 数据时 available=false。
-  channels?: {
-    channels: { key: string; label: string; gmv: number; pct: number }[];
+  channels?: {    channels: { key: string; label: string; gmv: number; pct: number }[];
     total_gmv: number;
     currency: string | null;
     available: boolean;
@@ -268,6 +267,25 @@ export interface BoardData {
   };
   // 费率监控（实时算、复用 B1 及时口径）。status：normal 正常 / alert 异常升高 / insufficient 数据积累中。
   fee_rate?: FeeRateMonitor;
+  // 退款/取消分析（基于订单状态派生）：退款=付款后取消（真实退款），附取消构成拆分。
+  // 与顶部 GMV 同窗口；取数失败时后端置 null，前端降级为空态。
+  refund?: RefundAnalysis | null;
+}
+
+// 退款/取消分析。退款严格 = 付款后取消（order_status=CANCELLED 且已付款），
+// 金额取 sub_total（与展示 GMV 同口径）；退款率 = 退款额 ÷ 展示 GMV。
+// cancelled_total 拆 paid_cancelled（事实退款）+ unpaid_cancelled（发货前流失，非退款）。
+export interface RefundAnalysis {
+  refund_amount: number;
+  refund_order_count: number;
+  refund_rate: number | null; // 退款额/GMV；GMV 为 0 时 null
+  gmv: number;
+  cancelled_total: number;
+  paid_cancelled: number;
+  unpaid_cancelled: number;
+  cod_cancelled: number;
+  currency: string | null;
+  trend: { date: string; refund_amount: number; refund_order_count: number }[];
 }
 
 export interface FeeRateComponent {
