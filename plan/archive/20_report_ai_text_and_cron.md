@@ -1,5 +1,7 @@
 # plan/20 — 定时日报/周报：AI 文字报告 + 链接 + cron 固化
 
+> **状态：✅ 已完成、已归档（2026-07-04）**。四块改动（A 服务端 summary / B cron prompt 改文字报告 / C skill 运营顾问文案 / D `setup-cron.sh` 脚本化幂等）全部落地上线 hp+prod。
+
 ## 背景与目标
 
 现状：定时日报/周报（openclaw cron 唤起 ecom agent）只发**一条链接**——cron prompt 明确写「不要写任何报告正文」。这是早期"怕 LLM 编数字"的保守设计。
