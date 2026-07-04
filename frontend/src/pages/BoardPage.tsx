@@ -225,20 +225,22 @@ export function BoardPage() {
               <SectionHeader title="按所选日期" hint={dateSectionHint} />
               <NoDataBanner data={data} loading={loading} />
               <BusinessOverview data={data} loading={loading} />
+              {/* 预估利润 + 渠道分布并列（桌面两列、移动端堆成两行）。利润卡放进两列后自然收窄。 */}
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                <HotProducts
-                  data={data}
-                  loading={loading}
-                  query={{
-                    start: range.start ?? undefined,
-                    end: range.end ?? undefined,
-                    scope,
-                    platform: platform || undefined,
-                    country: region || undefined,
-                  }}
-                />
+                <ProfitCard data={data} loading={loading} />
                 <ChannelPie data={data} loading={loading} />
               </div>
+              <HotProducts
+                data={data}
+                loading={loading}
+                query={{
+                  start: range.start ?? undefined,
+                  end: range.end ?? undefined,
+                  scope,
+                  platform: platform || undefined,
+                  country: region || undefined,
+                }}
+              />
 
               {/* ── 区2：实时·固定口径（不随日期筛选）── */}
               <SectionHeader
@@ -722,16 +724,13 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
    不再留半幅空 tile）；② 分项构成——GMV 为基数，逐项扣减，每行带「占 GMV%」与淡比例条，
    利润行高亮，一眼看懂「钱去哪了、利润占多少」（对照 fork DailyReport 的项目/金额/占比，
    但用淡条而非 ECharts 环图：更轻、移动端友好、成本未录入时不会画出误导的大绿块）；
-   ③ 提示区——缺天/未录成本/含今日/口径说明统一成低权重图标行，不再是多面 amber 墙。
-   bare=true：内嵌「经营概览」第四行，去外框避免卡中卡。 */
+   ③ 提示区——缺天/未录成本/含今日/口径说明统一成低权重图标行，不再是多面 amber 墙。 */
 function ProfitCard({
   data,
   loading,
-  bare = false,
 }: {
   data: BoardData | null;
   loading: boolean;
-  bare?: boolean;
 }) {
   const p = data?.profit;
   const est = p?.estimated;
@@ -854,7 +853,7 @@ function ProfitCard({
             </InfoTooltip>
           </span>
         }
-        as={bare ? "h3" : "h2"}
+        as="h2"
       />
       {loading || empty ? (
         <ChartEmpty loading={loading} empty={empty} height={200} />
@@ -929,12 +928,7 @@ function ProfitCard({
       )}
     </>
   );
-  // bare：作「经营概览」第四行内嵌，顶部分隔线与 KPI 区分，不再套卡边框（避免卡中卡）。
-  return bare ? (
-    <div className="mt-4 border-t border-border-shallow pt-4">{body}</div>
-  ) : (
-    <BoardCard>{body}</BoardCard>
-  );
+  return <BoardCard>{body}</BoardCard>;
 }
 
 /* ── 经营概览（照 fork BusinessOverview：MetricCard 行 + 分段 tab + 趋势图）──── */
@@ -1421,9 +1415,6 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
       {adDialogOpen && ads && (
         <AdSpendDialog ads={ads} onClose={() => setAdDialogOpen(false)} />
       )}
-
-      {/* 第四行：预估利润大卡（bare 内嵌，紧随 KPI、趋势图之前） */}
-      <ProfitCard data={data} loading={loading} bare />
 
       {/* Tab 紧贴图表右上（移动端不再隔着指标卡，便于触达） */}
       <div className="mb-2 flex items-center justify-end gap-2">
