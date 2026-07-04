@@ -1359,16 +1359,6 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
         <MetricCard
           className="lg:col-span-2"
           loading={loading}
-          change={hasAdSpend && adComplete ? ch?.ad_cost : undefined}
-          title="广告消耗"
-          value={adCostValue}
-          subtitle={hasAdSpend ? settlingNote ?? "结算口径·含达人佣金" : "暂无结算数据"}
-          info={hasAdSpend ? adInfoBtn : undefined}
-          icon={<Megaphone size={14} />}
-        />
-        <MetricCard
-          className="lg:col-span-2"
-          loading={loading}
           change={ch?.order_count}
           title="订单数"
           value={fmtInt(o?.order_count)}
@@ -1399,6 +1389,16 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
               <Info className="h-3.5 w-3.5" />
             </InfoTooltip>
           }
+        />
+        <MetricCard
+          className="lg:col-span-2"
+          loading={loading}
+          change={hasAdSpend && adComplete ? ch?.ad_cost : undefined}
+          title="广告消耗"
+          value={adCostValue}
+          subtitle={hasAdSpend ? settlingNote ?? "结算口径·含达人佣金" : "暂无结算数据"}
+          info={hasAdSpend ? adInfoBtn : undefined}
+          icon={<Megaphone size={14} />}
         />
         <MetricCard
           className="lg:col-span-2"
