@@ -1,11 +1,14 @@
 # 运营看板：演示模块的后端数据管道 backlog
 
 运营看板（`web/routes/board.py` + `frontend/src/pages/BoardPage.tsx`）按 forkStoreClaw 复刻了完整版式。
-其中 5 个模块**前端已用演示数据先行落地**（`frontend/src/components/board/demo-data.ts`，对应区块带「演示数据」琥珀徽章），
-后端数据源尚未就绪。本文件登记这些待开发项，作为后续 plan 的输入。
+早期其中若干模块**前端用演示数据先行落地**（`frontend/src/components/board/demo-data.ts`，带「演示数据」琥珀徽章），
+后端数据源尚未就绪。本文件登记这些待开发项，作为后续 plan 的输入。看板当前的区块布局见 `docs/board-layout.md`。
 
-数据源就绪后：①后端在 `_collect`（`web/routes/board.py`）补对应字段；②前端把该 tab 从 `demo-data.ts`
-切到 `BoardData`，并移除该 tab 的 `<DemoBadge/>`。
+> **2026-07-04 更新**：演示 tab 已全部下线（P0 精简）。原「流量趋势 / 转化漏斗」两个 `<DemoBadge/>` 占位
+> tab 从「经营概览」删除（详见下方 B1/B2、`docs/board-layout.md` 变更记录）。看板现已**不含任何演示数据模块**，
+> `DemoBadge` / `DemoPlaceholder` 组件也已随之移除。本 backlog 转为「未来若要做，数据源怎么接」的规划留存。
+
+数据源就绪后：①后端在 `_collect`（`web/routes/board.py`）补对应字段；②前端新建对应真实卡片/区块吃 `BoardData`。
 
 ---
 
@@ -22,13 +25,14 @@
 ## B. 需新数据源 / 新授权
 
 ### B1. 流量趋势（UV / PV / 加购人数）
-- **现状**：演示折线+柱，`DEMO_TRAFFIC`。
+- **现状**：演示 tab 已删（2026-07-04 P0 精简，原 `DEMO_TRAFFIC` + `<DemoPlaceholder/>` 占位）。当前看板无此模块。
 - **数据源缺口**：站内流量/埋点。TikTok Shop 侧需 analytics/流量类接口（当前 `docs/tiktok-shop-openapi-index.json` 未确认有逐日 UV/PV）；
   自建站需接入埋点。
 - **阻塞点**：无现成流量数据表；需先确定数据来源（平台 API vs 自埋点）。
+- **何时重做**：数据源就绪后，作**独立卡**新建（不再走演示 tab 老路），置入区1「按所选日期」。
 
 ### B2. 转化漏斗（浏览 → 加购 → 下单 → 支付）
-- **现状**：演示漏斗图，`DEMO_FUNNEL`。
+- **现状**：演示 tab 已删（2026-07-04 P0 精简，原 `DEMO_FUNNEL` + `<DemoPlaceholder/>` 占位）。当前看板无此模块。
 - **数据源缺口**：同 B1（依赖流量/加购埋点）+ 下单/支付（订单侧已有）。漏斗前两层依赖 B1，后两层可由订单数据派生。
 - **阻塞点**：与 B1 同源，建议与 B1 一并规划。
 
