@@ -299,3 +299,78 @@ def test_get_profit_card_coverage_incomplete(session):
     assert card["expected_days"] == 7
     assert card["covered_days"] == 1
     assert card["coverage_complete"] is False
+
+
+# ── 8. 结算真实利润（settled）：纯真实结算费用 + 真实退货金额 + 结算完整 gate ──
+def test_compute_daily_profit_settled(session, monkeypatch):
+    """settled 分支：扣点/广告只取纯 FactFinanceTransaction（不含未结算、不去重），
+    退货用真实退货金额（refund_metrics）。"""
+    import services.profit_aggregation as PA
+
+    monkeypatch.setattr(PA, "convert_idr_to_rmb",
+                        lambda amt, on_date=None: (Decimal("0") if amt is None
+                                                   else Decimal(str(amt)) * Decimal("0.00045")))
+    monkeypatch.setattr(PA.order_metrics, "get_gmv_summary",
+                        lambda **k: {"gmv": 10000, "order_count": 3, "units_sold": 5})
+    monkeypatch.setattr(PA.order_metrics, "get_units_by_seller_sku", lambda **k: {})
+    # 真实退货金额（IDR）：settled 用之，替代率×GMV
+    monkeypatch.setattr(PA.refund_metrics, "get_refund_summary",
+                        lambda **k: {"refund_amount": 700})
+
+    dim = dict(platform="tiktok_shop", country="GLOBAL", shop_id="S1",
+               seller_id=None, account_id=ACC, metric_date=D)
+    # 未结算行存在，但 settled 分支应完全忽略它（不减、不去重）
+    session.add(FactUnsettledFee(scope_key="u:A", transaction_id="tA", order_id="A",
+                                 estimated_fee_amount=Decimal("9999"), gmv_max_fee=Decimal("999"), **dim))
+    # 已结算：订单 B、C —— settled 全取，含与未结算同 order_id 的 B（不去重）
+    session.add_all([
+        FactFinanceTransaction(scope_key="f:B", transaction_id="fB", order_id="B",
+                               fee_tax_amount=Decimal("2100"), gmv_max_fee=Decimal("300"), **dim),
+        FactFinanceTransaction(scope_key="f:C", transaction_id="fC", order_id="C",
+                               fee_tax_amount=Decimal("1500"), affiliate_commission=Decimal("100"), **dim),
+    ])
+    session.commit()
+
+    rec = PA.compute_daily_profit(
+        metric_date=D, platform="tiktok_shop", country="GLOBAL",
+        shop_id="S1", seller_id=None, account_id=ACC, kind="settled", session=session,
+    )
+    # 扣点(IDR) = 纯已结算[(2100-300)+(1500-100)=3200]，未结算 9999 完全不计
+    # 广告(IDR) = 纯已结算[300+100=400]
+    # 退货(IDR) = 真实退货 700（非率×GMV 的 500）
+    assert rec.commission_fee == Decimal("3200") * Decimal("0.00045")
+    assert rec.ad_cost == Decimal("400") * Decimal("0.00045")
+    assert rec.refund_amount == Decimal("700") * Decimal("0.00045")
+    assert rec.gmv == Decimal("10000") * Decimal("0.00045")
+    assert rec.profit_kind == "settled"
+
+
+def test_compute_daily_profit_rejects_unknown_kind(session):
+    import services.profit_aggregation as PA
+    import pytest
+
+    with pytest.raises(ValueError):
+        PA.compute_daily_profit(metric_date=D, platform="tiktok_shop",
+                                shop_id="S1", account_id=ACC, kind="bogus", session=session)
+
+
+def test_unsettled_open_count_gate(session):
+    """结算完整 gate：有未结算行→>0（未完整）；清零→0（可回填 settled）。"""
+    import services.profit_aggregation as PA
+
+    dim = dict(platform="tiktok_shop", country="GLOBAL", shop_id="S1",
+               seller_id=None, account_id=ACC)
+    args = dict(platform="tiktok_shop", country="GLOBAL", shop_id="S1",
+                seller_id=None, account_id=ACC)
+    # 空 → 0
+    assert PA.unsettled_open_count(session, D, **args) == 0
+    session.add_all([
+        FactUnsettledFee(scope_key="u:A", transaction_id="tA", order_id="A",
+                         estimated_fee_amount=Decimal("1000"), metric_date=D, **dim),
+        FactUnsettledFee(scope_key="u:B", transaction_id="tB", order_id="B",
+                         estimated_fee_amount=Decimal("2000"), metric_date=D, **dim),
+    ])
+    session.commit()
+    assert PA.unsettled_open_count(session, D, **args) == 2
+    # 另一天仍为 0（按 metric_date 隔离）
+    assert PA.unsettled_open_count(session, date(2026, 6, 25), **args) == 0

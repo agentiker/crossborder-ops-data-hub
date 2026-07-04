@@ -27,7 +27,7 @@ from sqlalchemy import func
 from analytics.profit_alerts import ProfitRecordInput
 from core.db import SessionLocal
 from models.base_models import FactFinanceTransaction, FactUnsettledFee
-from services import order_metrics, product_cost_store, return_rate
+from services import order_metrics, product_cost_store, refund_metrics, return_rate
 from services.fx_rate import convert_idr_to_rmb
 
 logger = logging.getLogger(__name__)
@@ -101,6 +101,17 @@ def _settled_fees(session, metric_date, exclude_order_ids, *, platform, country,
     return fee_total - ads_total, ads_total
 
 
+def unsettled_open_count(session, metric_date, *, platform, country, shop_id, seller_id, account_id) -> int:
+    """该店该业务日仍未结算的行数。0 = 订单已全部结算完毕（结算完整），可回填 settled 真实利润。"""
+    q = session.query(func.count()).select_from(FactUnsettledFee).filter(
+        FactUnsettledFee.platform == platform,
+        FactUnsettledFee.metric_date == metric_date,
+    )
+    q = _scope(q, FactUnsettledFee, platform=platform, country=country,
+               shop_id=shop_id, seller_id=seller_id, account_id=account_id)
+    return int(q.scalar() or 0)
+
+
 def compute_daily_profit(
     *,
     metric_date: date,
@@ -109,9 +120,21 @@ def compute_daily_profit(
     shop_id: Optional[str] = None,
     seller_id: Optional[str] = None,
     account_id: Optional[str] = None,
+    kind: str = "estimated",
     session=None,
 ) -> ProfitRecordInput:
-    """聚合某业务日 × 店的预估利润，返回 ProfitRecordInput（各金额已折 CNY，profit_kind=estimated）。"""
+    """聚合某业务日 × 店的利润，返回 ProfitRecordInput（各金额已折 CNY）。
+
+    kind:
+    - "estimated"（默认）：扣点/广告 = 未结算预估 + 已结算真实（双源混用，因近期订单未结算完），
+      退货 = 退货率 × GMV（预估占位）。由 aggregate_profit flow 每日聚合前一日。
+    - "settled"（结算真实）：只对结算完整的历史天（metric_date ≤ today − settle_lag、
+      未结算已清零）调用。扣点/广告 = 纯 FactFinanceTransaction 真实结算值（无预估成分），
+      退货 = 真实退货金额（付款后取消 sub_total，refund_metrics）。GMV / 产品成本两分支同源
+      （本就真实、不随结算变）。由 backfill_settled_profit flow 回填。
+    """
+    if kind not in ("estimated", "settled"):
+        raise ValueError(f"unknown profit kind: {kind!r}")
     own = session is None
     session = session or SessionLocal()
     try:
@@ -126,16 +149,25 @@ def compute_daily_profit(
         order_count = int(gmv.get("order_count") or 0)
         units_sold = int(gmv.get("units_sold") or 0)
 
-        un_fee, un_ads, un_orders = _unsettled_fees(
-            session, metric_date, platform=platform, country=country,
-            shop_id=shop_id, seller_id=seller_id, account_id=account_id,
-        )
-        st_fee, st_ads = _settled_fees(
-            session, metric_date, un_orders, platform=platform, country=country,
-            shop_id=shop_id, seller_id=seller_id, account_id=account_id,
-        )
-        commission_idr = un_fee + st_fee
-        ad_idr = un_ads + st_ads
+        if kind == "settled":
+            # 结算完整的历史天：未结算已清零，扣点/广告全取纯真实结算值（无预估成分）。
+            st_fee, st_ads = _settled_fees(
+                session, metric_date, set(), platform=platform, country=country,
+                shop_id=shop_id, seller_id=seller_id, account_id=account_id,
+            )
+            commission_idr = st_fee
+            ad_idr = st_ads
+        else:
+            un_fee, un_ads, un_orders = _unsettled_fees(
+                session, metric_date, platform=platform, country=country,
+                shop_id=shop_id, seller_id=seller_id, account_id=account_id,
+            )
+            st_fee, st_ads = _settled_fees(
+                session, metric_date, un_orders, platform=platform, country=country,
+                shop_id=shop_id, seller_id=seller_id, account_id=account_id,
+            )
+            commission_idr = un_fee + st_fee
+            ad_idr = un_ads + st_ads
 
         # 产品成本（RMB，不折）：按 seller_sku 销量 × 单位成本
         units_by_sku = order_metrics.get_units_by_seller_sku(
@@ -160,13 +192,22 @@ def compute_daily_profit(
                 metric_date, shop_id, len(missing), missing[:10],
             )
 
-        # 预估退货（IDR）= 退货率 × GMV。率优先用真实历史率（近30天该店真实退货率），
-        # 算不出（样本不足）回落配置率。见 return_rate.get_effective_return_rate。
-        rate = return_rate.get_effective_return_rate(
-            account_id=account_id, platform=platform,
-            country=country, shop_id=shop_id, as_of=metric_date, session=session,
-        )
-        refund_idr = gmv_idr * rate
+        if kind == "settled":
+            # 真实退货金额（付款后取消 sub_total，IDR，同 display 口径）。结算完整的天退货
+            # 窗口也已过，真实退货已发生完，比"率×GMV"预估更准。见 refund_metrics。
+            refund_summary = refund_metrics.get_refund_summary(
+                start_date=metric_date, end_date=metric_date,
+                platform=platform, country=country, shop_id=shop_id,
+            )
+            refund_idr = _D(refund_summary.get("refund_amount"))
+        else:
+            # 预估退货（IDR）= 退货率 × GMV。率优先用真实历史率（近30天该店真实退货率），
+            # 算不出（样本不足）回落配置率。见 return_rate.get_effective_return_rate。
+            rate = return_rate.get_effective_return_rate(
+                account_id=account_id, platform=platform,
+                country=country, shop_id=shop_id, as_of=metric_date, session=session,
+            )
+            refund_idr = gmv_idr * rate
 
         # 折 CNY（成本本就是 RMB）
         return ProfitRecordInput(
@@ -185,7 +226,7 @@ def compute_daily_profit(
             product_cost=product_cost_rmb,
             refund_amount=convert_idr_to_rmb(refund_idr, metric_date),
             currency="CNY",
-            profit_kind="estimated",
+            profit_kind=kind,
         )
     finally:
         if own:

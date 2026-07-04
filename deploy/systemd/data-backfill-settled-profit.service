@@ -1,0 +1,12 @@
+[Unit]
+Description=TikTok 结算真实利润回填（结算完整的历史天用真实结算数据算 settled 利润）
+After=network-online.target
+OnFailure=data-onfailure@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/code/crossborder-ops-data-hub
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/.local/bin/uv run python -m flows.backfill_settled_profit
+# 单次最长 10 分钟，挂死自动杀
+TimeoutStartSec=600

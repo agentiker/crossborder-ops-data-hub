@@ -1,0 +1,9 @@
+[Unit]
+Description=每日回填结算完整历史天的真实利润（写 fact_profit_daily profit_kind=settled）
+[Timer]
+# OnCalendar 按服务器 OS 本地时区 Asia/Shanghai(CST=UTC+8)。02:03 CST，排在 estimated
+# 聚合(01:33)之后；只处理 14 天前已结算完整的天，不与当日采集抢数据
+OnCalendar=*-*-* 02:03:00
+Persistent=true
+[Install]
+WantedBy=timers.target
