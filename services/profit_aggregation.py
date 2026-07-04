@@ -10,7 +10,7 @@
 - 广告费(IDR) = 未结算三项广告费 + 已结算三项广告费（双源同期，与扣点对称；不用结算口径
   fact_ad_spend_daily 以免「昨日广告费」滞后虚低）
 - 产品成本(RMB) = Σ(seller_sku 销量 × 单位成本RMB)；缺成本 SKU 计 0（不阻断，记日志）
-- 预估退货(IDR) = 退货率 × GMV
+- 预估退货(IDR) = 退货率 × GMV（率优先真实历史率、回落配置率，见 return_rate.get_effective_return_rate）
 
 符号假设（生产店复验）：fee/广告费在 fact 表中为正 = 对卖家扣款（费用），直接作为成本项；
 estimated_fee_amount 同此口径。沙箱无数据，符号/字段命名以 hp 生产店真打校核为准。
@@ -160,9 +160,11 @@ def compute_daily_profit(
                 metric_date, shop_id, len(missing), missing[:10],
             )
 
-        # 预估退货（IDR）= 退货率 × GMV
-        rate = return_rate.get_return_rate(
-            account_id=account_id, platform=platform, session=session,
+        # 预估退货（IDR）= 退货率 × GMV。率优先用真实历史率（近30天该店真实退货率），
+        # 算不出（样本不足）回落配置率。见 return_rate.get_effective_return_rate。
+        rate = return_rate.get_effective_return_rate(
+            account_id=account_id, platform=platform,
+            country=country, shop_id=shop_id, as_of=metric_date, session=session,
         )
         refund_idr = gmv_idr * rate
 

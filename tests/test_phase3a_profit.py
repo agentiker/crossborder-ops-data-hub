@@ -112,6 +112,62 @@ def test_return_rate_priority(session):
                            sku="SKU-X", session=session) == Decimal("0.20")
 
 
+def test_effective_return_rate_real_over_config(session, monkeypatch):
+    """真实历史率优先：样本足→用真实率；样本不足/无 GMV→回落配置率链。"""
+    import services.return_rate as RR
+    from datetime import date
+
+    # 配置一个 default 配置率 0.08（作回落基准）
+    session.add(ReturnRateConfig(account_id=ACC, platform="tiktok_shop",
+                                 scope_level="default", scope_value="", return_rate=Decimal("0.08")))
+    session.commit()
+
+    # 真实率样本充足（单数≥20、GMV>0）→ 用真实率 0.0046
+    monkeypatch.setattr(RR, "_real_historical_rate", lambda **k: Decimal("0.0046"))
+    assert RR.get_effective_return_rate(
+        account_id=ACC, platform="tiktok_shop", shop_id="S1",
+        as_of=date(2026, 7, 4), session=session,
+    ) == Decimal("0.0046")
+
+    # 真实率不可信（样本不足→None）→ 回落配置率 0.08
+    monkeypatch.setattr(RR, "_real_historical_rate", lambda **k: None)
+    assert RR.get_effective_return_rate(
+        account_id=ACC, platform="tiktok_shop", shop_id="S1",
+        as_of=date(2026, 7, 4), session=session,
+    ) == Decimal("0.08")
+
+
+def test_real_historical_rate_sample_guard(session, monkeypatch):
+    """样本护栏：退款单数 < 阈值 或 GMV≤0 → 返回 None（不可信，交回落）。"""
+    import services.return_rate as RR
+    from datetime import date
+
+    # 单数够但正常 → 返回真实率（get_refund_summary 是函数内 import，patch 源模块 refund_metrics）
+    import services.refund_metrics as RM
+    monkeypatch.setattr(RM, "get_refund_summary", lambda **k: {
+        "refund_rate": 0.005, "refund_order_count": 50, "gmv": 1e9,
+    })
+    assert RR._real_historical_rate(
+        platform="tiktok_shop", country=None, shop_id="S1", as_of=date(2026, 7, 4),
+    ) == Decimal("0.005")
+
+    # 单数不足 → None
+    monkeypatch.setattr(RM, "get_refund_summary", lambda **k: {
+        "refund_rate": 0.005, "refund_order_count": 3, "gmv": 1e9,
+    })
+    assert RR._real_historical_rate(
+        platform="tiktok_shop", country=None, shop_id="S1", as_of=date(2026, 7, 4),
+    ) is None
+
+    # GMV=0 → None
+    monkeypatch.setattr(RM, "get_refund_summary", lambda **k: {
+        "refund_rate": None, "refund_order_count": 0, "gmv": 0,
+    })
+    assert RR._real_historical_rate(
+        platform="tiktok_shop", country=None, shop_id="S1", as_of=date(2026, 7, 4),
+    ) is None
+
+
 # ── 6. 利润聚合：扣点双源去重 + 广告不双算 + 退货率 + 折 RMB ──────────────────
 def test_compute_daily_profit(session, monkeypatch):
     import services.profit_aggregation as PA
