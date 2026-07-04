@@ -1,6 +1,7 @@
 # plan/18 — plan17 收尾：生产财务数据验证 + 费率异常监控
 
 > 2026-06-27 定方向。本文是 plan17 的收尾执行计划，供新会话无缝接续（上一会话规划完、换会话执行以防上下文满）。
+> **状态（2026-07-04 核实）**：Track B1 及时费率告警**已完成上线**——`get_unsettled_fee_rate`（`services/fee_rate_metrics.py:305`）+ `_scan_unsettled_fee_rate`（`flows/scan_fulfillment_alerts.py:325`，scan 第5规则）+ 单测，commit `0213f17`。Track A 生产数据验证是线下人工核对（无代码交付物）、按需进行；Track B2 分项费率异常为可选增强、未做。
 > 关联记忆：[[plan17-webui-ops-requirements]] [[prod-deployment-status]] [[tiktok-unsettled-estimated-fee-api]] [[roi-roas-alert-data-source]] [[plan17-stage5-channel-pie]]
 > 来源：客户会议纪要 `~/Downloads/智能纪要：TK小店财务系统需求沟通会议 2026年6月23日.md`。
 

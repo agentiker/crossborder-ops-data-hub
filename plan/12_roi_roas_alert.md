@@ -1,6 +1,6 @@
 # Plan 12 — ROI/ROAS 预警 + 授权流程 cipher 修复
 
-> 状态：调研完成，待真实生产店接入后开建。2026-06-13 记录。
+> 状态（2026-07-04 核实回写）：**Phase 0（授权 cipher 修复）+ Phase 1（广告费 sync + ROAS）已完成并上线**——`get_authorized_shops`（`platforms/tiktok_shop/client.py:191`）、`get_roas`（`services/ad_metrics.py:151`）、`flows/sync_ad_spend.py` + `fact_ad_spend_daily` 表 + `data-sync-ad-spend.timer` 均已落地（commit `f8ae9a2` 等）；ROAS 已上看板（plan/17 阶段3a）。**Phase 2（ROAS 独立预警模块）待做**——告警框架（scan flow）已有、费率异常告警已接，但「ROAS 跌」的独立规则尚未单独模块化。原「待真实店开建」已过时。
 > 关联记忆：`roi-roas-alert-data-source`、`proactive-push-daily-report-and-alerts`、`tiktok-api-direct-connect`。
 
 ## 背景 / 目标

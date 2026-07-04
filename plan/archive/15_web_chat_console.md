@@ -1,6 +1,6 @@
 # Plan 15 — Web 对话式控制台（仿 StoreClaw）+ 运营看板 + 角色权限三阶段
 
-> 状态：**Phase A 已实现 + 单测/冒烟通过（2026-06-17）**，待真实 LLM 凭证端到端验证 + 部署。详见末尾「Phase A 实现记录」。
+> 状态（2026-07-04 核实回写）：**三阶段全部已实现并上线 prod**。Phase A 对话控制台（`services/llm/` Provider 层 + `web/routes/chat.py` agent loop + `WebConversation`/`WebMessage` 表 + SPA `/app`，commit `3b67471`）；Phase B 看板（`5828ba5` Phase 1C 看板重写、`126a0de` 接真 boardData、`99b9a99` 分区，后续被 plan/17 大幅增强＝渠道/利润/退款等真实卡）；Phase C 角色权限（`AdminPage.tsx` + `/api/admin/roles` boss-only，`5fb6834`/`2376aea`）。原「仅 Phase A」已过时。**建议归档**（B/C 的后续增强已并入 plan/17）。
 > 关联：plan/13（飞书 H5 看板）、plan/14（独立看板站 + 统一权限闸 user_authz）、记忆 `feishu-h5-dashboard`、`agent-runtime-and-skill-mcp-architecture`、`scope-foundation`、`roi-roas-alert-data-source`。
 > 决策（已与用户确认 2026-06-17）：**先做 Phase A 对话外壳**；**前端走独立 SPA（开发形态）+ 先同源托管（部署形态）**；**LLM 走可配置 Provider 层（国外/国内均可，换 base_url+api_key+model）**；接受新建会话表；B/C 后续迭代。
 

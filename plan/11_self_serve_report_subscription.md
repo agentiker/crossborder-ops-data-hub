@@ -1,6 +1,6 @@
 # plan/11 — 客户自助订阅日报（确定性写工具）
 
-> 状态：**待开发**（2026-06-13 记录）。前置「主动推送日报+监控告警」已上线（见记忆 proactive-push-daily-report-and-alerts / 当前 `flows/scan_fulfillment_alerts`、openclaw cron 日报）。
+> 状态：**待开发**（2026-06-13 记录，2026-07-04 核实仍未做）。核心的**客户自助订阅工具 `ops_subscribe_report` + 订阅表确认不存在**（全库 grep 无）。但前置「主动推送日报+监控告警」已上线：定时日报/周报 cron 已在 prod 跑（运营手工配置，见 [[proactive-push-daily-report-and-alerts]] / `flows/scan_fulfillment_alerts` / 已归档 plan/20 的 `setup-cron.sh`）。**差的只是「让客户用自然语言自助订阅/退订」这层**——收件人现由运营代配、够用，故此 plan 低优。
 
 ## 背景 / 动机
 
