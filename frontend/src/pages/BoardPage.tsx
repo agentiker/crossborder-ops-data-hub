@@ -599,13 +599,24 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
   // baseline_pending：有当前预估费率/构成/趋势，仅已结算基准不足→展示主体但不判异常、不显升幅。
   const baselinePending = status === "baseline_pending";
   const points = (fr?.trend || []).filter((p) => p.rate != null);
+  // 结算中区间（近 settle_lag 天，complete=false）：unsettled 样本不完整偏高，虚化+底纹标注，
+  // 避免把当天暂态高点误读为涨佣。找第一个 incomplete 点作 markArea 起点（到最后一点）。
+  const firstIncompleteIdx = points.findIndex((p) => p.complete === false);
+  const settlingLabels =
+    firstIncompleteIdx >= 0
+      ? points.slice(firstIncompleteIdx).map((p) => p.date.slice(5))
+      : [];
   const option = useMemo(
     () => ({
       grid: { left: 8, right: 12, top: 12, bottom: 4, containLabel: true },
       tooltip: {
         trigger: "axis",
-        formatter: (ps: { axisValue: string; data: number }[]) =>
-          `${ps[0]?.axisValue}<br/>预估费率 ${ps[0]?.data?.toFixed(2)}%`,
+        formatter: (ps: { axisValue: string; data: number }[]) => {
+          const settling = settlingLabels.includes(ps[0]?.axisValue);
+          return `${ps[0]?.axisValue}<br/>预估费率 ${ps[0]?.data?.toFixed(2)}%${
+            settling ? "<br/><span style='color:#ce7612'>· 结算中·样本不完整偏高</span>" : ""
+          }`;
+        },
       },
       xAxis: {
         type: "category",
@@ -631,10 +642,25 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
           // hover 时禁用 emphasis：否则默认高亮态会覆盖 lineStyle/areaStyle 致折线"消失"。
           // tooltip 由 axisPointer 独立驱动，不受影响。
           emphasis: { disabled: true },
+          // 结算中区间：琥珀色浅底纹标注（近 settle_lag 天样本不完整）。有 incomplete 点才加。
+          ...(settlingLabels.length
+            ? {
+                markArea: {
+                  silent: true,
+                  itemStyle: { color: "rgba(206,118,18,0.08)" },
+                  data: [
+                    [
+                      { xAxis: settlingLabels[0] },
+                      { xAxis: settlingLabels[settlingLabels.length - 1] },
+                    ],
+                  ],
+                },
+              }
+            : {}),
         },
       ],
     }),
-    [points, lineColor, t],
+    [points, lineColor, t, settlingLabels],
   );
   const insufficient = status === "insufficient";
   return (
@@ -707,6 +733,14 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
           )}
           {/* 趋势 */}
           <EChart option={option} height={150} />
+          {settlingLabels.length > 0 && (
+            <div className="mt-1 flex items-center gap-1.5 text-xs text-foreground-tertiary">
+              <span className="inline-block h-2 w-3 shrink-0 rounded-sm bg-warning/15" />
+              <span>
+                琥珀区为近 {settlingLabels.length} 天「结算中」：订单未结算完、样本不完整会偏高，会随结算回落，勿当涨佣。
+              </span>
+            </div>
+          )}
           {/* 异常时点名分项归因 */}
           {status === "alert" && fr?.attributions?.length ? (
             <div className="rounded-xl bg-negative/10 p-3 text-sm">

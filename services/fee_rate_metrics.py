@@ -266,6 +266,11 @@ def get_fee_rate_monitor(
                     })
 
         # 趋势：近 trend_days 个业务日逐日 unsettled 预估费率（主币种）
+        # complete 标志：unsettled 费率只统计"还没结算"的订单，越近的天订单结算越少、样本越
+        # 不完整且偏高（当天最甚，可虚高到真实值的 1.2~1.3 倍）。以 settle_lag_days 为界：
+        # d <= today-lag 的点结算窗口已过、样本稳定=complete；更近的点标 incomplete，前端虚化，
+        # 避免老板把"当天未结算完的暂态高点"误读为平台涨佣。与广告 ROAS 结算滞后护栏同源。
+        settle_complete_through = today - timedelta(days=settings.fee_rate_settle_lag_days)
         trend = []
         for i in range(trend_days - 1, -1, -1):
             d = today - timedelta(days=i)
@@ -278,7 +283,11 @@ def get_fee_rate_monitor(
             elif day_by_ccy:  # 无主币种时（如 currency=None）取该日 GMV 最大币种
                 top = max(day_by_ccy.items(), key=lambda kv: kv[1].get("gmv", 0.0))
                 rate = top[1].get("rate")
-            trend.append({"date": d.isoformat(), "rate": rate})
+            trend.append({
+                "date": d.isoformat(),
+                "rate": rate,
+                "complete": d <= settle_complete_through,
+            })
 
         return {
             "currency": currency,

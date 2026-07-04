@@ -326,7 +326,8 @@ export interface FeeRateMonitor {
   baseline_window: string;
   components: FeeRateComponent[];
   attributions: FeeRateAttribution[];
-  trend: { date: string; rate: number | null }[];
+  // complete=false → 该日订单未结算完、unsettled 样本不完整偏高（近 settle_lag 天），前端虚化 + 标"结算中"
+  trend: { date: string; rate: number | null; complete?: boolean }[];
 }
 
 export interface ProfitBreakdown {

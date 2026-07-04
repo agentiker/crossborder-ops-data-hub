@@ -79,6 +79,9 @@ def test_monitor_normal(session):
     assert round(res["baseline_rate"], 4) == 0.20
     assert res["attributions"] == []  # 正常态不归因
     assert len(res["trend"]) == 3
+    # 趋势点带 complete 标志：trend_days=3 都在近 settle_lag(14) 天内 → 结算未完成 → complete=False
+    assert all("complete" in p for p in res["trend"])
+    assert all(p["complete"] is False for p in res["trend"])
 
 
 def test_monitor_alert_with_attribution(session):
