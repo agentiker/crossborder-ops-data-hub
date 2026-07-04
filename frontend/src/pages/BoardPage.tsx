@@ -21,7 +21,6 @@ import {
   Sparkles,
   Store,
   TriangleAlert,
-  Wrench,
   X,
   ZoomIn,
 } from "lucide-react";
@@ -395,30 +394,6 @@ function CardHead({
     <div className="mb-4 flex items-center justify-between">
       <As className="text-base font-semibold text-foreground">{title}</As>
       {right}
-    </div>
-  );
-}
-
-// 演示数据徽章（琥珀 pill）：后端暂无数据源的演示模块在标题/Tab 旁标注，避免被误当真实数据。
-function DemoBadge() {
-  return (
-    <span className="rounded bg-caution/15 px-1.5 py-0.5 text-[11px] font-medium text-caution">
-      数据源开发中
-    </span>
-  );
-}
-
-// 数据源未接通的维度占位卡：不再渲染假数据图表（守「数据可信即设计」），改诚实空状态——
-// 说明该维度规划中、数据源开发中，避免老板把演示数字误当真实经营数据。
-function DemoPlaceholder({ title, desc, height = 220 }: { title: string; desc: string; height?: number }) {
-  return (
-    <div
-      className="flex flex-col items-center justify-center gap-2 rounded-lg bg-fill-shallow px-6 text-center"
-      style={{ minHeight: height }}
-    >
-      <Wrench className="h-6 w-6 text-foreground-tertiary" />
-      <div className="text-sm font-medium text-foreground-secondary">{title}</div>
-      <p className="max-w-sm text-xs leading-relaxed text-foreground-tertiary">{desc}</p>
     </div>
   );
 }
@@ -1135,7 +1110,7 @@ function MetricCard({
   );
 }
 
-type OverviewTab = "sales" | "orders" | "traffic" | "funnel";
+type OverviewTab = "sales" | "orders";
 
 function BusinessOverview({ data, loading }: { data: BoardData | null; loading: boolean }) {
   const t = useChartTokens();
@@ -1343,11 +1318,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
   const tabs: { id: OverviewTab; label: string }[] = [
     { id: "sales", label: "销售趋势" },
     { id: "orders", label: "订单 / 销量（件）" },
-    { id: "traffic", label: "流量趋势" },
-    { id: "funnel", label: "转化漏斗" },
   ];
-  // traffic/funnel 暂无后端数据源，选中时标注「数据源开发中」徽章 + 诚实空状态（不渲染假数据）。
-  const isDemo = activeTab === "traffic" || activeTab === "funnel";
 
   // 窗口含今日：当期含半天今天,环比已在后端按 intraday 公平比较（不再假暴跌），此处再显眼
   // 标一枚徽章告诉客户「今天还没走完、为当日累计」，避免把今天的低值当成下降。
@@ -1456,22 +1427,10 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
 
       {/* Tab 紧贴图表右上（移动端不再隔着指标卡，便于触达） */}
       <div className="mb-2 flex items-center justify-end gap-2">
-        {isDemo && <DemoBadge />}
         <TabPills tabs={tabs} value={activeTab} onChange={setActiveTab} />
       </div>
 
-      {/* 流量/转化漏斗：后端暂无数据源，改诚实空状态（不渲染假数据），守「数据可信即设计」。 */}
-      {activeTab === "traffic" ? (
-        <DemoPlaceholder
-          title="流量趋势 · 数据源开发中"
-          desc="店铺访客与流量构成的数据接入开发中，接通后将在此展示真实趋势，不用演示数据充数。"
-        />
-      ) : activeTab === "funnel" ? (
-        <DemoPlaceholder
-          title="转化漏斗 · 数据源开发中"
-          desc="曝光→点击→下单→支付的转化漏斗数据接入开发中，接通后将在此展示真实转化路径。"
-        />
-      ) : loading || !pts.length ? (
+      {loading || !pts.length ? (
         <ChartEmpty loading={loading} empty="该时段暂无趋势数据" height={220} />
       ) : (
         <div className="h-[220px]">
