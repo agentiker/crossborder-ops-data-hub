@@ -81,11 +81,16 @@ const fmtMoney = (n: number | undefined) =>
   n == null
     ? "—"
     : "Rp " + Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
-// 利润折 CNY 展示（¥ 前缀），与 fmtMoney(Rp/IDR) 区分，避免币种误标。
+// 利润折 CNY 展示（¥ 前缀），与 fmtMoney(Rp/IDR) 区分，避免币种误标。保留两位小数（利润金额较小，
+// 整数会掩盖分项差异，如退货几十元四舍五入误差显眼）。
 const fmtMoneyCny = (n: number | undefined | null) =>
   n == null
     ? "—"
-    : "¥ " + Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
+    : "¥ " +
+      Number(n).toLocaleString("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
 // 占比百分比：≥1 取整（20%）；(0,1) 小值保留 1 位（0.5%），避免 toFixed(0) 把真实退货率
 // 0.46% 显示成误导的 0%；(0,0.05) 极小非零显「<0.1%」，不假报 0.0%。
 const fmtPct = (n: number) => {
@@ -98,6 +103,7 @@ const fmtPct = (n: number) => {
 // 下钻：平滑滚动到某锚点卡片并短暂高亮（利润卡「扣点」→ 费率监控卡跨区跳转）。
 // 高亮靠临时加 class（board-card-flash，定义在 index.css），1.6s 后移除。
 const FEE_RATE_CARD_ID = "fee-rate-monitor-card";
+const REFUND_CARD_ID = "refund-cancel-card";
 function scrollToCard(id: string) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -818,10 +824,11 @@ function ProfitCard({
     {
       label: "预估退货",
       value: est?.refund_amount,
+      onClick: () => scrollToCard(REFUND_CARD_ID),
       info: (
         <InfoTooltip
           align="start"
-          content="预估退货 = 退货率 × GMV。退货率优先取本店近 30 天真实退货率（付款后取消金额 ÷ GMV），样本不足时回落到设置的默认退货率。真实退货滞后发生，故用「率 × 当期 GMV」预估、而非直接扣已发生的退货，避免高估当期利润。"
+          content="预估退货 = 退货率 × GMV。退货率优先取本店近 30 天真实退货率（付款后取消金额 ÷ GMV），样本不足时回落到设置的默认退货率。真实退货滞后发生，故用「率 × 当期 GMV」预估、而非直接扣已发生的退货，避免高估当期利润。点击可查看「退款 / 取消」卡的真实退款明细（口径不同：此处为预估占位、退款卡为已发生的真实取消额，两数不相等属正常）。"
         >
           <Info className="h-3.5 w-3.5" />
         </InfoTooltip>
@@ -881,7 +888,16 @@ function ProfitCard({
           }`}
         >
           {label}
-          {info}
+          {info && (
+            // info 图标点击只弹 tooltip，不冒泡触发整行 onClick 跳转（否则想看说明反被滚走）。
+            <span
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+              className="inline-flex items-center"
+            >
+              {info}
+            </span>
+          )}
           {onClick && <ChevronRight className="h-3.5 w-3.5 text-foreground-tertiary" />}
         </span>
         <span className="flex items-baseline gap-2.5">
@@ -3028,7 +3044,7 @@ function OrderSection({ data, loading }: { data: BoardData | null; loading: bool
 // 故放区1「按所选日期」（原随「待发货」挤在底部固定口径区，口径错位，本次归位）。
 function RefundSection({ data, loading }: { data: BoardData | null; loading: boolean }) {
   return (
-    <BoardCard>
+    <BoardCard id={REFUND_CARD_ID}>
       <CardHead title="退款 / 取消" />
       <RefundPanel refund={data?.refund ?? null} loading={loading} />
     </BoardCard>
