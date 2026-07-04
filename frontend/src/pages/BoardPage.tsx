@@ -758,7 +758,18 @@ function ProfitCard({
     { label: "扣点", value: est?.commission_fee },
     { label: "广告费", value: est?.ad_cost },
     { label: "商品成本", value: est?.product_cost },
-    { label: "预估退货", value: est?.refund_amount },
+    {
+      label: "预估退货",
+      value: est?.refund_amount,
+      info: (
+        <InfoTooltip
+          align="start"
+          content="预估退货 = 退货率 × GMV。退货率优先取本店近 30 天真实退货率（付款后取消金额 ÷ GMV），样本不足时回落到设置的默认退货率。真实退货滞后发生，故用「率 × 当期 GMV」预估、而非直接扣已发生的退货，避免高估当期利润。"
+        >
+          <Info className="h-3.5 w-3.5" />
+        </InfoTooltip>
+      ),
+    },
   ];
   const marginPct = est?.profit_margin ?? pctOf(est?.gross_profit);
 
@@ -910,7 +921,14 @@ function ProfitCard({
               }
             />
             {deductions.map((d) => (
-              <Row key={d.label} label={d.label} value={d.value} pct={pctOf(d.value)} tone="cost" />
+              <Row
+                key={d.label}
+                label={d.label}
+                value={d.value}
+                pct={pctOf(d.value)}
+                tone="cost"
+                info={"info" in d ? d.info : undefined}
+              />
             ))}
             <div className="!mt-2 border-t border-border-shallow pt-1">
               <Row label="预估利润" value={est?.gross_profit} pct={marginPct} tone="profit" />
