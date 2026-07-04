@@ -95,6 +95,20 @@ const fmtPct = (n: number) => {
   return `${n.toFixed(1)}%`;
 };
 
+// 下钻：平滑滚动到某锚点卡片并短暂高亮（利润卡「扣点」→ 费率监控卡跨区跳转）。
+// 高亮靠临时加 class（board-card-flash，定义在 index.css），1.6s 后移除。
+const FEE_RATE_CARD_ID = "fee-rate-monitor-card";
+function scrollToCard(id: string) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  el.classList.remove("board-card-flash");
+  // 强制重排后再加 class，确保连续点击也能重新触发动画
+  void el.offsetWidth;
+  el.classList.add("board-card-flash");
+  window.setTimeout(() => el.classList.remove("board-card-flash"), 1600);
+}
+
 export function BoardPage() {
   const [platform, setPlatform] = useState("tiktok_shop"); // 平台默认 TikTok
   const [region, setRegion] = useState("ID"); // 区域默认 印尼（→country）
@@ -306,9 +320,10 @@ function NoDataBanner({ data, loading }: { data: BoardData | null; loading: bool
 
 // 看板专用容器 BoardCard（区别于 ui/card.tsx 的通用 Card）：fork StoreClaw 观感——
 // p-5 rounded-2xl bg-card border border-border-shallow、无阴影、靠色调分层浮起。
-function BoardCard({ children }: { children: ReactNode }) {
+// id 可选：作滚动锚点（如费率卡供利润卡「扣点」下钻跳转）。
+function BoardCard({ children, id }: { children: ReactNode; id?: string }) {
   return (
-    <div className="rounded-2xl border border-border-shallow bg-card p-5">{children}</div>
+    <div id={id} className="rounded-2xl border border-border-shallow bg-card p-5">{children}</div>
   );
 }
 
@@ -623,7 +638,7 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
   );
   const insufficient = status === "insufficient";
   return (
-    <BoardCard>
+    <BoardCard id={FEE_RATE_CARD_ID}>
       <CardHead
         title="费率监控（平台扣点率）"
         right={
@@ -763,7 +778,7 @@ function ProfitCard({
   const gmv = est?.gmv ?? 0;
   const pctOf = (v: number | undefined) => (gmv > 0 && v != null ? (v / gmv) * 100 : 0);
   const deductions = [
-    { label: "扣点", value: est?.commission_fee },
+    { label: "扣点", value: est?.commission_fee, onClick: () => scrollToCard(FEE_RATE_CARD_ID) },
     { label: "广告费", value: est?.ad_cost },
     { label: "商品成本", value: est?.product_cost },
     {
@@ -782,20 +797,38 @@ function ProfitCard({
   const marginPct = est?.profit_margin ?? pctOf(est?.gross_profit);
 
   // 一行分项：淡比例条铺底 + 名称 + 金额 + 占比%。tone 决定底色/字色（base 基数 / cost 扣减 / profit 利润）。
+  // onClick 可选：传入则整行可点击（hover 变色 + 光标 + 尾部箭头提示），用于下钻到相关卡片（如扣点→费率监控）。
   const Row = ({
     label,
     value,
     pct,
     tone,
     info,
+    onClick,
   }: {
     label: string;
     value: number | undefined;
     pct: number;
     tone: "base" | "cost" | "profit";
     info?: ReactNode;
+    onClick?: () => void;
   }) => (
-    <div className="relative rounded-md">
+    <div
+      className={`relative rounded-md ${onClick ? "cursor-pointer transition-colors hover:bg-fill-shallow" : ""}`}
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
+    >
       {/* 比例条单独放进裁剪层；行容器本身不 overflow-hidden，否则会把 tooltip 气泡一起裁没。 */}
       <div className="absolute inset-0 overflow-hidden rounded-md" aria-hidden>
         <div
@@ -815,6 +848,7 @@ function ProfitCard({
         >
           {label}
           {info}
+          {onClick && <ChevronRight className="h-3.5 w-3.5 text-foreground-tertiary" />}
         </span>
         <span className="flex items-baseline gap-2.5">
           <span
@@ -936,6 +970,7 @@ function ProfitCard({
                 pct={pctOf(d.value)}
                 tone="cost"
                 info={"info" in d ? d.info : undefined}
+                onClick={"onClick" in d ? d.onClick : undefined}
               />
             ))}
             <div className="!mt-2 border-t border-border-shallow pt-1">

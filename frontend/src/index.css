@@ -190,6 +190,18 @@
   @media (prefers-reduced-motion: reduce) {
     .stream-caret { animation: none; opacity: 0.5; }
   }
+  /* 下钻跳转目标卡短暂高亮：墨绿主色柔和 ring 呼吸一次（利润卡「扣点」→ 费率卡）。 */
+  .board-card-flash {
+    animation: board-card-flash 1.6s ease-out;
+  }
+  @keyframes board-card-flash {
+    0% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0); }
+    18% { box-shadow: 0 0 0 3px hsl(var(--primary) / 0.45); }
+    100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .board-card-flash { animation: none; box-shadow: 0 0 0 3px hsl(var(--primary) / 0.4); }
+  }
 }
 
 /* assistant Markdown 渲染（marked 输出，无法用 Tailwind 类，故走 token 化裸样式） */
