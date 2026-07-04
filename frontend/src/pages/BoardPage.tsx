@@ -739,14 +739,6 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
           )}
           {/* 趋势 */}
           <EChart option={option} height={150} />
-          {settlingLabels.length > 0 && (
-            <div className="mt-1 flex items-center gap-1.5 text-xs text-foreground-tertiary">
-              <span className="inline-block h-2 w-3 shrink-0 rounded-sm bg-warning/15" />
-              <span>
-                琥珀区为近 {settlingLabels.length} 天「结算中」：订单未结算完、样本不完整会偏高，会随结算回落，勿当涨佣。
-              </span>
-            </div>
-          )}
           {/* 异常时点名分项归因 */}
           {status === "alert" && fr?.attributions?.length ? (
             <div className="rounded-xl bg-negative/10 p-3 text-sm">
