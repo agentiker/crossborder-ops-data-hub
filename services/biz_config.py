@@ -67,11 +67,11 @@ CONFIGURABLE_KEYS: dict[str, dict] = {
         "group": "数据采集", "source": "biz_config",
         "hint": "未结算预估费用采集按下单时间回看的天数",
     },
-    # 利润：退货率（读 return_rate_configs default 级）
+    # 利润：退货率（读 return_rate_configs default 级；仅作真实率兜底）
     "estimated_return_rate_default": {
         "label": "默认退货率", "unit": "%", "type": "float", "min": 0, "max": 1,
         "group": "利润预估", "source": "return_rate",
-        "hint": "无细分配置时的全店预估退货率（0.05=5%）",
+        "hint": "兜底值：系统优先用近 30 天真实退货率算利润，仅当真实样本不足（近 30 天退款单数 < 20 或无 GMV）时才回落此配置值（0.05=5%）。",
     },
     # 补货三系数（读 replenishment_config 租户级）
     "replenish_velocity_days": {

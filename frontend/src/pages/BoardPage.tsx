@@ -86,6 +86,14 @@ const fmtMoneyCny = (n: number | undefined | null) =>
   n == null
     ? "—"
     : "¥ " + Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
+// 占比百分比：≥1 取整（20%）；(0,1) 小值保留 1 位（0.5%），避免 toFixed(0) 把真实退货率
+// 0.46% 显示成误导的 0%；(0,0.05) 极小非零显「<0.1%」，不假报 0.0%。
+const fmtPct = (n: number) => {
+  if (n <= 0) return "0%";
+  if (n >= 1) return `${Math.round(n)}%`;
+  if (n < 0.05) return "<0.1%";
+  return `${n.toFixed(1)}%`;
+};
 
 export function BoardPage() {
   const [platform, setPlatform] = useState("tiktok_shop"); // 平台默认 TikTok
@@ -816,8 +824,8 @@ function ProfitCard({
           >
             {fmtMoneyCny(value)}
           </span>
-          <span className="tabnum w-9 text-right text-xs text-foreground-tertiary">
-            {pct.toFixed(0)}%
+          <span className="tabnum w-12 text-right text-xs text-foreground-tertiary">
+            {fmtPct(pct)}
           </span>
         </span>
       </div>
@@ -849,7 +857,7 @@ function ProfitCard({
     });
   notes.push({
     icon: <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground-tertiary" />,
-    text: "扣点、广告费取自 TikTok 官方，退货按设定退货率预估。",
+    text: "扣点、广告费取自 TikTok 官方结算数据；退货按近 30 天真实退货率预估（详见「预估退货」说明）。",
   });
 
   const body = (
