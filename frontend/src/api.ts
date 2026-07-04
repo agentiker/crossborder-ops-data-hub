@@ -274,7 +274,7 @@ export interface BoardData {
 
 // 退款/取消分析。退款严格 = 付款后取消（order_status=CANCELLED 且已付款），
 // 金额取 sub_total（与展示 GMV 同口径）；退款率 = 退款额 ÷ 展示 GMV。
-// cancelled_total 拆 paid_cancelled（事实退款）+ unpaid_cancelled（发货前流失，非退款）。
+// cancelled_total 拆 paid_cancelled（事实退款）+ unpaid_cancelled（未付款取消，含 COD 拒收，非退款）。
 export interface RefundAnalysis {
   refund_amount: number;
   refund_order_count: number;

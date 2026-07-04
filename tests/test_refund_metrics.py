@@ -1,7 +1,7 @@
 """退款/取消分析（services.refund_metrics）口径测试。
 
 核心口径（见 docs/business-rules.md）：退款 = order_status=CANCELLED 且 paid_time 非空
-（付款后取消 = 事实退款）；金额取 sub_total；发货前流失（未付款取消）不计入退款。
+（付款后取消 = 事实退款）；金额取 sub_total；未付款取消（含 COD 拒收）不计入退款。
 """
 from datetime import date, datetime
 from decimal import Decimal
@@ -49,7 +49,7 @@ def test_refund_summary_paid_cancelled_only(session, monkeypatch):
         _order("ok", status="COMPLETED", sub_total="100000", paid=_dt(2026, 6, 3)),
         # 付款后取消（事实退款）：50000
         _order("refund1", status="CANCELLED", sub_total="50000", paid=_dt(2026, 6, 3)),
-        # 未付款取消（发货前流失，不是退款）
+        # 未付款取消（含 COD 拒收，不是退款）
         _order("lost1", status="CANCELLED", sub_total="30000", paid=None,
                create=_dt(2026, 6, 3), is_cod=True),
     ]

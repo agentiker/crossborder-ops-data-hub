@@ -4,7 +4,9 @@
 - **退款** = `order_status = CANCELLED` 且 `paid_time IS NOT NULL`（付款后取消 = 事实退款：
   买家付了钱又取消/拒收）。金额取 `sub_total`（与展示 GMV 同口径，不含运费/税/优惠），
   按 `create_time` 归印尼日（UTC+7）。
-- **发货前流失** = CANCELLED 且 `paid_time IS NULL`（下单没付 / COD 未确认），**不是退款**。
+- **未付款取消** = CANCELLED 且 `paid_time IS NULL`（下单没付 / COD 未确认），**不是退款**。
+  含 COD 拒收（货已发出、到货后拒付，其实发生在发货后）与下单未付两类；因 COD 单付款前
+  `paid_time` 恒空，数据上无法区分取消发生在发货前后，故用中性的「未付款取消」而非「发货前流失」。
 - **退款率** = 退款金额 ÷ 展示 GMV（同窗口、同 display 口径，复用 order_metrics.get_gmv_summary）。
 
 为什么不用 TikTok return_refund 接口：实测该店近两年平台退货单数 = 0（买家不走「签收后
@@ -32,7 +34,7 @@ from services.order_metrics import (
     get_gmv_summary,
 )
 
-# 退款判定：付款后取消。发货前流失：未付款取消（对照项，非退款）。
+# 退款判定：付款后取消。未付款取消（含 COD 拒收 + 下单未付）：对照项，非退款。
 _CANCELLED = "CANCELLED"
 
 

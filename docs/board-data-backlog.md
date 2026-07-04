@@ -39,7 +39,7 @@
 ### B3 + B4. 退货 / 退款分析 —— 已真实化（2026-07-03，合并为「退款/取消」tab）
 - **决定**：退货、退款两空占位（`DEMO_RETURNS` / `DEMO_REFUNDS`）合并为一个「退款/取消」tab，用真实数据。退货与退款同源（都是取消派生），不再分两 tab。
 - **实测调研**：TikTok `return_refund/202603/aftersales/search` 接口打通、授权**已含** `seller.return_refund.basic` + `seller.finance.info`（推翻本文原「缺 Finance scope 105005 需重授权」判断——已授权）。但该店（SasaQueen.id）近 90/365/730 天**平台退货单数 = 0**：印尼 COD 店买家以「取消/拒收」完成售后，不走「签收后申请退货」流程。
-- **落地口径**：退款 = 付款后取消（`order_status=CANCELLED` 且 `paid_time` 非空，金额取 `sub_total`、率 = 退款额÷展示GMV），基于现有 orders 表派生——**零新接口/表/授权/flow**。发货前流失（未付款取消）单列、不计退款。见 `services/refund_metrics.py` 与 business-rules §2.4。
+- **落地口径**：退款 = 付款后取消（`order_status=CANCELLED` 且 `paid_time` 非空，金额取 `sub_total`、率 = 退款额÷展示GMV），基于现有 orders 表派生——**零新接口/表/授权/flow**。未付款取消（含 COD 拒收，原名「发货前流失」）单列、不计退款。见 `services/refund_metrics.py` 与 business-rules §2.4。
 - **诚实留白**：OrderHeader 无「取消原因」字段（reason 仅在平台退货接口、该店为 0），故不做「退货原因分布」。
 - **何时补平台退货口径**：将来该店真有平台退货量（return_refund total>0），再接 `sync_aftersales` flow + returns 表补「原因分布」等（接口/授权已就绪，届时只差落库）。
 

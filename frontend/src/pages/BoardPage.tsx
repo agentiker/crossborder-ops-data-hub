@@ -3115,7 +3115,7 @@ function RefundPanel({ refund, loading }: { refund: RefundAnalysis | null; loadi
         <span>退款 = 付款后取消（买家付款后取消/拒收）</span>
         <InfoTooltip
           align="start"
-          content="该店买家多以「取消」完成售后，不走平台「签收后申请退货」流程（平台退货口径为 0）。故退款按订单状态派生：退款 = 已付款后被取消的订单，金额取商品小计（与展示 GMV 同口径），退款率 = 退款额 ÷ 展示 GMV。发货前流失（未付款取消）不计入退款。"
+          content="该店买家多以「取消」完成售后，不走平台「签收后申请退货」流程（平台退货口径为 0）。故退款按订单状态派生：退款 = 已付款后被取消的订单，金额取商品小计（与展示 GMV 同口径），退款率 = 退款额 ÷ 展示 GMV。未付款取消（买家付款前取消，含 COD 拒收——货已发出到货拒付、及下单未付）不计入退款。"
         >
           <Info className="h-3.5 w-3.5" />
         </InfoTooltip>
@@ -3127,7 +3127,7 @@ function RefundPanel({ refund, loading }: { refund: RefundAnalysis | null; loadi
         <Stat label="退款金额" value={fmtMoney(refund?.refund_amount)} tone="negative" loading={loading} />
         <Stat label="退款率" value={ratePct ?? "—"} tone="negative" loading={loading} />
         <Stat label="退款单数" value={fmtInt(refund?.refund_order_count)} loading={loading} />
-        <Stat label="发货前流失" value={fmtInt(refund?.unpaid_cancelled)} loading={loading} />
+        <Stat label="未付款取消" value={fmtInt(refund?.unpaid_cancelled)} loading={loading} />
       </div>
 
       {/* 退款金额趋势（按日） */}
