@@ -241,6 +241,8 @@ export function BoardPage() {
                   country: region || undefined,
                 }}
               />
+              {/* 退款/取消：随日期筛选变化，故归入区1「按所选日期」（原在底部固定口径区，口径错位）。 */}
+              <RefundSection data={data} loading={loading} />
 
               {/* ── 区2：实时·固定口径（不随日期筛选）── */}
               <SectionHeader
@@ -2678,8 +2680,8 @@ function SortableTh({
   );
 }
 
-/* ── 订单与履约（满宽多 tab）：待发货=真实履约数据；下单/退货/退款=fork 演示数据
-      （后端暂无源，见 docs/board-data-backlog.md，演示 tab 标「演示数据」徽章）─────── */
+/* ── 待发货履约（满宽单卡）：真实履约数据（统计分桶 + 明细表 + 分页）。
+      退款/取消已抽成独立 RefundSection 上移至区1（随日期筛选，口径归位）。────────── */
 
 const PEND_BADGE: Record<string, { label: string; cls: string }> = {
   overdue: { label: "超时", cls: "bg-negative/15 text-negative" },
@@ -2687,13 +2689,6 @@ const PEND_BADGE: Record<string, { label: string; cls: string }> = {
   normal: { label: "正常", cls: "bg-positive/15 text-positive" },
   unknown: { label: "未知", cls: "bg-fill-default text-foreground-secondary" },
 };
-
-type OrderTab = "fulfillment" | "refund";
-
-const ORDER_TABS: { id: OrderTab; label: string }[] = [
-  { id: "fulfillment", label: "待发货" },
-  { id: "refund", label: "退款 / 取消" },
-];
 
 const PAGE_SIZES: { value: number; label: string }[] = [
   { value: 5, label: "5" },
@@ -2820,7 +2815,6 @@ function FulfillmentPager({
 }
 
 function OrderSection({ data, loading }: { data: BoardData | null; loading: boolean }) {
-  const [tab, setTab] = useState<OrderTab>("fulfillment");
   const b = data?.fulfillment.buckets;
   const items = data?.fulfillment.items ?? [];
 
@@ -2829,11 +2823,11 @@ function OrderSection({ data, loading }: { data: BoardData | null; loading: bool
   const [page, setPage] = useState(1);
   const total = items.length;
   const pageCount = pageSize === 0 ? 1 : Math.max(1, Math.ceil(total / pageSize));
-  // 页码越界纠正（换筛选/条数后 total 变小时）；tab 或数据变化时回第 1 页。
+  // 页码越界纠正（换筛选/条数后 total 变小时）；数据变化时回第 1 页。
   const safePage = Math.min(page, pageCount);
   useEffect(() => {
     setPage(1);
-  }, [tab, total, pageSize]);
+  }, [total, pageSize]);
   const pageItems =
     pageSize === 0 ? items : items.slice((safePage - 1) * pageSize, safePage * pageSize);
   const rangeStart = total === 0 ? 0 : (safePage - 1) * (pageSize || total) + 1;
@@ -2841,108 +2835,107 @@ function OrderSection({ data, loading }: { data: BoardData | null; loading: bool
 
   return (
     <BoardCard>
-      <CardHead
-        title="订单与履约"
-        right={<TabPills tabs={ORDER_TABS} value={tab} onChange={setTab} />}
-      />
+      <CardHead title="待发货履约" />
 
       {/* 待发货：真实履约数据（统计分桶 + 明细表） */}
-      {tab === "fulfillment" && (
-        <>
-          <div className="mb-3 text-xs text-foreground-secondary">
-            当前快照 · 不随上方日期筛选变化
-            {data?.fulfillment.snapshot_at && `（同步于 ${data.fulfillment.snapshot_at}）`}
-          </div>
-          <div className="mb-4 flex flex-wrap gap-x-8 gap-y-3">
-            <Stat label="待发货合计" value={fmtInt(b?.total)} loading={loading} />
-            <Stat label="超时" value={fmtInt(b?.overdue)} tone="negative" loading={loading} />
-            <Stat label="临界" value={fmtInt(b?.critical)} tone="warning" loading={loading} />
-            <Stat label="正常" value={fmtInt(b?.normal)} loading={loading} />
-          </div>
-          <div className="overflow-x-auto rounded-lg border border-border-shallow">
-            <table className="w-full min-w-[640px] text-sm">
-              <thead>
-                <tr className="bg-fill-shallow">
-                  <th className="px-3 py-2 text-left font-medium text-foreground-secondary">订单</th>
-                  <th className="px-3 py-2 text-left font-medium text-foreground-secondary">店铺</th>
-                  <th className="px-3 py-2 text-left font-medium text-foreground-secondary">商品</th>
-                  <th className="px-3 py-2 text-center font-medium text-foreground-secondary">状态</th>
-                  <th className="px-3 py-2 text-right font-medium text-foreground-secondary">件数</th>
-                  <th className="px-3 py-2 text-right font-medium text-foreground-secondary">金额</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr>
-                    <td colSpan={6} className="px-3 py-8 text-center text-foreground-secondary">
-                      加载中…
+      <div className="mb-3 text-xs text-foreground-secondary">
+        当前快照 · 不随上方日期筛选变化
+        {data?.fulfillment.snapshot_at && `（同步于 ${data.fulfillment.snapshot_at}）`}
+      </div>
+      <div className="mb-4 flex flex-wrap gap-x-8 gap-y-3">
+        <Stat label="待发货合计" value={fmtInt(b?.total)} loading={loading} />
+        <Stat label="超时" value={fmtInt(b?.overdue)} tone="negative" loading={loading} />
+        <Stat label="临界" value={fmtInt(b?.critical)} tone="warning" loading={loading} />
+        <Stat label="正常" value={fmtInt(b?.normal)} loading={loading} />
+      </div>
+      <div className="overflow-x-auto rounded-lg border border-border-shallow">
+        <table className="w-full min-w-[640px] text-sm">
+          <thead>
+            <tr className="bg-fill-shallow">
+              <th className="px-3 py-2 text-left font-medium text-foreground-secondary">订单</th>
+              <th className="px-3 py-2 text-left font-medium text-foreground-secondary">店铺</th>
+              <th className="px-3 py-2 text-left font-medium text-foreground-secondary">商品</th>
+              <th className="px-3 py-2 text-center font-medium text-foreground-secondary">状态</th>
+              <th className="px-3 py-2 text-right font-medium text-foreground-secondary">件数</th>
+              <th className="px-3 py-2 text-right font-medium text-foreground-secondary">金额</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan={6} className="px-3 py-8 text-center text-foreground-secondary">
+                  加载中…
+                </td>
+              </tr>
+            ) : items.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-3 py-8 text-center text-foreground-secondary">
+                  暂无待发货订单
+                </td>
+              </tr>
+            ) : (
+              pageItems.map((r) => {
+                const badge = r.bucket ? PEND_BADGE[r.bucket] : null;
+                return (
+                  <tr
+                    key={String(r.order_id)}
+                    className="border-t border-border-shallow transition-colors hover:bg-fill-shallow"
+                  >
+                    <td className="px-3 py-2">
+                      <span className="font-mono text-xs text-foreground">
+                        {String(r.order_id).slice(-8)}
+                      </span>
                     </td>
-                  </tr>
-                ) : items.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-3 py-8 text-center text-foreground-secondary">
-                      暂无待发货订单
+                    <td className="px-3 py-2 text-foreground-secondary">
+                      {r.shop_name || r.shop_id || "—"}
                     </td>
+                    <td className="px-3 py-2 text-foreground">
+                      {(r.first_product_name || "—").slice(0, 20)}
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      {badge ? (
+                        <span
+                          className={"inline-flex rounded px-2 py-0.5 text-xs font-medium " + badge.cls}
+                        >
+                          {badge.label}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right text-foreground">{fmtInt(r.item_count)}</td>
+                    <td className="px-3 py-2 text-right text-foreground">{fmtMoney(r.total_amount)}</td>
                   </tr>
-                ) : (
-                  pageItems.map((r) => {
-                    const badge = r.bucket ? PEND_BADGE[r.bucket] : null;
-                    return (
-                      <tr
-                        key={String(r.order_id)}
-                        className="border-t border-border-shallow transition-colors hover:bg-fill-shallow"
-                      >
-                        <td className="px-3 py-2">
-                          <span className="font-mono text-xs text-foreground">
-                            {String(r.order_id).slice(-8)}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-foreground-secondary">
-                          {r.shop_name || r.shop_id || "—"}
-                        </td>
-                        <td className="px-3 py-2 text-foreground">
-                          {(r.first_product_name || "—").slice(0, 20)}
-                        </td>
-                        <td className="px-3 py-2 text-center">
-                          {badge ? (
-                            <span
-                              className={"inline-flex rounded px-2 py-0.5 text-xs font-medium " + badge.cls}
-                            >
-                              {badge.label}
-                            </span>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-right text-foreground">{fmtInt(r.item_count)}</td>
-                        <td className="px-3 py-2 text-right text-foreground">{fmtMoney(r.total_amount)}</td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-          {/* 分页条：非加载、有数据时显示。左=范围+每页条数，右=翻页/页码。 */}
-          {!loading && total > 0 && (
-            <FulfillmentPager
-              total={total}
-              rangeStart={rangeStart}
-              rangeEnd={rangeEnd}
-              page={safePage}
-              pageCount={pageCount}
-              pageSize={pageSize}
-              onPageSize={setPageSize}
-              onPage={setPage}
-            />
-          )}
-        </>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+      {/* 分页条：非加载、有数据时显示。左=范围+每页条数，右=翻页/页码。 */}
+      {!loading && total > 0 && (
+        <FulfillmentPager
+          total={total}
+          rangeStart={rangeStart}
+          rangeEnd={rangeEnd}
+          page={safePage}
+          pageCount={pageCount}
+          pageSize={pageSize}
+          onPageSize={setPageSize}
+          onPage={setPage}
+        />
       )}
+    </BoardCard>
+  );
+}
 
-      {/* 下单/销量趋势见顶部「销售趋势 / 订单·销量」大图，此处不重复；单平台下按平台拆分无价值（见 docs/board-data-backlog A1）。 */}
-
-      {/* 退款/取消：基于订单状态派生的真实数据（退款=付款后取消）。 */}
-      {tab === "refund" && <RefundPanel refund={data?.refund ?? null} loading={loading} />}
+// 退款/取消独立卡：RefundPanel 裸内容套上 BoardCard + 标题。退款随日期筛选变化，
+// 故放区1「按所选日期」（原随「待发货」挤在底部固定口径区，口径错位，本次归位）。
+function RefundSection({ data, loading }: { data: BoardData | null; loading: boolean }) {
+  return (
+    <BoardCard>
+      <CardHead title="退款 / 取消" />
+      <RefundPanel refund={data?.refund ?? null} loading={loading} />
     </BoardCard>
   );
 }
