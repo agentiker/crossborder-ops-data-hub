@@ -865,7 +865,7 @@ function ProfitCard({
       {/* 比例条单独放进裁剪层；行容器本身不 overflow-hidden，否则会把 tooltip 气泡一起裁没。 */}
       <div className="absolute inset-0 overflow-hidden rounded-md" aria-hidden>
         <div
-          className={`absolute inset-y-0 left-0 ${tone === "profit" ? "bg-positive/15" : "bg-fill-shallow"}`}
+          className={`absolute inset-y-0 left-0 ${tone === "profit" ? "bg-positive/25" : "bg-fill-deep"}`}
           style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
         />
       </div>
@@ -1868,7 +1868,7 @@ function ProductDetailDialog({
                       return (
                         <div key={(k.sku_id || "") + i} className="relative rounded-md">
                           <div className="absolute inset-0 overflow-hidden rounded-md" aria-hidden>
-                            <div className="absolute inset-y-0 left-0 bg-fill-shallow" style={{ width: `${pct}%` }} />
+                            <div className="absolute inset-y-0 left-0 bg-fill-deep" style={{ width: `${pct}%` }} />
                           </div>
                           <div className="relative flex items-center justify-between gap-2 px-2 py-1.5">
                             <span className="min-w-0 flex-1 truncate">
