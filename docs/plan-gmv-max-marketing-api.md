@@ -99,3 +99,75 @@ subagent 建议 USD→IDR 叉汇，但**看板利润本就折 CNY**（`fx_rate.p
 - 是否先做 Phase 0 授权 spike（强烈建议）？
 - 卡内 GMV Max 折 IDR 还是 CNY（§6.3）？
 - Marketing API App 是否需要重新在 TikTok for Business 侧申请（这决定是否有审核等待）？—— 需查现有 app 是否已含 Marketing 权限。
+
+---
+
+## 9. Marketing API 接入流程 + 注意点（2026-07-07 抓官方文档确认）
+
+### 9.0 先回答：已接入 TTS Partner Center，对接 Marketing API 有帮助吗？
+
+**基本没有帮助，两套体系完全独立。** 官方文档明确：
+
+| | TikTok Shop（你已接入的） | TikTok Marketing API（GMV Max 花费） |
+|---|---|---|
+| 开发者门户 | Partner Center `partner.tiktokshop.com` | TikTok For Business `business-api.tiktok.com` + `ads.tiktok.com/marketing_api` |
+| 账户体系 | TikTok Shop 卖家账户 | **TikTok For Business 账户**（另注册） |
+| 开发者 App | Shop App（已有） | **另创建 Marketing 开发者 App，独立审核** |
+| 授权主体 | 商家授权 shop（→ shop_cipher） | **广告主(advertiser)授权**（→ advertiser_id） |
+| 授权凭证 | Shop OAuth code → access_token | advertiser `auth_code` → access_token |
+| 签名 | HMAC-SHA256（自定义签名串） | **无自定义签名**，用 app_id+secret+auth_code 换 token，后续 header 带 access_token |
+
+唯一能复用的是**认知/工程经验**（OAuth 回调怎么落库、token 怎么加密存、直连出口 IP 等），代码和账户层面几乎从零。所以「已接 Partner Center」不会缩短 Marketing API 的接入。
+
+### 9.1 前置条件（一次性，按顺序）
+
+官方 onboarding 三步，全在 TikTok For Business 侧、与 Shop 无关：
+
+1. **创建 TikTok For Business 账户**（`ads.tiktok.com`）。
+2. **注册为开发者**（Register as developer）。
+3. **创建 Marketing 开发者 App** —— 创建时**勾选所需权限 scope**（要含广告报表 Reporting 权限，覆盖 `report_type=TT_SHOP`）+ 配置 **redirect_uri**（回调地址，可配最多 10 个含 localhost）。**App 需审核**（外部依赖，等待时间不可控，是排期最大变数）。
+
+> ⚠️ 那个「印尼1店-max户」广告账户必须是一个 **TikTok For Business advertiser 账户**、且你能让它完成授权（见 9.2）。需先确认这个户归谁管、能不能配合走授权邮箱验证。
+
+### 9.2 授权流程（每个广告账户一次，advertiser 侧要配合）
+
+1. App 审核通过后，在 **My Apps → 你的 App → Basic Information** 找到 **Advertiser authorization URL**，发给广告主。
+2. 广告主浏览器打开该 URL → 看到你申请的权限列表 → 同意平台协议 → 点 Confirm。
+3. 广告主点 **Send Code**，广告账户绑定邮箱收到验证码 → 输入验证码 → Confirm。
+   - **注意**：同一 App 对同一广告账户，验证有效期 **48 小时**（窗口内重复授权免验证）；换个 App 授权则要重新验证。
+4. 验证通过后重定向到你的 `redirect_uri`，URL query 带 `auth_code`（**有效期 1 小时、只能用一次**，过期要重走）。
+5. 你的服务端回调端点接住 `auth_code`。
+
+### 9.3 换 access_token（服务端）
+
+```
+POST https://business-api.tiktok.com/open_api/v1.3/oauth2/access_token/
+Header: Content-Type: application/json
+Body: {"app_id": "...", "secret": "...", "auth_code": "..."}
+```
+
+- 响应里返回 **access_token**（application/json 方式拿的是长期 token）+ **该 token 可访问的 advertiser_ids 列表** + 权限 scope。
+- 拿到 access_token + advertiser_id 后，即可调 §2 的报表接口拉 GMV Max 花费。
+- token 后续请求放 header（Access-Token），**无 Shop 那套 HMAC 签名**。
+
+### 9.4 接入注意点（踩坑预判）
+
+- **App 审核是最大不确定性**：排期无法承诺，先提交申请让它并行审。
+- **auth_code 1 小时 + 一次性**：回调端点要即时换 token，别缓存 auth_code。
+- **advertiser 必须配合**：授权要广告账户邮箱验证码，非纯技术操作，需和客户/运营约时间。
+- **redirect_uri 要预先配**：创建 App 时配好回调地址（含生产域名 `gtl.agenticker.cc` 之类），否则回调失败。
+- **权限 scope 创建时就要选对**：漏选 Reporting/广告数据权限，拿到 token 也调不了报表，要改 scope 可能得重授权。
+- **出口 IP**：Marketing API 是否需 IP 白名单待实测（Shop 那套已配），可能要单独加。
+- **token 刷新**：长期 token 的过期/刷新策略需实测（文档提到 token 丢失要 advertiser 取消授权重来）。
+- **多广告账户**：一个 access_token 可能覆盖多个 advertiser_id，scope 设计要考虑。
+
+### 9.5 Phase 0 授权 spike 建议（投开发前先验证）
+
+最小验证闭环，把「授权能不能走通」这个最大风险点先证实：
+
+1. 注册 TikTok For Business + 开发者 + 建 App（选 Reporting scope + 配 redirect_uri）→ 提交审核。
+2. 审核过后，让「印尼1店-max户」走一次 advertiser 授权，拿到 auth_code。
+3. 服务端换到 access_token + advertiser_id。
+4. 用它调一次 `report_type=TT_SHOP` 报表，确认能拉到 §1 后台那 9,989 USD 的 spend。
+
+**这 4 步全通，再投 §7 的 5-7 天开发；任何一步卡住（尤其 App 审核、advertiser 授权），先解决再说。**
