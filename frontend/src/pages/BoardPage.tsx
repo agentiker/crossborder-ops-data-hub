@@ -1545,14 +1545,18 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
 
 type RankBy = "sales" | "gmv";
 
+// 爆款卡主行：客户要看款号(seller_sku)比商品名更直观。优先显 seller_sku；同商品多 SKU
+// (sku_count>1) 时标「809-KHM-L 等N个规格」避免代表款号以偏概全；无款号回落商品名/id。
 function productLabel(i: TopSku): string {
-  return i.product_name || i.seller_sku || i.product_id || i.sku_id || "?";
+  if (i.seller_sku) {
+    return (i.sku_count ?? 0) > 1 ? `${i.seller_sku} 等${i.sku_count}个规格` : i.seller_sku;
+  }
+  return i.product_name || i.product_id || i.sku_id || "?";
 }
 
-// 款号/规格次要行：多规格(sku_count>1)显「N 个规格」，否则显款号(seller_sku)。
+// 次要行：主行已显款号，这里补充商品名(灰字)做可读性；主行回落到商品名时不再重复。
 function styleCodeLabel(i: TopSku): string | null {
-  if ((i.sku_count ?? 0) > 1) return `${i.sku_count} 个规格`;
-  if (i.seller_sku) return `款号 ${i.seller_sku}`;
+  if (i.seller_sku && i.product_name) return i.product_name;
   return null;
 }
 
