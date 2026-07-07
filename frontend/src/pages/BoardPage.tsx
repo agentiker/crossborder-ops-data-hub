@@ -1871,8 +1871,14 @@ function ProductDetailDialog({
                             <div className="absolute inset-y-0 left-0 bg-fill-shallow" style={{ width: `${pct}%` }} />
                           </div>
                           <div className="relative flex items-center justify-between gap-2 px-2 py-1.5">
-                            <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-                              {k.sku_name || k.seller_sku || k.sku_id || "—"}
+                            <span className="min-w-0 flex-1 truncate">
+                              {/* 主：款号(seller_sku) 与爆款卡主行一致；副：规格名(sku_name)灰字补充 */}
+                              <span className="text-sm text-foreground">
+                                {k.seller_sku || k.sku_name || k.sku_id || "—"}
+                              </span>
+                              {k.seller_sku && k.sku_name && (
+                                <span className="ml-2 text-xs text-foreground-tertiary">{k.sku_name}</span>
+                              )}
                             </span>
                             <span className="flex shrink-0 items-baseline gap-2.5">
                               <span className="tabnum text-sm text-foreground">{fmtInt(k.units_sold)} 件</span>
