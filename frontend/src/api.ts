@@ -6,6 +6,7 @@ export interface Me {
   role: string;
   is_boss: boolean;
   scope_label: string;
+  name: string | null; // 飞书昵称（从登记 note 剥掉「申请人：」前缀），可能缺失
 }
 
 export interface ConversationItem {
@@ -347,6 +348,7 @@ export interface RoleRow {
   open_id: string;
   role: string; // boss / operator / pending（待审批，自助申请落库的哨兵）
   allowed_scope_key: string | null;
+  name: string | null; // 用户名（飞书昵称，首登自动落）
   note: string | null;
   is_active: boolean;
   account_id: string;
@@ -363,6 +365,7 @@ export interface RoleUpsertBody {
   open_id: string;
   role: "boss" | "operator";
   scope_key?: string | null;
+  name?: string | null;
   note?: string | null;
   account_id?: string;
   channel?: string;

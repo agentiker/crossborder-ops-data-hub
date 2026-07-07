@@ -376,12 +376,13 @@ def test_ensure_registration_first_user_bootstraps_boss(session, monkeypatch):
     assert row.role == "boss"
     assert row.is_active is True
     assert row.allowed_scope_key is None
+    assert row.name == "张三"  # 昵称落 name 列
     # bootstrap 后立即可用
     assert get_user_permission("ou_first").is_boss is True
 
 
 def test_ensure_registration_subsequent_is_pending(session, monkeypatch):
-    """表非空且无此人 → 落待审批行（pending + 未启用 + 带姓名 note），仍 fail-closed。"""
+    """表非空且无此人 → 落待审批行（pending + 未启用 + 昵称落 name 列），仍 fail-closed。"""
     _use(session, monkeypatch)
     _role(session, "ou_boss", "boss")  # 表已有人
     session.commit()
@@ -389,7 +390,8 @@ def test_ensure_registration_subsequent_is_pending(session, monkeypatch):
     row = _find_role(session, "ou_new")
     assert row.role == "pending"
     assert row.is_active is False
-    assert "李四" in (row.note or "")
+    assert row.name == "李四"  # 昵称落独立 name 列（note 留给运维自由备注）
+    assert row.note is None
     # 待审批期间不可用
     assert get_user_permission("ou_new") is None
 

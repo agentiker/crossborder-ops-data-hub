@@ -91,6 +91,16 @@ export function AdminPage() {
     const myOpenId = me?.open_id ?? "";
     return [
       {
+        key: "name",
+        header: "用户名",
+        render: (r) =>
+          r.name ? (
+            <span className="font-medium">{r.name}</span>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          ),
+      },
+      {
         key: "open_id",
         header: "open_id",
         render: (r) => (
@@ -291,6 +301,7 @@ function RoleFormDialog({
     initial?.role === "boss" ? "boss" : "operator",
   );
   const [scopeKey, setScopeKey] = useState(initial?.allowed_scope_key ?? "");
+  const [name, setName] = useState(initial?.name ?? "");
   const [note, setNote] = useState(initial?.note ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -319,6 +330,7 @@ function RoleFormDialog({
       open_id: oid,
       role,
       scope_key: role === "operator" ? scopeKey : null,
+      name: name.trim() || null,
       note: note.trim() || null,
     };
     try {
@@ -400,12 +412,22 @@ function RoleFormDialog({
           </div>
 
           <div className="grid gap-1.5">
+            <Label htmlFor="name">用户名</Label>
+            <Input
+              id="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="可选，飞书扫码登录会自动填入"
+            />
+          </div>
+
+          <div className="grid gap-1.5">
             <Label htmlFor="note">备注</Label>
             <Input
               id="note"
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="可选，便于辨认是谁"
+              placeholder="可选，岗位/说明等"
             />
           </div>
 

@@ -58,6 +58,7 @@ class RoleOut(BaseModel):
     open_id: str
     role: str
     allowed_scope_key: Optional[str]
+    name: Optional[str]
     note: Optional[str]
     is_active: bool
     account_id: str
@@ -71,6 +72,7 @@ def _role_out(row: UserRole) -> "RoleOut":
         open_id=row.open_id,
         role=row.role,
         allowed_scope_key=row.allowed_scope_key,
+        name=row.name,
         note=row.note,
         is_active=row.is_active,
         account_id=row.account_id,
@@ -87,6 +89,7 @@ class RoleUpsertIn(BaseModel):
     open_id: str
     role: str  # boss / operator
     scope_key: Optional[str] = None  # operator 必填且须 active；boss 忽略
+    name: Optional[str] = None  # 用户名（飞书昵称）；自助登记自动落，boss 手动建号可填
     note: Optional[str] = None
     account_id: str = "ecom-app"
     channel: str = "feishu"
@@ -179,6 +182,7 @@ async def upsert_role(body: RoleUpsertIn, boss: UserPermission = Depends(require
                 open_id=body.open_id,
                 role=body.role,
                 allowed_scope_key=scope_key,
+                name=body.name,
                 note=body.note,
                 is_active=True,
             )
@@ -192,6 +196,8 @@ async def upsert_role(body: RoleUpsertIn, boss: UserPermission = Depends(require
             }
             row.role = body.role
             row.allowed_scope_key = scope_key
+            if body.name is not None:
+                row.name = body.name
             if body.note is not None:
                 row.note = body.note
             row.is_active = True

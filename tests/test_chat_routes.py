@@ -22,7 +22,7 @@ from web.routes import chat as chat_mod
 from web.web_security import require_web_user_api
 
 BOSS = UserPermission(open_id="ou_boss", role="boss", allowed_scope_key=None,
-                      channel="feishu", account_id="ecom-app")
+                      channel="feishu", account_id="ecom-app", name="郭培鑫")
 OPER = UserPermission(open_id="ou_op", role="operator", allowed_scope_key="scope-a",
                       channel="feishu", account_id="ecom-app")
 
@@ -153,3 +153,4 @@ def test_me_returns_role(_db, monkeypatch):
     assert r.status_code == 200
     body = r.json()
     assert body["role"] == "boss" and body["is_boss"] is True
+    assert body["name"] == "郭培鑫"  # /api/me 透传 name（前端打招呼用）

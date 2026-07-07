@@ -171,6 +171,7 @@ async def me(perm: UserPermission = Depends(require_web_user_api)):
         "role": perm.role,
         "is_boss": perm.is_boss,
         "scope_label": _scope_label(perm),
+        "name": perm.name,
     }
 
 

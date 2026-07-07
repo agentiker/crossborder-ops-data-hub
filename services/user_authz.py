@@ -38,6 +38,25 @@ ROLE_OPERATOR = "operator"
 ROLE_PENDING = "pending"  # 自助申请待审批的哨兵角色：恒 is_active=False，永不被当有效角色读
 _VALID_ROLES = (ROLE_BOSS, ROLE_OPERATOR)
 
+# 首登自动登记曾把飞书昵称塞进 note，写成 "申请人：{昵称}"。现已改为独立 name 列
+# （见 UserRole.name），此前缀只在迁移脚本回填历史数据、以及 parse_legacy_applicant_name
+# 里还用到；新登记不再写 note。
+_APPLICANT_PREFIX = "申请人："
+
+
+def parse_legacy_applicant_name(note: Optional[str]) -> Optional[str]:
+    """从历史 note 里还原飞书昵称：仅认「申请人：{name}」这种旧自动登记格式。
+
+    仅供迁移脚本回填 name 列用（新代码一律读 UserRole.name）。运维手写的自由备注
+    （无此前缀）→ 返回 None（不当昵称）。空 → None。
+    """
+    if not note:
+        return None
+    n = note.strip()
+    if not n.startswith(_APPLICANT_PREFIX):
+        return None
+    return n[len(_APPLICANT_PREFIX):].strip() or None
+
 
 def account_for_open_id(open_id: str, *, channel: str = "feishu") -> Optional[str]:
     """按 open_id 反查它登记在哪个租户（user_roles.account_id）。
@@ -93,7 +112,8 @@ class UserPermission:
     allowed_scope_key: Optional[str]  # operator 的硬上限；boss 恒为 None 语义忽略
     channel: str
     account_id: str
-    note: Optional[str] = None
+    name: Optional[str] = None  # 飞书昵称（用户名/打招呼称呼用）
+    note: Optional[str] = None  # 运维自由备注
 
     @property
     def is_boss(self) -> bool:
@@ -128,6 +148,7 @@ def get_user_permission(
             allowed_scope_key=row.allowed_scope_key,
             channel=row.channel,
             account_id=row.account_id,
+            name=row.name,
             note=row.note,
         )
     finally:
@@ -174,11 +195,11 @@ def ensure_registration(
             .first()
             is None
         )
-        note = f"申请人：{name}" if name else None
+        # 飞书昵称落独立 name 列（note 留给运维自由备注）。
         if is_first:
             row = UserRole(
                 channel=channel, account_id=account_id, open_id=open_id,
-                role=ROLE_BOSS, allowed_scope_key=None, note=note, is_active=True,
+                role=ROLE_BOSS, allowed_scope_key=None, name=name, is_active=True,
             )
             session.add(row)
             session.commit()
@@ -186,7 +207,7 @@ def ensure_registration(
 
         row = UserRole(
             channel=channel, account_id=account_id, open_id=open_id,
-            role=ROLE_PENDING, allowed_scope_key=None, note=note, is_active=False,
+            role=ROLE_PENDING, allowed_scope_key=None, name=name, is_active=False,
         )
         session.add(row)
         session.commit()

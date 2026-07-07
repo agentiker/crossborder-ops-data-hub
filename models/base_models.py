@@ -182,7 +182,8 @@ class UserRole(Base):
     open_id = Column(String(64), nullable=False, index=True)  # 飞书用户 ou_xxx
     role = Column(String(16), nullable=False)  # boss / operator
     allowed_scope_key = Column(String(64), nullable=True)  # operator 的硬上限；boss 忽略
-    note = Column(String(200), nullable=True)  # 备注（如姓名/岗位），运维可读
+    name = Column(String(64), nullable=True)  # 飞书昵称（首登 OAuth 自动落，用户名列/打招呼称呼的真相源）
+    note = Column(String(200), nullable=True)  # 运维自由备注（岗位/说明等），与 name 职责分开
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

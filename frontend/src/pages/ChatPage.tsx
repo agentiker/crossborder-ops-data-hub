@@ -47,6 +47,25 @@ function fmtWorked(ms: number): string {
   return r ? `用时 ${m} 分 ${r} 秒` : `用时 ${m} 分`;
 }
 
+// 打招呼只叫名不带姓：中文姓名剥掉姓氏（复姓优先），叫「培鑫」而非「郭培鑫」。
+// 只处理 2-4 字的纯中文名；英文名/昵称/异常长度原样返回，避免瞎截。
+const COMPOUND_SURNAMES = [
+  "欧阳", "太史", "端木", "上官", "司马", "东方", "独孤", "南宫", "万俟", "闻人",
+  "夏侯", "诸葛", "尉迟", "公羊", "赫连", "澹台", "皇甫", "宗政", "濮阳", "公冶",
+  "太叔", "申屠", "公孙", "慕容", "仲孙", "钟离", "长孙", "宇文", "司徒", "鲜于",
+  "司空", "闾丘", "子车", "亓官", "司寇", "巫马", "公西", "颛孙", "壤驷", "公良",
+  "漆雕", "乐正", "宰父", "谷梁", "拓跋", "夹谷", "轩辕", "令狐", "段干", "百里",
+  "呼延", "东郭", "南门", "羊舌", "微生", "梁丘", "左丘", "东门", "西门", "第五",
+];
+function firstName(fullName: string | null | undefined): string | null {
+  const n = (fullName || "").trim();
+  if (!n) return null;
+  // 仅对纯中文名去姓；含非中文字符（英文名等）原样返回。
+  if (!/^[一-龥]{2,4}$/.test(n)) return n;
+  if (n.length >= 3 && COMPOUND_SURNAMES.includes(n.slice(0, 2))) return n.slice(2);
+  return n.slice(1);
+}
+
 // 助手消息的折叠标题：有真实耗时→用时；仅有历史步骤无耗时→中性「运行过程」（不编造时长）；无步骤→不显示折叠区。
 function workingLabel(steps?: ThinkingStep[], workedMs?: number): string | undefined {
   if (workedMs != null) return fmtWorked(workedMs);
@@ -195,8 +214,8 @@ export function ChatPage() {
   }
 
   const isEmpty = messages.length === 0 && !streaming;
-  // 当前 Me 无姓名字段：boss 称「老板」，operator 用其范围标签；兜底「老板」。
-  const who = me?.is_boss ? "老板" : me?.scope_label?.trim() || "老板";
+  // 打招呼称呼：优先用飞书昵称的「名」（去姓，如「培鑫」）；无名字再回落 boss→「老板」/operator→范围标签。
+  const who = firstName(me?.name) || (me?.is_boss ? "老板" : me?.scope_label?.trim() || "老板");
 
   // ── 首页 launcher（空态）：照 fork App 的 chat 分支组合 WelcomeScreen + ChatInput + QuickActions ──
   if (isEmpty) {

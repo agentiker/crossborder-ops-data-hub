@@ -44,9 +44,10 @@ def cmd_list(args) -> int:
             if r.role == "boss":
                 scope = "全部"
             note = f" | {r.note}" if r.note else ""
+            uname = f" | {r.name}" if r.name else ""
             print(
                 f"{r.open_id}{flag}  | {r.role} | scope={scope} | "
-                f"{r.channel}/{r.account_id}{note}"
+                f"{r.channel}/{r.account_id}{uname}{note}"
             )
         return 0
     finally:
@@ -91,6 +92,7 @@ def cmd_set(args) -> int:
                 open_id=args.open_id,
                 role=role,
                 allowed_scope_key=scope_key,
+                name=args.name,
                 note=args.note,
                 is_active=True,
             )
@@ -101,6 +103,8 @@ def cmd_set(args) -> int:
                       "is_active": row.is_active}
             row.role = role
             row.allowed_scope_key = scope_key
+            if args.name is not None:
+                row.name = args.name
             if args.note is not None:
                 row.note = args.note
             row.is_active = True
@@ -174,7 +178,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--scope-key", dest="scope_key", default=None,
         help="operator 的硬上限 scope（必填且须 active）；boss 忽略",
     )
-    p_set.add_argument("--note", default=None, help="备注，如姓名/岗位")
+    p_set.add_argument("--name", default=None, help="用户名（飞书昵称），用户名列/打招呼称呼用")
+    p_set.add_argument("--note", default=None, help="运维自由备注（岗位/说明等）")
     p_set.set_defaults(func=cmd_set)
 
     p_deact = sub.add_parser("deactivate", help="停用一个用户角色")
