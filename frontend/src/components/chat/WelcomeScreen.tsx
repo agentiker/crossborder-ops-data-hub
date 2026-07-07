@@ -112,10 +112,10 @@ export function WelcomeScreen({ userName = "老板" }: WelcomeScreenProps) {
     return () => clearTimeout(t);
   }, [typed, subtitle]);
 
-  // 轮播：打完 → 停留 3.2s → 淡出 0.4s → 切下一句 → 从头再打。
+  // 轮播：打完 → 停留 ~30s → 淡出 0.4s → 切下一句 → 从头再打。
   useEffect(() => {
     if (subtitle.length === 0 || typed < subtitle.length) return;
-    const hold = setTimeout(() => setFading(true), 3200);
+    const hold = setTimeout(() => setFading(true), 30000);
     return () => clearTimeout(hold);
   }, [typed, subtitle]);
 
