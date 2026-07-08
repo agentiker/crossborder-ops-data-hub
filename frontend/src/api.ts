@@ -84,6 +84,8 @@ export interface TrendPoint {
   units_sold: number;
   // 逐小时趋势时为 "HH:00" 展示串；逐日时缺省（x 轴：label ?? date.slice(5)）。
   label?: string;
+  // 今天「当前进行中的小时」= true：数据不完整，图表渲染成断点不画残缺值。
+  partial?: boolean;
 }
 
 export interface TopSku {

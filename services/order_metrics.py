@@ -689,7 +689,10 @@ def _get_gmv_trend_hourly(
             units_by_hour[h] = units_by_hour.get(h, 0) + 1
 
         # 补零上界：今天只到当前小时，其它天补满 23 点。
-        last_h = business_hour_now().hour if day == business_today() else 23
+        # 今天的「当前进行中的小时」数据天然不完整（这个钟点才走了几分钟），标记 partial，
+        # 让前端把它渲染成断点（不画那个断崖跌到 ~0 的残缺点），而非当成完整值。
+        is_today = day == business_today()
+        last_h = business_hour_now().hour if is_today else 23
         points: list[dict] = []
         for hh in range(0, last_h + 1):
             bucket = datetime.combine(day, time(hh, 0))
@@ -701,6 +704,7 @@ def _get_gmv_trend_hourly(
                     "gmv": _to_float(gmv),
                     "order_count": int(order_count or 0),
                     "units_sold": int(units_by_hour.get(bucket, 0) or 0),
+                    "partial": is_today and hh == last_h,
                 }
             )
         return points

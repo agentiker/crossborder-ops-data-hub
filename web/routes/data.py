@@ -376,6 +376,8 @@ class TrendPoint(BaseModel):
     units_sold: int
     # 逐小时趋势时为 "HH:00" 展示串；逐日时为 None（前端 x 轴：label ?? date）。
     label: Optional[str] = None
+    # 今天「当前进行中的小时」= True：数据天然不完整，前端渲染成断点不画残缺值。逐日/历史点恒 False。
+    partial: bool = False
 
 
 class TrendResponse(BaseModel):

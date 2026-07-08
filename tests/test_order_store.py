@@ -240,10 +240,13 @@ def test_gmv_trend_hourly_past_day_full_24(session, monkeypatch):
     assert by_h["13:00"]["gmv"] == 50000.0
     assert by_h["13:00"]["order_count"] == 2
     assert by_h["13:00"]["units_sold"] == 3
-    # 无单的小时补 0
+    # 无单的小时补 0（过去某天所有点 partial=False，非当前进行中）
     assert by_h["00:00"] == {
-        "date": "2026-06-08", "label": "00:00", "gmv": 0.0, "order_count": 0, "units_sold": 0,
+        "date": "2026-06-08", "label": "00:00", "gmv": 0.0, "order_count": 0,
+        "units_sold": 0, "partial": False,
     }
+    # 过去某天没有任何 partial 点
+    assert all(p["partial"] is False for p in points)
 
 
 def test_gmv_trend_hourly_today_truncated_to_current_hour(session, monkeypatch):
@@ -272,6 +275,9 @@ def test_gmv_trend_hourly_today_truncated_to_current_hour(session, monkeypatch):
     assert by_h["09:00"]["gmv"] == 80000.0
     # 未来小时（14:00+）不出现
     assert "14:00" not in by_h
+    # 「当前进行中的小时」13:00 标 partial=True（前端据此断开不画残缺值）；其余点 False
+    assert by_h["13:00"]["partial"] is True
+    assert all(p["partial"] is False for p in points[:-1])
 
 
 def test_gmv_trend_hourly_timezone_boundary(session, monkeypatch):

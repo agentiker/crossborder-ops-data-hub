@@ -34,6 +34,7 @@ import {
   type ProductDetail,
   type RefundAnalysis,
   type TopSku,
+  type TrendPoint,
 } from "@/api";
 import { DateRangePicker, type DateRangeValue } from "@/components/board/DateRangePicker";
 import { InfoTooltip } from "@/components/ui/tooltip";
@@ -1228,6 +1229,10 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
     .join(" · ");
   const orderSubtitle = orderDeductions ? `含${orderDeductions}` : undefined;
   const pts = data?.trend.points ?? [];
+  // 「当前进行中的小时」(partial) 数据天然不完整（这个钟点才走了几分钟），值置 null 让
+  // EChart 断开不画那个断崖跌到 ~0 的残缺点；x 轴刻度仍保留（用户知道现在到几点了）。
+  const seriesVal = (pick: (p: TrendPoint) => number) =>
+    pts.map((p) => (p.partial ? null : pick(p)));
   // 上期对比线（销售趋势）：单天=前一天逐小时、多天=等长上一期逐日。后端可能不返回（取数失败）。
   const prevPts = data?.trend.prev_points ?? [];
   // 无结算数据降级：广告消耗 0/缺失 → 卡值「—」+「暂无结算数据」；roas 为 null → 「—」。
@@ -1338,7 +1343,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           type: "line",
           smooth: true,
           showSymbol: false,
-          data: pts.map((p) => p.gmv),
+          data: seriesVal((p) => p.gmv),
           lineStyle: { color: "#6366f1", width: 3 },
           itemStyle: { color: "#6366f1" },
           areaStyle: {
@@ -1398,14 +1403,14 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           type: "line",
           smooth: true,
           showSymbol: false,
-          data: pts.map((p) => p.order_count),
+          data: seriesVal((p) => p.order_count),
           lineStyle: { color: t.positive, width: 2 },
           itemStyle: { color: t.positive },
         },
         {
           name: "销量（件）",
           type: "bar",
-          data: pts.map((p) => p.units_sold),
+          data: seriesVal((p) => p.units_sold),
           itemStyle: { color: t.warning, borderRadius: [4, 4, 0, 0] },
           barMaxWidth: 22,
         },
