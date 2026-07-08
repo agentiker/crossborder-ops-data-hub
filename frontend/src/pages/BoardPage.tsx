@@ -1229,10 +1229,23 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
     .join(" · ");
   const orderSubtitle = orderDeductions ? `含${orderDeductions}` : undefined;
   const pts = data?.trend.points ?? [];
-  // 「当前进行中的小时」(partial) 数据天然不完整（这个钟点才走了几分钟），值置 null 让
-  // EChart 断开不画那个断崖跌到 ~0 的残缺点；x 轴刻度仍保留（用户知道现在到几点了）。
-  const seriesVal = (pick: (p: TrendPoint) => number) =>
-    pts.map((p) => (p.partial ? null : pick(p)));
+  // 「当前进行中的小时」(partial)：这个钟点才走了几分钟、数据天然不完整。不再断开不画（会显断崖），
+  // 改为「进行中点」——值照显，但半透明 + 末段虚线 + 一枚小圆点，视觉上标明这个钟点还没走完。
+  // 逐日/历史点 partial 恒 false，走原样（plain number），线条/柱子照常。
+  const partialIdx = pts.findIndex((p) => p.partial);
+  const lineData = (pick: (p: TrendPoint) => number, color: string) =>
+    pts.map((p) =>
+      p.partial
+        ? {
+            value: pick(p),
+            itemStyle: { color, opacity: 0.55 },
+            // data-item 的 lineStyle 作用于「连入该点」的那段线 → 末段（上一整点→当前钟点）虚线化。
+            lineStyle: { color, type: "dashed" as const, opacity: 0.5 },
+          }
+        : pick(p),
+    );
+  const barData = (pick: (p: TrendPoint) => number) =>
+    pts.map((p) => (p.partial ? { value: pick(p), itemStyle: { opacity: 0.4 } } : pick(p)));
   // 上期对比线（销售趋势）：单天=前一天逐小时、多天=等长上一期逐日。后端可能不返回（取数失败）。
   const prevPts = data?.trend.prev_points ?? [];
   // 无结算数据降级：广告消耗 0/缺失 → 卡值「—」+「暂无结算数据」；roas 为 null → 「—」。
@@ -1313,7 +1326,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
       tooltip: {
         trigger: "axis" as const,
         ...tip,
-        formatter: (ps: { axisValue: string; seriesName: string; data: number | null; color: string }[]) => {
+        formatter: (ps: { axisValue: string; seriesName: string; value: number | null; color: string }[]) => {
           if (!ps.length) return "";
           const row = (name: string, val: number | null | undefined, color: string) =>
             val == null
@@ -1321,7 +1334,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
               : `<br/><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:6px;"></span>${name}　${fmtMoney(val)}`;
           const cur = ps.find((p) => p.seriesName === "GMV");
           const prev = ps.find((p) => p.seriesName === (salesPrevLabel ?? "__none__"));
-          return `${cur?.axisValue ?? ""}${row("当期", cur?.data, "#6366f1")}${salesPrevLabel ? row(salesPrevLabel, prev?.data, "#a5b4fc") : ""}`;
+          return `${cur?.axisValue ?? ""}${row("当期", cur?.value, "#6366f1")}${salesPrevLabel ? row(salesPrevLabel, prev?.value, "#a5b4fc") : ""}`;
         },
       },
       legend: hasPrev
@@ -1342,8 +1355,10 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           name: "GMV",
           type: "line",
           smooth: true,
-          showSymbol: false,
-          data: seriesVal((p) => p.gmv),
+          showSymbol: true,
+          // 仅「进行中」点显圆点(size>0)，其余点 size=0 不显 → 保留原本干净的平滑线。
+          symbolSize: (_v: unknown, p: { dataIndex: number }) => (p.dataIndex === partialIdx ? 7 : 0),
+          data: lineData((p) => p.gmv, "#6366f1"),
           lineStyle: { color: "#6366f1", width: 3 },
           itemStyle: { color: "#6366f1" },
           areaStyle: {
@@ -1379,7 +1394,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           : []),
       ],
     }),
-    [data, t, hasPrev, prevAligned, salesPrevLabel],
+    [data, t, hasPrev, prevAligned, salesPrevLabel, partialIdx],
   );
 
   // fork 的「流量趋势」槽位无 UV/PV 数据源 → 换成我方真实的「订单数 + 销量」双系列。
@@ -1402,21 +1417,22 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           name: "订单数",
           type: "line",
           smooth: true,
-          showSymbol: false,
-          data: seriesVal((p) => p.order_count),
+          showSymbol: true,
+          symbolSize: (_v: unknown, p: { dataIndex: number }) => (p.dataIndex === partialIdx ? 6 : 0),
+          data: lineData((p) => p.order_count, t.positive),
           lineStyle: { color: t.positive, width: 2 },
           itemStyle: { color: t.positive },
         },
         {
           name: "销量（件）",
           type: "bar",
-          data: seriesVal((p) => p.units_sold),
+          data: barData((p) => p.units_sold),
           itemStyle: { color: t.warning, borderRadius: [4, 4, 0, 0] },
           barMaxWidth: 22,
         },
       ],
     }),
-    [data, t],
+    [data, t, partialIdx],
   );
 
   const tabs: { id: OverviewTab; label: string }[] = [
