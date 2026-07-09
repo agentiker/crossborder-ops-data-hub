@@ -1,0 +1,65 @@
+{
+    "code": 0,
+    "message": "OK",
+    "request_id": "{{request_id}}",
+    "data": {
+        "list": [
+            {
+                "dimensions": {
+                    "item_id": "{{item_id}}"
+                },
+                "metrics": {
+                    "ad_click_rate": "16.67",
+                    "ad_conversion_rate": "0.00",
+                    "ad_video_view_rate_2s": "40.00",
+                    "ad_video_view_rate_6s": "40.00",
+                    "ad_video_view_rate_p100": "20.00",
+                    "ad_video_view_rate_p25": "40.00",
+                    "ad_video_view_rate_p50": "20.00",
+                    "ad_video_view_rate_p75": "20.00",
+                    "cost": "0.01",
+                    "cost_per_order": "0.00",
+                    "creative_delivery_status": "UNAVAILABLE",
+                    "currency": "USD",
+                    "gross_revenue": "0.00",
+                    "orders": "0",
+                    "product_click_rate": "16.67",
+                    "product_clicks": "1",
+                    "product_impressions": "6",
+                    "roi": "0.00"
+                }
+            },
+            {
+                "dimensions": {
+                    "item_id": "{{item_id}}"
+                },
+                "metrics": {
+                    "ad_click_rate": "0.00",
+                    "ad_conversion_rate": "0.00",
+                    "ad_video_view_rate_2s": "0.00",
+                    "ad_video_view_rate_6s": "0.00",
+                    "ad_video_view_rate_p100": "0.00",
+                    "ad_video_view_rate_p25": "0.00",
+                    "ad_video_view_rate_p50": "0.00",
+                    "ad_video_view_rate_p75": "0.00",
+                    "cost": "0.00",
+                    "cost_per_order": "0.00",
+                    "creative_delivery_status": "UNAVAILABLE",
+                    "currency": "USD",
+                    "gross_revenue": "0.00",
+                    "orders": "0",
+                    "product_click_rate": "0.00",
+                    "product_clicks": "0",
+                    "product_impressions": "0",
+                    "roi": "0.00"
+                }
+            }
+        ],
+        "page_info": {
+            "page": 1,
+            "page_size": 1000,
+            "total_number": 246,
+            "total_page": 1
+        }
+    }
+}

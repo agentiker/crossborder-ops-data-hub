@@ -1,0 +1,57 @@
+{
+  "code": 0,
+  "message": "OK",
+  "request_id": "202507091200-abc123",
+  "data": {
+    "list": [
+      {
+        "dimensions": {
+          "stat_time_day": "2025-07-01"
+        },
+        "metrics": {
+          "cost": "125000.00",
+          "net_cost": "120000.00",
+          "gross_revenue": "600000.00",
+          "orders": "48",
+          "roi": "4.80",
+          "cost_per_order": "2604.17",
+          "currency": "IDR"
+        }
+      },
+      {
+        "dimensions": {
+          "stat_time_day": "2025-07-02"
+        },
+        "metrics": {
+          "cost": "98000.50",
+          "net_cost": "95000.00",
+          "gross_revenue": "441000.00",
+          "orders": "35",
+          "roi": "4.50",
+          "cost_per_order": "2800.01",
+          "currency": "IDR"
+        }
+      },
+      {
+        "dimensions": {
+          "stat_time_day": "2025-07-03"
+        },
+        "metrics": {
+          "cost": "0.00",
+          "net_cost": "0.00",
+          "gross_revenue": "0.00",
+          "orders": "0",
+          "roi": "0.00",
+          "cost_per_order": "0.00",
+          "currency": "IDR"
+        }
+      }
+    ],
+    "page_info": {
+      "page": 1,
+      "page_size": 1000,
+      "total_number": 3,
+      "total_page": 1
+    }
+  }
+}

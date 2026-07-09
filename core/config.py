@@ -23,6 +23,40 @@ class TikTokConfig(BaseModel):
     auth_base_url: str = "https://auth.tiktok-shops.com"
 
 
+class TikTokBusinessCredential(BaseModel):
+    """单个 TikTok for Business（Marketing API）app 的 OAuth 凭据（多租户，每 account_id 一组）。"""
+    app_id: str = ""      # Marketing API 的 App ID（≠ Shop 的 app_key）
+    app_secret: str = ""  # 对应的 App secret
+
+
+class TikTokBusinessConfig(BaseModel):
+    """TikTok for Business / Marketing API 配置（拉 GMV Max 广告花费，见 plan/tiktok-marketing-api-gmv-max.md）。
+
+    这是与 TikTok Shop **完全独立**的另一套系统：不同 base_url、不同 App、不同 OAuth、
+    不同 token 与签名模型。GMV Max 花费不在 Shop Finance 结算里（Shop 侧 gmv_max_ad_fee_amount 恒 0），
+    只能从这套 Marketing API 的 /gmv_max/report/get/ 拿。授权主体是 advertiser_id（广告账户），
+    而非 shop_id。token 走 `Access-Token` 请求头、不做 Shop 那套 sign 拼接。
+
+    多租户：`apps` 按 account_id 索引多组凭据（.env 用 JSON 串）；未配 `apps` 时回落顶层
+    app_id/app_secret 单 app 垫片（与 feishu_oauth 同构），让单客户部署零改动。
+    """
+    # account_id → 凭据。例：{"ecom-app": {...}, "ecom-app-gtl": {...}}
+    apps: dict[str, TikTokBusinessCredential] = {}
+    base_url: str = "https://business-api.tiktok.com"
+    # OAuth 回调路径（站内全自动回调，仿 Shop 的 /callback/tiktok）。各租户各自子域名在
+    # TikTok for Business 后台把完整 URL 登记进 Advertiser Redirect URL 白名单。
+    redirect_path: str = "/auth/callback/tiktok_business"
+    # —— 单 app 兼容垫片（apps 未配时回落）——
+    app_id: str = ""
+    app_secret: str = ""
+
+    def credential(self, account_id: str) -> "TikTokBusinessCredential":
+        """取某租户（account_id）的 Marketing API app 凭据；未配 apps 时回落顶层单 app 字段。"""
+        if account_id in self.apps:
+            return self.apps[account_id]
+        return TikTokBusinessCredential(app_id=self.app_id, app_secret=self.app_secret)
+
+
 class APIConfig(BaseModel):
     """对外 HTTP 接口配置（供 openclaw skill 本机调用）"""
     host: str = "127.0.0.1"  # 默认仅监听回环地址，不对公网开放
@@ -134,6 +168,7 @@ class Settings(BaseSettings):
     """全局配置"""
     db: DatabaseConfig = DatabaseConfig()
     tiktok: TikTokConfig
+    tiktok_business: TikTokBusinessConfig = TikTokBusinessConfig()
     api: APIConfig = APIConfig()
     dashboard: DashboardConfig = DashboardConfig()
     feishu_oauth: FeishuOAuthConfig = FeishuOAuthConfig()

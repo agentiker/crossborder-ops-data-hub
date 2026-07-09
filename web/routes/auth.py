@@ -153,3 +153,62 @@ async def tiktok_callback_html(
         </html>
         """
         return HTMLResponse(content=html_content, status_code=500)
+
+
+@router.get("/callback/tiktok_business")
+async def tiktok_business_callback(
+    auth_code: str = Query(default="", description="Marketing API 授权码"),
+    code: str = Query(default="", description="授权码（部分实现回调用 code）"),
+    state: str = Query(default="", description="状态参数，承载 account_id"),
+):
+    """TikTok for Business (Marketing API) OAuth 回调 —— 拉 GMV Max 花费。
+
+    与 Shop 的 /callback/tiktok 完全独立（另一套 App / OAuth / token）。授权链接由
+    TikTokBusinessClient.build_authorize_url 生成，回调带 auth_code；state 承载 account_id
+    做多租户归属（未带则回落 DEFAULT_ACCOUNT）。换 token 后按每个授权 advertiser 各存一行。
+    """
+    from platforms.tiktok_business.client import TikTokBusinessClient
+
+    received = auth_code or code
+    if not received:
+        raise HTTPException(status_code=400, detail="缺少授权码 (auth_code)")
+
+    init_db()
+    set_audit_actor(source="oauth")
+    account_id = state or DEFAULT_ACCOUNT
+
+    try:
+        client = TikTokBusinessClient(account_id=account_id)
+        data = client.authenticate(received)
+        advertiser_ids = data.get("advertiser_ids") or []
+        if isinstance(advertiser_ids, str):
+            advertiser_ids = [advertiser_ids]
+
+        log_audit_event_safe(
+            event_type="authorization", event_action="oauth.callback", actor_source="oauth",
+            account_id=account_id, target=",".join(str(a) for a in advertiser_ids) or None,
+            summary="TikTok Marketing API 授权成功",
+            after={
+                "platform": "tiktok_business",
+                "advertiser_ids": advertiser_ids,
+                "granted_scope": data.get("scope"),
+            },
+        )
+        return {
+            "success": True,
+            "message": "授权成功",
+            "data": {
+                "platform": "tiktok_business",
+                "account_id": account_id,
+                "advertiser_ids": advertiser_ids,
+                "scope": data.get("scope"),
+                "state": state,
+            },
+        }
+    except Exception as e:
+        safe = redact_secrets(str(e))
+        log_audit_event_safe(
+            event_type="authorization", event_action="oauth.callback", actor_source="oauth",
+            account_id=account_id, summary=f"TikTok Marketing API 授权失败: {safe[:200]}",
+        )
+        raise HTTPException(status_code=500, detail=f"授权失败: {safe}")

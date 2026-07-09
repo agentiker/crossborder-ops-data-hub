@@ -383,6 +383,41 @@ class FactAdSpendDaily(Base):
         return f"<FactAdSpendDaily(scope_key={self.scope_key}, total_ad_spend={self.total_ad_spend})>"
 
 
+class FactGmvMaxSpendDaily(Base):
+    """每日 GMV Max 广告花费事实表（Marketing API 口径，与 Finance 结算口径隔离）。
+
+    数据源：TikTok **Marketing API** /gmv_max/report/get/（business-api.tiktok.com），
+    metrics.cost 按 dimensions.stat_time_day 归日。刻意**独立于** fact_ad_spend_daily：
+    后者的 gmv_max_fee 来自 Finance 结算（GMV Max 部分恒 0），本表才是真实付费投放花费，
+    两表并存可交叉核对（见 memory roi-roas-alert-data-source / plan/tiktok-marketing-api-gmv-max.md）。
+
+    授权主体是 advertiser_id（广告账户，落 seller_id 槽），一个 account 可有多 advertiser/多 store。
+    日期时区 = 广告账户时区（stat_time_day 原样，account_tz 对齐口径待真打确认，见 normalize 顶注）。
+    """
+
+    __tablename__ = "fact_gmv_max_spend_daily"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    metric_date = Column(Date, nullable=False, index=True)  # 广告账户时区自然日（stat_time_day）
+    platform = Column(String(32), nullable=False, default="tiktok_business", index=True)
+    country = Column(String(16), nullable=False, default="GLOBAL", index=True)
+    shop_id = Column(String(64), index=True)          # TikTok Shop store_id（报表 store 维度）
+    seller_id = Column(String(64), index=True)        # advertiser_id（Marketing 账户主键）
+    account_id = Column(String(64), index=True)
+    scope_key = Column(String(500), nullable=False, unique=True, index=True)
+    currency = Column(String(8))
+    cost = Column(Numeric(18, 4), nullable=False, default=0)           # GMV Max 花费（核心）
+    net_cost = Column(Numeric(18, 4), nullable=False, default=0)       # 净花费
+    gross_revenue = Column(Numeric(18, 4), nullable=False, default=0)  # GMV Max 归因毛收入
+    orders = Column(Integer, default=0)                                # 归因订单数
+    roi = Column(Numeric(12, 4), nullable=False, default=0)            # 官方口径 ROI（=毛收入/花费）
+    raw_response_id = Column(Integer, nullable=True)
+    calculated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<FactGmvMaxSpendDaily(scope_key={self.scope_key}, cost={self.cost})>"
+
+
 class FactFinanceTransaction(Base):
     """交易级结算费用拆项事实表（TTS Finance 202501 statement_transactions 全字段）。
 

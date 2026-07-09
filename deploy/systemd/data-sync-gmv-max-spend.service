@@ -1,0 +1,12 @@
+[Unit]
+Description=TikTok GMV Max 广告花费同步（Marketing API 口径）
+After=network-online.target
+OnFailure=data-onfailure@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/code/crossborder-ops-data-hub
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/.local/bin/uv run python -m flows.sync_gmv_max_spend
+# 单次最长 10 分钟，挂死自动杀
+TimeoutStartSec=600
