@@ -10,6 +10,10 @@
 #   告警类 timer（scan-alerts 超时/低库存、push-replenishment 采购单）。过审前「想跑数据、不发客户」用它。
 #   与 --no-business-timers 互斥语义上更细：前者只挡告警两枚，后者挡掉全部业务 timer。
 #
+# 另有 NOT_READY_TIMERS（脚本内常量，非 flag）：需额外授权/接通才能跑的 timer，**默认永远跳过并
+#   disable**，避免部署把它们空跑刷错误日志。当前含 GMV Max 花费同步（待 Marketing API 授权）。
+#   就绪后从常量移除即恢复正常 enable。
+#
 # 做什么（幂等）：
 #   1) （--pull）git pull
 #   2) uv sync 装依赖
@@ -17,7 +21,7 @@
 #   3) init_db 建新表（create_all，只建不存在的）
 #   4) 确保项目 .env 有 OPENCLAW_BIN 绝对路径（告警/直投需要，systemd PATH 无 nvm）
 #   5) 安装 deploy/systemd/*.{service,timer} 到 ~/.config/systemd/user/（unit 用 %h，无机器绝对路径）
-#   6) daemon-reload + enable --now 所有 timer + data-hub.service
+#   6) daemon-reload + enable --now 所有 timer（NOT_READY_TIMERS 除外）+ data-hub.service
 #   7) 打印 list-timers
 #
 # 不做：日报 openclaw cron（一次性/低频、直接动客户推送，手工配，见 docs/proactive-push-ops.md B 节）。
@@ -48,6 +52,11 @@ esac; done
 INFRA_TIMERS="data-anchor-audit.timer data-backup-db.timer data-verify-audit-chain.timer"
 # 会主动给客户发飞书的告警类 timer：--no-alert-timers 时跳过（数据照跑、不发客户）。
 ALERT_TIMERS="data-scan-alerts.timer data-push-replenishment.timer"
+# 「尚未就绪」timer：需要额外授权/接通才能跑，**默认永远跳过**（不受任何 flag 控制），
+# 避免部署把它们空跑报错。就绪后从此列表移除即恢复正常 enable。
+#   - data-sync-gmv-max-spend.timer：GMV Max 花费须独立 Marketing API 授权(advertiser_id)，
+#     未授权跑只会 API 失败刷日志（见 memory roi-roas-alert-data-source）。授权真打后删掉即可。
+NOT_READY_TIMERS="data-sync-gmv-max-spend.timer"
 
 run() { echo "+ $*"; [ "$DRY" -eq 1 ] || "$@"; }
 
@@ -106,6 +115,14 @@ else
 fi
 for t in "$UNIT_SRC"/*.timer; do
   name="$(basename "$t")"
+  # 「尚未就绪」timer：无条件跳过（不 enable、也不 start），且主动 disable 掉——防止上一次部署
+  # 或手动残留的启用态在本次 daemon-reload 后仍在跑。就绪后从 NOT_READY_TIMERS 移除即恢复。
+  case " $NOT_READY_TIMERS " in
+    *" $name "*)
+      echo "  跳过未就绪 timer：${name}（需授权/接通，见 NOT_READY_TIMERS 注释）"
+      run systemctl --user disable --now "$name" 2>/dev/null || true
+      continue ;;
+  esac
   # 过审前模式：业务 timer 不 enable（不在 INFRA 白名单内的一律跳过）。两端补空格做整词匹配。
   if [ "$NO_BIZ_TIMERS" -eq 1 ]; then
     case " $INFRA_TIMERS " in
