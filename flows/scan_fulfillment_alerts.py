@@ -48,7 +48,7 @@ from services.metrics_store import (
     upsert_stock_alert_state,
 )
 from services.stock_metrics import get_stock_risk
-from services.scope_resolution import resolve_filters
+from services.scope_resolution import ScopeError
 
 # 收件人**真相源 = alert_recipients 表**（plan/09 Phase 6 迁 DB）。下面常量仅作
 # **空表回落**：表未建/未 seed 时退回它，保证迁移过渡期告警不静默中断（会打日志提示）。
@@ -541,6 +541,34 @@ def _scan_hotsell(session, *, account, open_id, scope, scope_id, dry_run: bool) 
     return f"{account}/爆单: 不推送 当日破阈={len(decision.new_reported_ids)}"
 
 
+def _resolve_recipient_scope(account: str, open_id: str, subscription_scope_key):
+    """收件人的告警数据范围 = 用户授权范围(user_roles) ∩ 订阅范围(alert_recipients.scope_key)。
+
+    权限 vs 订阅两个正交概念：
+    - 权限(上限)：user_roles 是唯一真相源——boss=租户全部可见店；operator=allowed_scope_key。
+      与看板/对话同一套授权(get_user_permission / resolve_authorized_scope 语义一致)。
+    - 订阅(收窄)：alert_recipients.scope_key 只作为权限内的过滤器——NULL=全授权范围；
+      配了 scope 则与授权范围取交集，**永不放大**（旧实现 scope_key 独立解析可旁路权限，已废）。
+
+    返回 (scope, skip_reason)：无 user_roles 行/已停用/operator 未配范围 → (None, 原因)
+    fail-closed 跳过该收件人（绝不回落全量）。
+    """
+    from services.user_authz import get_user_permission, resolve_authorized_scope, AuthzError
+
+    perm = get_user_permission(open_id, account_id=account)
+    if perm is None:
+        return None, "无 user_roles 记录或已停用（fail-closed 跳过，请在用户管理登记）"
+    try:
+        # 订阅 scope 作为"请求范围"交给权限闸夹紧：boss 在租户内解析、operator 与 allowed 取交集，
+        # 越界店铺由 resolve_filters 抛 ScopeError —— 与看板 ?scope= 同一条收窄路径。
+        scope = resolve_authorized_scope(perm, requested_scope_key=subscription_scope_key or None)
+    except (ScopeError, AuthzError) as exc:
+        return None, f"订阅范围解析失败（{exc}）"
+    if not scope.shop_ids:
+        return None, "授权∩订阅后店铺集为空（fail-closed 跳过）"
+    return scope, None
+
+
 def _scan_one(recipient: dict, *, dry_run: bool) -> list[str]:
     """评估一个收件人的全部告警规则（待发货 + 库存 + 扣点率 + 及时费率 + 爆单）。返回各规则状态行列表。"""
     from core.tenancy import set_current_account
@@ -550,9 +578,12 @@ def _scan_one(recipient: dict, *, dry_run: bool) -> list[str]:
     scope_id = recipient.get("scope_id")
     set_current_account(account)  # ORM 自动过滤按本收件人租户隔离
 
-    # 多租户：按收件人 account 解析范围——gtl 收件人扫 gtl 的店，绝不扫到 ecom 的店
-    # （scope_id=None 时由 resolve_filters 收口为本租户可见店并集）。
-    scope = resolve_filters(scope_key=scope_id, account_id=account)
+    # 范围 = 用户授权(user_roles，与看板同源) ∩ 订阅(scope_id，可选收窄)；解析失败 fail-closed。
+    scope, skip_reason = _resolve_recipient_scope(account, open_id, scope_id)
+    if scope is None:
+        msg = f"{account}/{open_id[-6:]}: 跳过（{skip_reason}）"
+        print(f"[alert] {msg}")
+        return [msg]
     session = SessionLocal()
     try:
         lines = []
