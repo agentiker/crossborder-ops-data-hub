@@ -108,24 +108,32 @@ def _overview_window_and_gmv(
 
 
 def _scope_options(perm: UserPermission) -> list[dict]:
-    """范围切换条数据。boss：全部范围 + 所有 scope（+ 多店时每店一项）；operator：仅其 allowed（锁定单项）。
+    """范围切换条数据。boss：（全部范围）+ 命名 scope + 多店时每店一项；operator：仅其 allowed（锁定单项）。
 
     单租户多店铺：除命名 scope 外，把本租户每个店铺展开成一个 `shop:<shop_id>` 选项（店名取自
     platform_tokens.seller_name），让老板能按单店筛看板。仅当店铺数 > 1 时出现——单店无意义（=全部）。
+
+    「全部范围」（key=""，动态并集）是 fail-safe 兜底入口。但若已有命名 scope 恰好覆盖本租户全部
+    店（如 tts-id-all），它与「全部范围」展开结果相同 → 去重，不显示「全部范围」，避免下拉出现两个
+    语义等价项。没有任何全量命名 scope 的租户仍保留「全部范围」，保证 boss 始终有看全量的入口。
     """
     if perm.is_boss:
-        opts = [{"key": "", "label": "全部范围"}]
+        all_shops = resolve_filters(scope_key=None, account_id=perm.account_id).shop_ids
+        all_set = set(all_shops)
+        named = list_scopes(perm.account_id)
+        # 已有命名 scope 覆盖全部店 → 省略冗余的「全部范围」
+        has_full_named = any(set(s["shop_ids"]) == all_set and all_set for s in named)
+        opts = [] if has_full_named else [{"key": "", "label": "全部范围"}]
         opts += [
             {"key": s["scope_key"], "label": s["scope_name"]}
-            for s in list_scopes(perm.account_id)
+            for s in named
         ]
-        # 追加分店选项（多店才有意义）。resolve_filters(无 scope) 收口为本租户可见店并集。
-        shop_ids = resolve_filters(scope_key=None, account_id=perm.account_id).shop_ids
-        if len(shop_ids) > 1:
+        # 追加分店选项（多店才有意义）。
+        if len(all_shops) > 1:
             names = get_shop_names(perm.account_id)
             opts += [
                 {"key": f"shop:{sid}", "label": names.get(str(sid), str(sid))}
-                for sid in shop_ids
+                for sid in all_shops
             ]
         return opts
     # operator：只暴露被授权的那个 scope，不可切换到其它

@@ -154,6 +154,16 @@ export function BoardPage() {
 
   const canSwitch = !!data?.can_switch && (data?.scopes.length ?? 0) > 1;
 
+  // 默认选中首项：后端在已有覆盖全部店的命名 scope 时会省略「全部范围」(key="")，此时初始
+  // scope="" 不在选项列表里会导致下拉显空白。数据回来后若当前 scope 不在选项中，校正为首项 key
+  // (通常即「全部店铺」，展开=全部店，数据不变)——下拉高亮正确、与后端去重解耦。
+  useEffect(() => {
+    const opts = data?.scopes;
+    if (!opts || opts.length === 0) return;
+    const keys = opts.map((s) => s.key || "");
+    if (!keys.includes(scope)) setScope(opts[0].key || "");
+  }, [data?.scopes, scope]);
+
   // 区1 区头副说明：回显后端实际取数窗口（data.window，与卡片数字同源，比前端 range 更稳——
   // DateRangeValue 无 preset label 拿不到「近7天」字样）。含今日时点明「当日累计」，精确时刻
   // 交给经营概览卡头已有的 as_of 徽章，区头不重复。
