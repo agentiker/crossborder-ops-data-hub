@@ -95,6 +95,13 @@ export default {
           from: { opacity: "0", transform: "translateY(4px)" },
           to: { opacity: "1", transform: "translateY(0)" },
         },
+        // Dialog 专用入场：keyframe 的 transform 会整体覆盖元素 class 里的 transform，
+        // 所以必须把居中位移 translate(-50%,-50%) 写进每一帧，否则动画期间弹窗掉到下方、
+        // 结束才跳回中间（fade-in 的 translateY 就是这个坑）。
+        "dialog-in": {
+          from: { opacity: "0", transform: "translate(-50%, -50%) scale(0.96)" },
+          to: { opacity: "1", transform: "translate(-50%, -50%) scale(1)" },
+        },
         // 时段徽标在线绿点呼吸
         "pulse-dot": {
           "0%, 100%": { opacity: "1", transform: "scale(1)" },
@@ -122,6 +129,7 @@ export default {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
         "fade-in": "fade-in 0.18s ease-out",
+        "dialog-in": "dialog-in 0.18s ease-out",
         "pulse-dot": "pulse-dot 2s ease-in-out infinite",
         "pulse-slow": "pulse-slow 2s ease-in-out infinite",
         "fade-up": "fade-up 0.5s ease both",

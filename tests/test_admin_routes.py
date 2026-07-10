@@ -218,12 +218,34 @@ def test_boss_list_scopes(_db, monkeypatch):
         {"scope_key": "tts-id-all", "scope_name": "印尼TikTok全部店"},
         {"scope_key": "tts-id-shop-1", "scope_name": "印尼店一"},
     ])
+    # 多店租户：命名 scope 之外追加 shop:<id> 单店项（店名可解析则用店名）
+    monkeypatch.setattr(admin_mod, "tenant_visible_shop_ids",
+                        lambda account_id="ecom-app": {"s1", "s2"})
+    monkeypatch.setattr(admin_mod, "get_shop_names",
+                        lambda account_id=None: {"s1": "店一"})
     _login(BOSS)
     r = TestClient(app).get("/api/admin/scopes")
     assert r.status_code == 200
     items = r.json()["items"]
-    assert {i["scope_key"] for i in items} == {"tts-id-all", "tts-id-shop-1"}
+    assert {i["scope_key"] for i in items} == {
+        "tts-id-all", "tts-id-shop-1", "shop:s1", "shop:s2",
+    }
+    by_key = {i["scope_key"]: i["scope_name"] for i in items}
+    assert by_key["shop:s1"] == "店一"   # 有店名用店名
+    assert by_key["shop:s2"] == "s2"     # 无店名回落裸 id
     assert items[0]["scope_name"]  # 不为空
+
+
+def test_boss_list_scopes_single_shop_no_shop_entries(_db, monkeypatch):
+    """单店租户不追加 shop: 项（单店=全部,无意义）。"""
+    monkeypatch.setattr(admin_mod, "list_scopes", lambda account_id="ecom-app": [
+        {"scope_key": "tts-id-all", "scope_name": "全部店铺"},
+    ])
+    monkeypatch.setattr(admin_mod, "tenant_visible_shop_ids",
+                        lambda account_id="ecom-app": {"s1"})
+    _login(BOSS)
+    items = TestClient(app).get("/api/admin/scopes").json()["items"]
+    assert {i["scope_key"] for i in items} == {"tts-id-all"}
 
 
 def test_operator_list_scopes_forbidden(_db):

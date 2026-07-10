@@ -114,7 +114,24 @@ def get_scope(scope_key: str, account_id: str = DEFAULT_ACCOUNT) -> Optional[Bus
 
 
 def expand_scope(scope_key: str, account_id: str = DEFAULT_ACCOUNT) -> ScopeFilters:
-    """把某租户名下一个命名 scope 展开为 shop_ids 集合。"""
+    """把某租户名下一个命名 scope（或 `shop:<shop_id>` 单店伪 scope）展开为 shop_ids 集合。
+
+    `shop:` 伪 scope 与看板店铺下拉同一语义（见 web/routes/board._authorize_scope）：不落
+    business_scopes 表、按租户可见店集校验（不可见 → ScopeError，fail-closed）。这里是范围
+    解析唯一收口点，支持它之后 operator 授权(allowed_scope_key)/告警订阅(alert_recipients.
+    scope_key)/管理页校验(expand_scope)全部自动获得「按单店指定」能力。
+    """
+    if scope_key.startswith("shop:"):
+        sid = scope_key[len("shop:"):].strip()
+        if not sid or sid not in tenant_visible_shop_ids(account_id):
+            raise ScopeError(f"店铺不在本租户可见范围内：{sid or '(空)'}")
+        return ScopeFilters(
+            platform=None,
+            country=None,
+            shop_ids=[sid],
+            scope_key=scope_key,
+            display_text=_display_text(platform=None, country=None, shop_ids=[sid]),
+        )
     scope = get_scope(scope_key, account_id=account_id)
     if scope is None or not scope.is_active:
         raise ScopeError(f"未知或已停用的 scope：{scope_key}")

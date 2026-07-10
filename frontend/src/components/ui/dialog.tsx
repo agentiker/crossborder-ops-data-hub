@@ -33,7 +33,10 @@ export const DialogContent = React.forwardRef<
       ref={ref}
       className={cn(
         "fixed left-1/2 top-1/2 z-50 grid w-full max-w-md -translate-x-1/2 -translate-y-1/2 gap-4 border bg-popover p-6 text-popover-foreground shadow-lg rounded-xl",
-        "data-[state=open]:animate-fade-in",
+        // 不能用全局 animate-fade-in：其 keyframe 写死 translateY(4px→0)，会覆盖居中的
+        // -translate-y-1/2，动画期间弹窗掉到下方、结束才跳回中间。用专用 keyframe（内含完整
+        // 居中 transform）做 opacity+scale 淡入。
+        "data-[state=open]:animate-dialog-in",
         className,
       )}
       {...props}

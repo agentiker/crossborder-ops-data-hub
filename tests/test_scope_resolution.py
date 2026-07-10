@@ -89,6 +89,22 @@ def test_expand_unknown_or_inactive_scope_raises(session, monkeypatch):
         expand_scope("dead")
 
 
+def test_expand_shop_pseudo_scope(session, monkeypatch):
+    """`shop:<id>` 伪 scope：可见店 → 单店 ScopeFilters；不可见/空 → ScopeError。"""
+    _use(session, monkeypatch)
+    _token(session, "s1")  # 本租户可见店
+    session.commit()
+
+    f = expand_scope("shop:s1")
+    assert f.shop_ids == ["s1"]
+    assert f.scope_key == "shop:s1"
+
+    with pytest.raises(ScopeError):
+        expand_scope("shop:s_other")  # 不可见店 fail-closed
+    with pytest.raises(ScopeError):
+        expand_scope("shop:")  # 空 id
+
+
 def test_resolve_filters_narrows_to_in_scope_shop(session, monkeypatch):
     _use(session, monkeypatch)
     _scope(session, "tts-id-all", ["s1", "s2", "s3"])

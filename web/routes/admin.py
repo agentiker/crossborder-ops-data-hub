@@ -33,7 +33,13 @@ from services.biz_config import (
     upsert_config_num,
 )
 from services.product_cost_store import import_costs_from_rows
-from services.scope_resolution import ScopeError, expand_scope, list_scopes
+from services.scope_resolution import (
+    ScopeError,
+    expand_scope,
+    list_scopes,
+    tenant_visible_shop_ids,
+)
+from services.shop_directory import get_shop_names
 from services.user_authz import UserPermission, get_user_permission
 from web.web_security import require_web_user_api
 
@@ -219,15 +225,26 @@ async def upsert_role(body: RoleUpsertIn, boss: UserPermission = Depends(require
 
 @router.get("/scopes", response_model=ScopeListOut, include_in_schema=False)
 async def list_admin_scopes(boss: UserPermission = Depends(require_boss)):
-    """boss 选择 operator 数据范围时的可选项；纯只读，复用 services.list_scopes()。
+    """boss 选择 operator 数据范围时的可选项；纯只读。
 
     多租户：只列 boss 自己租户的 scope，gtl boss 选不到 ecom-app 的范围。
+    与看板店铺下拉同构：命名 scope 之外追加每个店铺一项（`shop:<shop_id>` 伪 scope，
+    店名取 platform_tokens.seller_name），多店时 boss 可直接把 operator/告警订阅钉到
+    单店，无需先手建单店命名 scope。expand_scope 已支持该前缀（写入校验同一路径）。
     """
     set_current_account(boss.account_id)
-    return ScopeListOut(items=[
+    items = [
         ScopeOptionOut(scope_key=s["scope_key"], scope_name=s["scope_name"])
         for s in list_scopes(boss.account_id)
-    ])
+    ]
+    shop_ids = sorted(tenant_visible_shop_ids(boss.account_id))
+    if len(shop_ids) > 1:
+        names = get_shop_names(boss.account_id)
+        items += [
+            ScopeOptionOut(scope_key=f"shop:{sid}", scope_name=names.get(sid, sid))
+            for sid in shop_ids
+        ]
+    return ScopeListOut(items=items)
 
 
 @router.post("/roles/deactivate", response_model=RoleOut, include_in_schema=False)
