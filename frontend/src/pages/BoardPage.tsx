@@ -33,6 +33,7 @@ import {
   type ProductChannels,
   type ProductDetail,
   type RefundAnalysis,
+  type ScopeOption,
   type TopSku,
   type TrendPoint,
 } from "@/api";
@@ -122,6 +123,8 @@ export function BoardPage() {
   const [scope, setScope] = useState(""); // 店铺（范围 scope_key）
   const [range, setRange] = useState<DateRangeValue>(last7); // 日期默认近 7 天
   const [data, setData] = useState<BoardData | null>(null);
+  // 店铺下拉选项：单独轻量拉取（/board/scopes），不等重的 boardData，页面一挂载即填充。
+  const [scopeOpts, setScopeOpts] = useState<{ can_switch: boolean; scopes: ScopeOption[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0); // 错误态「重试」手动重触发 fetch
@@ -152,17 +155,28 @@ export function BoardPage() {
     };
   }, [platform, region, scope, range.start, range.end, reloadKey]);
 
-  const canSwitch = !!data?.can_switch && (data?.scopes.length ?? 0) > 1;
-
-  // 默认选中首项：后端在已有覆盖全部店的命名 scope 时会省略「全部范围」(key="")，此时初始
-  // scope="" 不在选项列表里会导致下拉显空白。数据回来后若当前 scope 不在选项中，校正为首项 key
-  // (通常即「全部店铺」，展开=全部店，数据不变)——下拉高亮正确、与后端去重解耦。
+  // 店铺下拉选项：页面挂载即单独拉一次（轻量端点），与 boardData 并行。下拉不再等整个看板返回。
   useEffect(() => {
-    const opts = data?.scopes;
-    if (!opts || opts.length === 0) return;
-    const keys = opts.map((s) => s.key || "");
-    if (!keys.includes(scope)) setScope(opts[0].key || "");
-  }, [data?.scopes, scope]);
+    let alive = true;
+    api
+      .boardScopes()
+      .then((d) => alive && setScopeOpts(d))
+      .catch(() => {}); // 拉失败静默：下拉降级为不可切换，不阻断看板
+    return () => {
+      alive = false;
+    };
+  }, [reloadKey]);
+
+  const scopes = scopeOpts?.scopes ?? [];
+  const canSwitch = !!scopeOpts?.can_switch && scopes.length > 1;
+
+  // 默认选中首项：当前 scope 不在选项列表时（理论上首项即 key="" 的「全部店铺」，默认已匹配；
+  // 此处兜底应对未来选项结构变化），校正为首项 key，避免下拉显空白。
+  useEffect(() => {
+    if (scopes.length === 0) return;
+    const keys = scopes.map((s) => s.key || "");
+    if (!keys.includes(scope)) setScope(scopes[0].key || "");
+  }, [scopes, scope]);
 
   // 区1 区头副说明：回显后端实际取数窗口（data.window，与卡片数字同源，比前端 range 更稳——
   // DateRangeValue 无 preset label 拿不到「近7天」字样）。含今日时点明「当日累计」，精确时刻
@@ -230,7 +244,7 @@ export function BoardPage() {
               label="店铺"
               value={scope}
               onChange={setScope}
-              options={data!.scopes.map((s) => ({ value: s.key || "", label: s.label }))}
+              options={scopes.map((s) => ({ value: s.key || "", label: s.label }))}
             />
           )}
           <DateRangePicker value={range} onChange={setRange} />

@@ -417,6 +417,9 @@ export interface BoardQuery {
 
 export const api = {
   me: () => getJSON<Me>("/api/me"),
+  // 店铺下拉选项（轻量）：页面挂载即拉，不等重的 boardData，避免店铺框最后才渲染。
+  boardScopes: () =>
+    getJSON<{ can_switch: boolean; scopes: ScopeOption[] }>("/board/scopes"),
   boardData: (q: BoardQuery = {}) => {
     const params = new URLSearchParams();
     if (q.start) params.set("start_date", q.start);
