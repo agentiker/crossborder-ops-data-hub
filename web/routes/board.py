@@ -37,7 +37,8 @@ from services.refund_metrics import (
     get_refund_top_products,
     get_refund_trend,
 )
-from services.scope_resolution import ScopeError, list_scopes
+from services.scope_resolution import ScopeError, list_scopes, resolve_filters
+from services.shop_directory import get_shop_names
 from services.user_authz import AuthzError, UserPermission, resolve_authorized_scope
 from web.routes.data import (
     _resolve_window,
@@ -107,13 +108,25 @@ def _overview_window_and_gmv(
 
 
 def _scope_options(perm: UserPermission) -> list[dict]:
-    """范围切换条数据。boss：全部范围 + 所有 scope；operator：仅其 allowed（锁定单项）。"""
+    """范围切换条数据。boss：全部范围 + 所有 scope（+ 多店时每店一项）；operator：仅其 allowed（锁定单项）。
+
+    单租户多店铺：除命名 scope 外，把本租户每个店铺展开成一个 `shop:<shop_id>` 选项（店名取自
+    platform_tokens.seller_name），让老板能按单店筛看板。仅当店铺数 > 1 时出现——单店无意义（=全部）。
+    """
     if perm.is_boss:
         opts = [{"key": "", "label": "全部范围"}]
         opts += [
             {"key": s["scope_key"], "label": s["scope_name"]}
             for s in list_scopes(perm.account_id)
         ]
+        # 追加分店选项（多店才有意义）。resolve_filters(无 scope) 收口为本租户可见店并集。
+        shop_ids = resolve_filters(scope_key=None, account_id=perm.account_id).shop_ids
+        if len(shop_ids) > 1:
+            names = get_shop_names(perm.account_id)
+            opts += [
+                {"key": f"shop:{sid}", "label": names.get(str(sid), str(sid))}
+                for sid in shop_ids
+            ]
         return opts
     # operator：只暴露被授权的那个 scope，不可切换到其它
     allowed = perm.allowed_scope_key
@@ -123,6 +136,25 @@ def _scope_options(perm: UserPermission) -> list[dict]:
             label = s["scope_name"]
             break
     return [{"key": allowed, "label": label}]
+
+
+def _authorize_scope(perm, requested: str | None, *, platform=None, country=None):
+    """把前端下拉选中的 key 夹进授权范围。`shop:<id>` 前缀 → 按单店筛（走显式 shop_ids，
+    仍受 resolve_filters 授权校验，operator 也不会越界）；否则按命名 scope_key 解析。"""
+    requested = requested or None
+    if requested and requested.startswith("shop:"):
+        return resolve_authorized_scope(
+            perm,
+            requested_shop_ids=[requested[len("shop:"):]],
+            platform=platform,
+            country=country,
+        )
+    return resolve_authorized_scope(
+        perm,
+        requested_scope_key=requested,
+        platform=platform,
+        country=country,
+    )
 
 
 async def _collect(
@@ -144,9 +176,9 @@ async def _collect(
     # /board 渲染链路不走 X-Account-Id 注入；复用 data.py 路由前先把当前老板的租户写进 context，
     # 让下游 _resolve_scope / ORM 自动过滤按同一 account_id 生效。
     set_current_account(perm.account_id)
-    filters = resolve_authorized_scope(
+    filters = _authorize_scope(
         perm,
-        requested_scope_key=requested_scope_key or None,
+        requested_scope_key,
         platform=platform_q or None,
         country=country_q or None,
     )
@@ -368,9 +400,8 @@ async def board_product_detail(
     """
     set_current_account(perm.account_id)
     try:
-        filters = resolve_authorized_scope(
-            perm, requested_scope_key=scope or None,
-            platform=platform or None, country=country or None,
+        filters = _authorize_scope(
+            perm, scope, platform=platform or None, country=country or None,
         )
     except (ScopeError, AuthzError) as exc:
         return JSONResponse({"error": "forbidden", "detail": str(exc)}, status_code=403)
@@ -406,9 +437,8 @@ async def board_new_products(
     """
     set_current_account(perm.account_id)
     try:
-        filters = resolve_authorized_scope(
-            perm, requested_scope_key=scope or None,
-            platform=platform or None, country=country or None,
+        filters = _authorize_scope(
+            perm, scope, platform=platform or None, country=country or None,
         )
     except (ScopeError, AuthzError) as exc:
         return JSONResponse({"error": "forbidden", "detail": str(exc)}, status_code=403)
