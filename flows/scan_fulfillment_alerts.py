@@ -1,16 +1,21 @@
-"""监控告警巡检 flow：确定性判定 + openclaw message send 直投飞书（0 经 LLM）。
+"""监控告警巡检 flow：确定性判定 + 飞书卡片直投（0 经 LLM）。
 
-覆盖两类告警，每个收件人每轮各自独立判定/去重/投递（互不影响）：
+覆盖五类告警，每个收件人每轮各自独立判定/去重/投递（互不影响）：
 1. 待发货超时（services.fulfillment_metrics + fulfillment_alerts）。
 2. 低库存 / 断货（services.stock_metrics + stock_alerts）。
+3. 扣点率异常（已结算口径，有结算滞后；services.fee_rate_metrics + fee_rate_alerts）。
+4. 及时费率（未结算预估口径，平台调佣结算前即可发现；同上模块 realtime 分支）。
+5. 爆单（当日已付款销量破阈；services.order_metrics + hotsell_alerts）。
 
 调度：systemd timer data-scan-alerts（默认每 30 分钟）；本地调试 `python main.py --task alert-scan`。
 链路（每条规则）：静默时段跳过 → 取数（确定性分桶）→ build_decision 判定+组装文案 →
-      该推则 subprocess 调 `openclaw message send` → 投递成功后写回去重游标。
+      该推则投递（见下）→ 投递成功后写回去重游标。
 
+投递（send_alert）：优先 v2 CardKit 卡片（web/alert_card_builder 拼装 +
+web/feishu_card_sender 直投，与日报卡片同链路、方案A深色系配色）；卡片任何失败
+回落 openclaw `message send` 纯文本（决不因卡片问题静默丢告警）。
 为什么不用 openclaw cron：cron job 必经 agent/LLM，而告警要阈值/去重/稳定文案、每跑必准。
-openclaw 在这里只当飞书出站通道（message send 走本地 gateway RPC，不出网、不经 agent）。
-收件人/范围当前写死在 RECIPIENTS（单租户阶段）；多租户后可迁 DB/config（见 plan/09）。
+收件人真相源 = alert_recipients 表；空表回落内置常量（见 load_recipients）。
 （文件名沿用 scan_fulfillment_alerts 以免动 timer/main 引用；现已是「告警总巡检」。）
 """
 from __future__ import annotations
@@ -150,6 +155,33 @@ def send_feishu_message(
     return True
 
 
+def send_alert(
+    *, account: str, open_id: str, text: str, card: Optional[dict] = None
+) -> bool:
+    """告警投递：优先发 v2 CardKit 卡片（web/feishu_card_sender 直投，与日报同链路），
+    卡片失败回落 openclaw 纯文本——告警绝不能因卡片渲染/凭证问题静默丢失。"""
+    if card is not None:
+        try:
+            from web.feishu_card_sender import send_interactive_card
+
+            send_interactive_card(account, open_id, card)
+            return True
+        except Exception as exc:  # noqa: BLE001 — 任何卡片失败都回落文本
+            print(f"[alert] 卡片投递失败回落文本 account={account}: {exc}")
+    return send_feishu_message(account=account, open_id=open_id, text=text)
+
+
+def _board_url(account: str) -> str:
+    """该租户看板公网地址（卡片按钮用）；未配公网域则返回空串（按钮省略）。"""
+    try:
+        from core.tenancy import public_base_url_for
+
+        base = (public_base_url_for(account) or "").rstrip("/")
+        return f"{base}/app/board" if base else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _scan_fulfillment(session, *, account, open_id, scope, scope_id, dry_run: bool) -> str:
     """待发货超时规则：评估并（必要时）投递。返回一行状态。"""
     metrics = get_pending_fulfillments(
@@ -172,8 +204,20 @@ def _scan_fulfillment(session, *, account, open_id, scope, scope_id, dry_run: bo
         if dry_run:
             print(f"[alert][dry-run] 待发货 → {account}/{open_id}:\n{decision.message}")
             return f"{account}/待发货: 待推送 overdue={decision.overdue}（dry-run）"
-        sent = send_feishu_message(
-            account=account, open_id=open_id, text=decision.message
+        from services.shop_directory import get_shop_names
+        from web.alert_card_builder import build_fulfillment_card
+
+        card = build_fulfillment_card(
+            scope_display=scope.display_text,
+            overdue=decision.overdue, critical=decision.critical,
+            total=decision.total, delta=decision.delta,
+            prev_reported=prev_reported,
+            by_shop=list(metrics.get("by_shop") or []),
+            shop_names=get_shop_names(account),
+            board_url=_board_url(account),
+        )
+        sent = send_alert(
+            account=account, open_id=open_id, text=decision.message, card=card
         )
         if sent:
             upsert_fulfillment_alert_state(
@@ -224,8 +268,20 @@ def _scan_stock(session, *, account, open_id, scope, scope_id, dry_run: bool) ->
         if dry_run:
             print(f"[alert][dry-run] 库存 → {account}/{open_id}:\n{decision.message}")
             return f"{account}/库存: 待推送 风险={decision.total} 新增={len(decision.new_skus)}（dry-run）"
-        sent = send_feishu_message(
-            account=account, open_id=open_id, text=decision.message
+        from web.alert_card_builder import build_stock_card
+
+        # 只给卡片风险桶内的 items（与告警口径一致：get_stock_risk 默认就只回风险桶）
+        card = build_stock_card(
+            scope_display=scope.display_text,
+            stockout=decision.stockout, critical=decision.critical,
+            warning=decision.warning,
+            items=list(risk.get("items") or []),
+            new_skus=list(decision.new_skus),
+            board_url=_board_url(account),
+            critical_days=get_config_int("stock_cover_critical_days", account_id=account),
+        )
+        sent = send_alert(
+            account=account, open_id=open_id, text=decision.message, card=card
         )
         if sent:
             upsert_stock_alert_state(
@@ -306,7 +362,18 @@ def _scan_fee_rate(session, *, account, open_id, scope, scope_id, dry_run: bool)
         print(f"[alert][dry-run] 扣点率 → {account}/{open_id}:\n{decision.message}")
         return f"{account}/扣点率: 待推送 升至 {decision.eval_rate:.2%}（dry-run）"
 
-    sent = send_feishu_message(account=account, open_id=open_id, text=decision.message)
+    from web.alert_card_builder import build_fee_rate_card
+
+    card = build_fee_rate_card(
+        scope_display=scope.display_text, realtime=False,
+        currency=decision.currency or "IDR",
+        eval_rate=decision.eval_rate, baseline_rate=decision.baseline_rate,
+        abs_change=decision.abs_change, eval_gmv=decision.eval_gmv,
+        eval_window_label=_fmt_window(eval_start, eval_end),
+        baseline_window_label=_fmt_window(baseline_start, baseline_end),
+        board_url=_board_url(account),
+    )
+    sent = send_alert(account=account, open_id=open_id, text=decision.message, card=card)
     if sent:
         upsert_fee_rate_alert_state(
             session,
@@ -373,7 +440,18 @@ def _scan_unsettled_fee_rate(session, *, account, open_id, scope, scope_id, dry_
         print(f"[alert][dry-run] 及时费率 → {account}/{open_id}:\n{decision.message}")
         return f"{account}/及时费率: 待推送 预估升至 {decision.eval_rate:.2%}（dry-run）"
 
-    sent = send_feishu_message(account=account, open_id=open_id, text=decision.message)
+    from web.alert_card_builder import build_fee_rate_card
+
+    card = build_fee_rate_card(
+        scope_display=scope.display_text, realtime=True,
+        currency=decision.currency or "IDR",
+        eval_rate=decision.eval_rate, baseline_rate=decision.baseline_rate,
+        abs_change=decision.abs_change, eval_gmv=decision.eval_gmv,
+        eval_window_label=_fmt_window(eval_start, eval_end),
+        baseline_window_label=_fmt_window(baseline_start, baseline_end),
+        board_url=_board_url(account),
+    )
+    sent = send_alert(account=account, open_id=open_id, text=decision.message, card=card)
     if sent:
         upsert_fee_rate_alert_state(
             session,
@@ -421,7 +499,20 @@ def _scan_hotsell(session, *, account, open_id, scope, scope_id, dry_run: bool) 
         if dry_run:
             print(f"[alert][dry-run] 爆单 → {account}/{open_id}:\n{decision.message}")
             return f"{account}/爆单: 待推送 新爆款={len(decision.new_products)}（dry-run）"
-        sent = send_feishu_message(account=account, open_id=open_id, text=decision.message)
+        from web.alert_card_builder import build_hotsell_card
+
+        card = build_hotsell_card(
+            scope_display=scope.display_text,
+            date_label=f"{today.month}/{today.day}",
+            threshold=decision.threshold,
+            new_products=[
+                {"product_id": p.get("product_id"), "units": p.get("units"),
+                 "name": p.get("product_name"), "is_new": p.get("is_new")}
+                for p in decision.new_products
+            ],
+            board_url=_board_url(account),
+        )
+        sent = send_alert(account=account, open_id=open_id, text=decision.message, card=card)
         if sent:
             upsert_hotsell_alert_state(
                 session,
