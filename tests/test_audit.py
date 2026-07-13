@@ -13,6 +13,7 @@ from services.audit import (
     compute_row_hash,
     record_api_call,
     record_audit_event,
+    reseal_chain,
     verify_chain,
 )
 
@@ -65,6 +66,42 @@ def test_audit_chain_tamper_detected(session):
     mid.summary = "TAMPERED"  # 改内容但不重算 hash → 链校验应失败
     session.flush()
     assert not _verify_chain(session, AuditLog, audit_event_canonical_parts, "ecom-app")
+
+
+def test_reseal_chain_repairs_after_account_merge(session):
+    """并租户后重新封链：改 account_id（进哈希→等同篡改）断链，reseal 用当前 canonical 重封即完好。
+
+    复刻 scripts/migrate_merge_gtl_into_ecom_hp 的场景：gtl 审计行改归 ecom-app，与 ecom-app
+    原有行按 id 交织 → verify 报断裂；reseal_chain(ecom-app) 后两条链自洽。
+    """
+    # ecom-app 与 gtl 交替各记数条 API 调用，使 id 交织。
+    for i in range(3):
+        record_api_call(session, category="business", method="GET", path=f"/e{i}",
+                        account_id="ecom-app", http_status=200, ok=True)
+        record_api_call(session, category="business", method="GET", path=f"/g{i}",
+                        account_id="ecom-app-gtl", http_status=200, ok=True)
+    session.flush()
+    assert verify_chain(session, ApiCallLog, api_call_canonical_parts) == []  # 迁移前完好
+
+    # 模拟迁移的盲改：把 gtl 行 account_id 直接改成 ecom-app（不重算 hash）。
+    session.query(ApiCallLog).filter(ApiCallLog.account_id == "ecom-app-gtl").update(
+        {ApiCallLog.account_id: "ecom-app"}, synchronize_session=False
+    )
+    session.flush()
+    session.expire_all()
+    breaks = verify_chain(session, ApiCallLog, api_call_canonical_parts)
+    assert breaks, "改 account_id 后应检出断裂"
+    assert all(b["account_id"] == "ecom-app" for b in breaks)
+
+    # 重新封链后应完好，且行数不变（只改 prev_hash/row_hash 两列）。
+    n = reseal_chain(session, ApiCallLog, api_call_canonical_parts, "ecom-app")
+    session.flush()
+    assert n == 6
+    assert verify_chain(session, ApiCallLog, api_call_canonical_parts) == []
+    rows = session.query(ApiCallLog).order_by(ApiCallLog.id).all()
+    assert rows[0].prev_hash is None  # 重封后链首指针归零
+    # created_at 等被哈希业务字段未被 reseal 改动（否则等于二次篡改内容）。
+    assert {r.path for r in rows} == {f"/e{i}" for i in range(3)} | {f"/g{i}" for i in range(3)}
 
 
 def test_chain_per_account_isolated(session):

@@ -137,5 +137,6 @@ SELECT account_id, open_id, role, is_active FROM user_roles;   -- role=boss & is
 - **ssh 跑 uv/openclaw 报 command not found** → 非交互 ssh 的 PATH 没有 nvm/uv。用绝对路径 `~/.local/bin/uv`、`~/.nvm/.../bin/openclaw`；systemd 单元同理写绝对路径。
 - **换机后飞书 ws 频繁掉线** → 同一飞书 app 被两机同时连（双持互踢）。一个 app 只能一个实例。见 `openclaw-setup.md` §6。
 - **ssh 连 prod 慢** → 见 `docs/ssh-latency-troubleshooting.md`。
+- **告警「data-verify-audit-chain.service 失败」** → 审计哈希链断裂。先定性：零散 1~2 行=疑真篡改要排查；整段断/大面积=授权批量改动碰了被哈希字段（最常见改 `account_id`，如迁移脚本）。确认是授权改动后用 `scripts.reseal_audit_chain` 重新封链。完整 SOP 见 `docs/audit-compliance.md`。
 
 相关记忆：`prod-deployment-status`、`local-lan-hp-egress`、`server-ssh-access`、`tiktok-api-direct-connect`、`multitenant-account-id-architecture`、`audit-compliance-token-encryption`。

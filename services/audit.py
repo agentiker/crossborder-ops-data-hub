@@ -297,3 +297,34 @@ def verify_chain(session, model, canonical_fn) -> list[dict]:
             })
         prev_by_acc[r.account_id] = r.row_hash
     return breaks
+
+
+def reseal_chain(session, model, canonical_fn, account_id: str) -> int:
+    """按 id 顺序用**当前** canonical 重算某租户整条链的 prev_hash+row_hash 写回，返回改写行数。
+
+    **这是对不可篡改日志的授权重写，仅用于合法的管理操作之后重新封链**——典型场景是
+    租户合并（改 account_id，而 account_id 进哈希 → 旧 hash 必然对不上，语义等同被篡改）。
+    重封后 verify_chain 即通过。调用方应另记一条 AuditLog 元事件说明重封缘由，使重封本身可追溯。
+
+    只改 prev_hash/row_hash 两列，绝不动 created_at 等被哈希的业务字段（否则等于二次篡改内容）。
+    单事务维护操作；对本 account 全链加 FOR UPDATE 行锁（仅 MySQL）防并发接缝——否则重封期间
+    并发的 record_* 读到旧链尾、追加的新行会断在重封点（record_* 读链尾也用 FOR UPDATE，两者
+    互斥后并发写入会阻塞到本次 commit 再读到新链尾正确追加）。调用方负责 commit。
+    跨租户读须先 set_current_account(TENANT_BYPASS)。
+    """
+    q = (
+        session.query(model)
+        .filter(model.account_id == account_id)
+        .order_by(model.id)
+    )
+    if session.bind.dialect.name == "mysql":
+        q = q.with_for_update()
+    rows = q.all()
+    prev = None
+    for r in rows:
+        rh = compute_row_hash(prev, canonical_fn(r))
+        r.prev_hash = prev
+        r.row_hash = rh
+        prev = rh
+    session.flush()
+    return len(rows)
