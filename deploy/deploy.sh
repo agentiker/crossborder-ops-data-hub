@@ -56,11 +56,7 @@ ALERT_TIMERS="data-scan-alerts.timer data-push-replenishment.timer"
 # 避免部署把它们空跑报错。就绪后从此列表移除即恢复正常 enable。
 #   - data-sync-gmv-max-spend.timer：GMV Max 花费须独立 Marketing API 授权(advertiser_id)，
 #     未授权跑只会 API 失败刷日志（见 memory roi-roas-alert-data-source）。授权真打后删掉即可。
-#   - data-sync-mabang-costs.timer：**prod 专属**（仅 prod 接了马帮/gtl，hp 无马帮测试环境）。
-#     故**永久留在本列表**（保证 hp 部署永不启用），部署后仅在 prod 手动 enable：
-#     配 .env 的 MABANG__USER/PASSWORD + 一次性 `uv run playwright install chromium`，再
-#     `systemctl --user enable --now data-sync-mabang-costs.timer`。切勿从本列表移除（否则 hp 也会启用）。
-NOT_READY_TIMERS="data-sync-gmv-max-spend.timer data-sync-mabang-costs.timer"
+NOT_READY_TIMERS="data-sync-gmv-max-spend.timer"
 
 run() { echo "+ $*"; [ "$DRY" -eq 1 ] || "$@"; }
 
@@ -127,6 +123,16 @@ for t in "$UNIT_SRC"/*.timer; do
       run systemctl --user disable --now "$name" 2>/dev/null || true
       continue ;;
   esac
+  # 马帮成本 timer：仅在**配了马帮凭证**的机器启用（prod 接了马帮/gtl；hp 无马帮测试环境不配）。
+  # 用凭证在场自判环境，避免硬名单在 prod 上被反复 disable。注意：还需一次性
+  # `uv run playwright install-deps chromium && uv run playwright install chromium` 装无头浏览器。
+  if [ "$name" = "data-sync-mabang-costs.timer" ]; then
+    if ! grep -q '^MABANG__USER=.' "$ENV_FILE" 2>/dev/null; then
+      echo "  跳过马帮 timer：${name}（未配 MABANG__USER，非马帮环境）"
+      run systemctl --user disable --now "$name" 2>/dev/null || true
+      continue
+    fi
+  fi
   # 过审前模式：业务 timer 不 enable（不在 INFRA 白名单内的一律跳过）。两端补空格做整词匹配。
   if [ "$NO_BIZ_TIMERS" -eq 1 ]; then
     case " $INFRA_TIMERS " in
