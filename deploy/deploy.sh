@@ -56,7 +56,11 @@ ALERT_TIMERS="data-scan-alerts.timer data-push-replenishment.timer"
 # 避免部署把它们空跑报错。就绪后从此列表移除即恢复正常 enable。
 #   - data-sync-gmv-max-spend.timer：GMV Max 花费须独立 Marketing API 授权(advertiser_id)，
 #     未授权跑只会 API 失败刷日志（见 memory roi-roas-alert-data-source）。授权真打后删掉即可。
-NOT_READY_TIMERS="data-sync-gmv-max-spend.timer"
+#   - data-sync-mabang-costs.timer：**prod 专属**（仅 prod 接了马帮/gtl，hp 无马帮测试环境）。
+#     故**永久留在本列表**（保证 hp 部署永不启用），部署后仅在 prod 手动 enable：
+#     配 .env 的 MABANG__USER/PASSWORD + 一次性 `uv run playwright install chromium`，再
+#     `systemctl --user enable --now data-sync-mabang-costs.timer`。切勿从本列表移除（否则 hp 也会启用）。
+NOT_READY_TIMERS="data-sync-gmv-max-spend.timer data-sync-mabang-costs.timer"
 
 run() { echo "+ $*"; [ "$DRY" -eq 1 ] || "$@"; }
 

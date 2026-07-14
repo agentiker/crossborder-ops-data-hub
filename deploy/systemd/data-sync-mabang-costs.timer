@@ -1,0 +1,7 @@
+[Unit]
+Description=每周一同步马帮成本（06:17 CST；成本更新不频繁、价差不大，周更即可）
+[Timer]
+OnCalendar=Mon *-*-* 06:17:00
+Persistent=true
+[Install]
+WantedBy=timers.target

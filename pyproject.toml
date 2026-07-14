@@ -14,6 +14,7 @@ dependencies = [
     "fastapi>=0.109.0",
     "uvicorn>=0.27.0",
     "fastapi-mcp>=0.4.0",
+    "playwright>=1.40.0",  # 马帮成本抓取（无头浏览器登录+抽数，见 flows/sync_mabang_costs）
 ]
 
 [dependency-groups]

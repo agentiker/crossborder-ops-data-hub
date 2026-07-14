@@ -1,0 +1,12 @@
+[Unit]
+Description=马帮 ERP 成本同步（统一成本价 → product_costs）
+After=network-online.target
+OnFailure=data-onfailure@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/code/crossborder-ops-data-hub
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/.local/bin/uv run python -m flows.sync_mabang_costs
+# 无头浏览器登录+按款号搜索抽组合，较慢；单次最长 15 分钟，挂死自动杀
+TimeoutStartSec=900

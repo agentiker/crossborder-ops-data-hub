@@ -57,6 +57,17 @@ class TikTokBusinessConfig(BaseModel):
         return TikTokBusinessCredential(app_id=self.app_id, app_secret=self.app_secret)
 
 
+class MabangConfig(BaseModel):
+    """马帮 ERP 成本抓取配置（无头浏览器登录，抓统一成本价入 product_costs）。
+
+    见 flows/sync_mabang_costs。凭证仅用于登录 POST，不落库、不进日志。account 为空时
+    回落 current_account()（单客户部署即 DEFAULT_ACCOUNT）。此马帮账号对应 TikTok 店的租户。
+    """
+    user: str = ""       # 马帮登录账号（手机号）
+    password: str = ""   # 马帮登录密码（明文，仅登录用）
+    account: str = ""    # 成本归属租户 account_id；空则回落 current_account()
+
+
 class APIConfig(BaseModel):
     """对外 HTTP 接口配置（供 openclaw skill 本机调用）"""
     host: str = "127.0.0.1"  # 默认仅监听回环地址，不对公网开放
@@ -174,6 +185,7 @@ class Settings(BaseSettings):
     feishu_oauth: FeishuOAuthConfig = FeishuOAuthConfig()
     tenancy: TenancyConfig = TenancyConfig()
     llm: LLMConfig = LLMConfig()
+    mabang: MabangConfig = MabangConfig()
     scheduler_interval_minutes: int = 60
     # 业务归日时区偏移（小时）。印尼 WIB 固定 UTC+7（无夏令时）。
     # 订单 paid_time 存 naive UTC，GMV/趋势/单品按此偏移归到当地"自然日"。
