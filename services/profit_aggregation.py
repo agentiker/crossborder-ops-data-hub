@@ -175,8 +175,8 @@ def compute_daily_profit(
             platform=platform, country=country, shop_id=shop_id, session=session,
             by_create=True,
         )
-        cost_map = product_cost_store.get_cost_map(
-            account_id=account_id, platform=platform, session=session,
+        cost_map = product_cost_store.get_cost_map_asof(
+            account_id=account_id, platform=platform, metric_date=metric_date, session=session,
         )
         product_cost_rmb = Decimal("0")
         missing: list[str] = []

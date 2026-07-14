@@ -548,6 +548,45 @@ class ProductCost(Base):
         return f"<ProductCost(seller_sku={self.seller_sku}, unit_cost_rmb={self.unit_cost_rmb})>"
 
 
+class ProductCostHistory(Base):
+    """SKU 级产品成本的**时间维度**历史（成本变化才追加一行，按生效日）。
+
+    为什么单列一张表而非给 product_costs 加列：product_costs 作「当前快照」供 admin 页/CLI
+    直接查、且现有 get_cost_map 调用者不受影响；历史化只叠加不侵入。语义：一行表示
+    「从 effective_from 起该 SKU 单位成本为 unit_cost_rmb」，直到更晚的一行覆盖。
+
+    写入 append-on-change（见 services/product_cost_store.record_cost_history）：成本较该 SKU
+    最新历史未变则跳过、变了才加/更新当日行。利润按业务日取「该日生效成本」
+    （get_cost_map_asof），使成本涨跌后新窗口自动用新成本、旧窗口保留旧成本。
+    上线前无真实历史 → 早期日期回落「最早已知成本」估算。
+    """
+
+    __tablename__ = "product_cost_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String(32), nullable=False, default="tiktok_shop", index=True)
+    account_id = Column(String(64), index=True)
+    seller_sku = Column(String(128), nullable=False, index=True)
+    unit_cost_rmb = Column(Numeric(18, 4), nullable=False, default=0)  # 含运费
+    effective_from = Column(Date, nullable=False, index=True)  # 该成本自此业务日起生效
+    note = Column(String(500))
+    recorded_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id", "platform", "seller_sku", "effective_from",
+            name="uq_product_cost_hist",
+        ),
+    )
+
+    def __repr__(self):
+        return (
+            f"<ProductCostHistory(seller_sku={self.seller_sku}, "
+            f"unit_cost_rmb={self.unit_cost_rmb}, effective_from={self.effective_from})>"
+        )
+
+
+
 class ReturnRateConfig(Base):
     """预估退货率配置（三级：default / category / sku，运营可配）。
 
