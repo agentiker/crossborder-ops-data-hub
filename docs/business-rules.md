@@ -270,7 +270,8 @@
 
 广告费仅**已结算**才有，且 `fact_ad_spend_daily` 按 `order_create_time` 归日 → 近几天下单的单多未结算、广告费**持续填充中**（叠加同步 timer 未跑则更滞后）。真打实证：6/24-6/28 广告消耗几乎为 0，本周 ROAS 因分母被掏空而"暴涨"5 倍，是**结算滞后假象**，非广告变高效。
 
-- 护栏**不看"有没有数据"**（近期日有数据但不全会误判完整），看**结算完整线** `settled_through = as_of − ad_settle_lag_days`（`settings.ad_settle_lag_days` 默认 **14**，与 §7.1 扣点 `fee_rate_settle_lag_days` 同源同量级）。窗口结束日晚于该线 → `complete=False`。
+- 护栏**不看"有没有数据"**（近期日有数据但不全会误判完整），看**结算完整线** `settled_through = as_of − ad_settle_lag_days`（`settings.ad_settle_lag_days` 默认 **21**，与 §7.1 扣点 `fee_rate_settle_lag_days` 同源同量级）。窗口结束日晚于该线 → `complete=False`。
+  - **2026-07-14 prod 真实数据校准**：印尼店 4713 单成熟队列（下单≥25天、98%+已结算，消除幸存者偏差）实测滞后 P50=8/P90=14/P95=17/P99=23，≤14天仅覆盖 **68%**、≤21天=**94%**、≤25天=97%；按周龄结算率「8-14天仅 49% 结算完、15-21天 92%、22-30天 98%」。原 14 太乐观（近窗费率被低估、ROAS 被高估），据此把 `ad_settle_lag_days`、`fee_rate_settle_lag_days` 从 14 调到 **21**（覆盖~94%，P95=17/P99=23 拐点）。主因 72% COD 需确认收货拖到 15-21 天。副作用：默认窗口更常显「结算中」。
 - 前端 `complete=False` 时广告/ROAS 卡标注「结算中·截至 MM-DD」，且**不显环比**（避免把结算未回读成涨跌）。这与利润卡 `coverage_complete`、费率告警 `settle_lag_days` 是同一类滞后护栏。
 - **效应滞后 ≠ 结算滞后**：广告"本周花、下周起量"是真实业务现象（效应滞后，主要在 GMV Max/TAP 这类预算投放）；但看板上更主导的是**结算滞后**（费用入库晚）。本店付费投放≈0，故效应滞后基本不适用，失真几乎全来自结算滞后 + 把佣金当广告。
 - 接通更多投放数据前提：Partner Center 加 Finance 权限 + 店铺重授权（本店已通）；同步靠 `data-sync-ad-spend` timer（过审前停，故 fact 表需手动补跑才完整）。
@@ -328,7 +329,7 @@
 
 | 参数 | 默认 | 含义 |
 |------|------|------|
-| `fee_rate_settle_lag_days` | 14 | 结算滞后回看天数（结算口径 eval/baseline 都从更早处取） |
+| `fee_rate_settle_lag_days` | 21 | 结算滞后回看天数（结算口径 eval/baseline 都从更早处取；2026-07-14 prod 校准 14→21，见 §6） |
 | `fee_rate_eval_window_days` | 7 | 结算口径评估窗口天数 |
 | `fee_rate_baseline_days` | 28 | 基准窗口天数 |
 | `fee_rate_realtime_eval_days` | 3 | 及时口径评估窗口（≤ `unsettled_lookback_days`，全量替换只留近几天） |

@@ -216,7 +216,7 @@ class Settings(BaseSettings):
     #   基准窗口 = 其前 fee_rate_baseline_days 天的同口径费率
     # 仅当费率「上升」且 相对偏移 > rel_pct 且 绝对偏移 > abs_pct（pct 点）才告警（下降是好事不报）。
     # 任一窗口 GMV < min_gmv（同币种）或历史不足 → 优雅跳过（低基数/冷启动护栏，不误报）。
-    fee_rate_settle_lag_days: int = 14
+    fee_rate_settle_lag_days: int = 21
     fee_rate_eval_window_days: int = 7
     fee_rate_baseline_days: int = 28
     fee_rate_alert_rel_pct: float = 0.15  # 相对升幅阈值（0.15 = 比基准高 15%）
@@ -239,7 +239,7 @@ class Settings(BaseSettings):
     # 归日 → 近 N 天下单的单多未结算、广告费持续填充中。窗口结束日落在「今天−N」之内即判「不完整」，
     # 前端标注「结算中」，避免把"结算未回"误读成"广告变高效/ROAS 暴涨"（见 docs §6）。与扣点费率
     # 的 fee_rate_settle_lag_days 同源同量级（都来自 statement 结算）。
-    ad_settle_lag_days: int = 14
+    ad_settle_lag_days: int = 21
 
     # 补货公式默认参数（运营可经 replenishment_config 表按范围覆盖，见 services/replenishment_config）。
     # 目标备货 = 近 velocity_days 天销量 × 系数；普通 SKU 用 normal、超级爆品(人工标记)用 superhot。
