@@ -741,8 +741,14 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
           {/* 当前预估费率 / 已结算基准 */}
           <div className="grid grid-cols-2 gap-4">
             <div className="rounded-xl bg-fill-shallow p-4">
-              <div className="text-xs text-foreground-secondary">
-                当前预估费率（{fr?.eval_window}）
+              <div className="flex items-center gap-1 text-xs text-foreground-secondary">
+                <span>当前预估费率（{fr?.eval_window}）</span>
+                <InfoTooltip
+                  align="start"
+                  content="这是 TikTok 官方给出的预估扣费算出来的：平台对当前还没结算的订单，按最新费率政策预先算好「大概要扣多少点」，我们用它 ÷ 对应 GMV 得到费率。好处是不用等结算，最新的调佣/涨点当下就能看到。"
+                >
+                  <Info className="h-3.5 w-3.5" />
+                </InfoTooltip>
               </div>
               <div className="tabnum text-2xl font-bold text-foreground">
                 {pct(fr?.current_rate)}
@@ -751,14 +757,19 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
                 <div
                   className={`text-xs ${fr.abs_delta > 0 ? "text-negative" : "text-positive"}`}
                 >
-                  {fr.abs_delta > 0 ? "↑" : "↓"} {pct(Math.abs(fr.abs_delta))}
-                  （相对 {pct(Math.abs(fr.rel_delta))}）vs 基准
+                  {fr.abs_delta > 0 ? "↑" : "↓"} {pct(Math.abs(fr.abs_delta))} vs 历史
                 </div>
               )}
             </div>
             <div className="rounded-xl bg-fill-shallow p-4">
-              <div className="text-xs text-foreground-secondary">
-                已结算基准（{fr?.baseline_window}）
+              <div className="flex items-center gap-1 text-xs text-foreground-secondary">
+                <span>历史已结算（{fr?.baseline_window}）</span>
+                <InfoTooltip
+                  align="start"
+                  content="过去这段已经结算完成的真实扣费费率（TikTok 实际扣了多少 ÷ 对应 GMV），作为「正常水平」的参照。拿当前预估费率和它对比，就能发现平台是不是悄悄调高了扣点。"
+                >
+                  <Info className="h-3.5 w-3.5" />
+                </InfoTooltip>
               </div>
               {baselinePending ? (
                 <div className="pt-1 text-sm text-foreground-secondary">积累中（历史不足）</div>
@@ -773,7 +784,7 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
           {baselinePending && (
             <div className="flex items-start gap-1.5 rounded-lg bg-info/10 px-3 py-2 text-xs text-info">
               <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span>已结算基准积累中（需 ~2 周结算历史），暂无法判定异常，先展示当前费率水平与构成。</span>
+              <span>历史已结算数据积累中（需 ~2 周结算记录），暂时无法判断费率是否异常，先展示当前费率水平与构成。</span>
             </div>
           )}
           {/* 趋势 */}
