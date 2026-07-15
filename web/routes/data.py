@@ -601,6 +601,7 @@ async def get_profit(
     card = get_profit_card(
         start_date=sd, end_date=ed,
         platform=scope.platform, country=scope.country, shop_ids=scope.shop_ids,
+        account_id=current_account(),
     )
     est = card.get("estimated") or {}
     settled = card.get("settled")
@@ -1361,4 +1362,3 @@ async def get_dashboard_summary(
                 break
 
     return result
-

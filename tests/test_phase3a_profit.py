@@ -277,6 +277,46 @@ def test_get_profit_card(session):
     assert card["coverage_complete"] is True
 
 
+def test_get_profit_card_recomputes_today_instead_of_stale_daily_row(session, monkeypatch):
+    """今天窗口不用 fact_profit_daily 旧快照，避免盘中旧值被当完整利润展示。"""
+    from services.metrics_store import upsert_daily_profit
+    from services.profit_summary import get_profit_card
+    import services.profit_summary as profit_summary
+
+    stale = ProfitRecordInput(
+        metric_date=D, platform="tiktok_shop", shop_id="S1", account_id=ACC,
+        gmv=Decimal("30"), commission_fee=Decimal("5"), ad_cost=Decimal("5"),
+        product_cost=Decimal("4.71"), refund_amount=Decimal("0"),
+        currency="CNY", profit_kind="estimated",
+    )
+    upsert_daily_profit(session, stale)
+    session.commit()
+
+    def fake_compute_daily_profit(**kwargs):
+        assert kwargs["metric_date"] == D
+        assert kwargs["shop_id"] == "S1"
+        assert kwargs["account_id"] == ACC
+        return ProfitRecordInput(
+            metric_date=D, platform="tiktok_shop", shop_id="S1", account_id=ACC,
+            gmv=Decimal("200"), commission_fee=Decimal("40"), ad_cost=Decimal("20"),
+            product_cost=Decimal("30"), refund_amount=Decimal("10"),
+            currency="CNY", profit_kind="estimated",
+        )
+
+    monkeypatch.setattr(profit_summary, "business_today", lambda: D)
+    monkeypatch.setattr(profit_summary, "compute_daily_profit", fake_compute_daily_profit)
+
+    card = get_profit_card(
+        start_date=D, end_date=D, platform="tiktok_shop", country="GLOBAL",
+        shop_ids=["S1"], account_id=ACC, session=session,
+    )
+    assert card["available"] is True
+    assert card["estimated"]["gross_profit"] == 100.0
+    assert card["estimated"]["gmv"] == 200.0
+    assert card["covered_days"] == 1
+    assert card["coverage_complete"] is True
+
+
 def test_get_profit_card_coverage_incomplete(session):
     """窗口 7 天但只聚合了 1 天 → coverage_complete=False（缺天可见，不静默少算）。"""
     from datetime import timedelta

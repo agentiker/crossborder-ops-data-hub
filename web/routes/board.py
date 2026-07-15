@@ -262,6 +262,7 @@ async def _collect(
     profit = get_profit_card(
         start_date=cur_start, end_date=cur_end,
         platform=platform, country=country, shop_ids=shop_id_list,
+        account_id=perm.account_id,
     )
     # 费率监控卡（实时算、复用 B1 及时口径）：当前预估费率 vs 已结算基准 + 趋势 + 三态徽章。
     # 不随 period 变（固定近 N 天 unsettled vs 历史 settled）。出错不阻断看板其它块。
