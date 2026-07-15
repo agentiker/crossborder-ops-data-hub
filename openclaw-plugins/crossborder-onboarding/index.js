@@ -82,13 +82,32 @@ function optLine(i, o) {
   return `${i + 1}. ${o.scope_name}${desc}`;
 }
 
-function renderList(items) {
-  const lines = items.map((o, i) => optLine(i, o));
+// 纯列表正文（不含标题）——用作 presentation 文本块 / 降级兜底文案。
+function listBody(items) {
   return (
-    "🎯 **切换默认查询范围**\n\n" +
-    lines.join("\n") +
-    "\n\n回复 `/scope 编号` 切换（例 `/scope 1`）。切换后，之后不带范围词的查询都按这个范围。"
+    items.map((o, i) => optLine(i, o)).join("\n") +
+    "\n\n点下方按钮，或回复 `/scope 编号`（例 `/scope 1`）切换。切换后不带范围词的查询都按此范围。"
   );
+}
+
+// 交互卡：presentation.blocks（跨渠道，openclaw-lark 渲染成飞书卡，不支持则降级为文字）。
+// 每个按钮的 action=派发命令 `/scope <编号>`——openclaw 原生处理命令派发，无需卡片回调路由。
+function scopeCard(items) {
+  const buttons = items.map((o, i) => ({
+    label: optLine(i, o),
+    action: { type: "command", command: `/scope ${i + 1}` },
+  }));
+  return {
+    presentation: {
+      title: "🎯 切换默认查询范围",
+      blocks: [
+        { type: "text", text: "选择要切换到的范围：" },
+        { type: "buttons", buttons },
+      ],
+    },
+    // 降级兜底：不支持 presentation 的渠道回落到编号文字列表（仍可 /scope 编号 切换）。
+    text: "🎯 **切换默认查询范围**\n\n" + listBody(items),
+  };
 }
 
 const plugin = {
@@ -112,7 +131,7 @@ const plugin = {
 
     api.registerCommand({
       name: "scope",
-      description: "切换默认查询范围（列出店铺/平台/区域，回复编号切换）",
+      description: "切换默认查询范围（列出店铺/平台/区域，点按或回复编号切换）",
       channels: ["feishu"],
       acceptsArgs: true,
       requireAuth: true, // 改 binding 属敏感操作，仅授权发送者
@@ -128,7 +147,7 @@ const plugin = {
         if (!items.length) return { text: "当前租户暂无可切换的范围。" };
 
         const arg = (ctx.args || "").trim();
-        if (!arg) return { text: renderList(items) };
+        if (!arg) return scopeCard(items);
 
         // 解析编号（1-based）或直接 scope_key
         let target = null;
@@ -136,7 +155,7 @@ const plugin = {
         if (Number.isInteger(n) && n >= 1 && n <= items.length) target = items[n - 1];
         else target = items.find((o) => o.scope_key === arg) || null;
         if (!target) {
-          return { text: `没找到「${arg}」对应的范围。\n\n${renderList(items)}` };
+          return { text: `没找到「${arg}」对应的范围。\n\n${listBody(items)}` };
         }
         try {
           const res = await setBinding(ctx, target.scope_key, openId);
@@ -151,3 +170,4 @@ const plugin = {
 };
 
 export default plugin;
+
