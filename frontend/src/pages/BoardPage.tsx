@@ -659,7 +659,7 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
         formatter: (ps: { axisValue: string; data: number }[]) => {
           const settling = settlingLabels.includes(ps[0]?.axisValue);
           return `${ps[0]?.axisValue}<br/>预估费率 ${ps[0]?.data?.toFixed(2)}%${
-            settling ? "<br/><span style='color:#ce7612'>· 结算中·样本不完整偏高</span>" : ""
+            settling ? "<br/><span style='color:#ce7612'>· 结算中：这几天订单还没结算完，预估费率通常略偏高，结算后会回落校准</span>" : ""
           }`;
         },
       },
@@ -811,7 +811,17 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
               <div className="text-xs text-foreground-secondary">当前主要扣费构成（占 GMV）</div>
               {fr.components.slice(0, 4).map((c) => (
                 <div key={c.key} className="flex justify-between text-sm">
-                  <span className="text-foreground-secondary">{c.name}</span>
+                  <span className="flex items-center gap-1 text-foreground-secondary">
+                    {c.name}
+                    {c.key === "dynamic_commission_amount" && (
+                      <InfoTooltip
+                        align="start"
+                        content="TikTok 的「动态佣金」不是固定百分比：平台会按商品类目、参加的活动、成交渠道（自营 / 达人带货等）动态定佣。所以扣点每天会随「卖了哪些货、走了哪些渠道」小幅浮动，平台调整费率政策时也会整体升降——这正是费率要持续监控的原因，光看一个固定比例会漏掉平台悄悄调佣。"
+                      >
+                        <Info className="h-3.5 w-3.5" />
+                      </InfoTooltip>
+                    )}
+                  </span>
                   <span className="tabnum text-foreground">{pct(c.share)}</span>
                 </div>
               ))}
