@@ -1,8 +1,8 @@
 {
   "id": "crossborder-onboarding",
   "name": "Crossborder Onboarding",
-  "description": "把跨境电商运营 bot 的 /start 指引做成确定性命令：handler 直出固定文案，绕开 LLM。",
-  "version": "0.1.0",
+  "description": "跨境电商运营 bot 的确定性命令：/start 指引 + /scope 切换默认范围，handler 直出绕开 LLM。",
+  "version": "0.2.0",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
