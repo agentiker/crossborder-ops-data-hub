@@ -112,7 +112,8 @@ def _scope_options(perm: UserPermission) -> list[dict]:
 
     下拉直接由「本租户库里有几个店」算出，与店铺数一一对应，加店自动多一项、永不重复漂移：
       · 「全部店铺」（key=""）= 动态并集，恒为首项。
-      · 每个店铺一项（`shop:<shop_id>`，店名取自 platform_tokens.seller_name）。
+      · 每个店铺一项（`shop:<shop_id>`，店名取自 platform_tokens.seller_name），单店也列出
+        （固定「全部店铺」+逐店枚举更自然；此前单店隐藏整条筛选，客户反馈不直觉）。
     命名 scope（business_scopes）只在它是**真正的子集分组**（店数 < 全部，如未来「北区3店」）时
     才额外列出；像 tts-id-all 这种「恰好=全部店」的不进下拉——它只是 operator 的授权锚点，与老板
     筛选 UX 无关（去掉它就不会和「全部店铺」重复）。
@@ -121,8 +122,9 @@ def _scope_options(perm: UserPermission) -> list[dict]:
         all_shops = resolve_filters(scope_key=None, account_id=perm.account_id).shop_ids
         all_set = set(all_shops)
         opts = [{"key": "", "label": "全部店铺"}]
-        # 每个单店一项（多店才有意义；单店时「全部店铺」已足够）。
-        if len(all_shops) > 1:
+        # 每个店铺一项：固定「全部店铺」+ 逐店枚举是更自然的筛选体验，单店也列出
+        # （此前单店时整条隐藏，客户反馈不直觉；单店时「全部店铺」与该店指向同一数据但保留可见性）。
+        if all_shops:
             names = get_shop_names(perm.account_id)
             opts += [
                 {"key": f"shop:{sid}", "label": names.get(str(sid), str(sid))}

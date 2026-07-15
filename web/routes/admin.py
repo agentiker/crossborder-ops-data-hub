@@ -229,8 +229,9 @@ async def list_admin_scopes(boss: UserPermission = Depends(require_boss)):
 
     多租户：只列 boss 自己租户的 scope，gtl boss 选不到 ecom-app 的范围。
     与看板店铺下拉同构：命名 scope 之外追加每个店铺一项（`shop:<shop_id>` 伪 scope，
-    店名取 platform_tokens.seller_name），多店时 boss 可直接把 operator/告警订阅钉到
-    单店，无需先手建单店命名 scope。expand_scope 已支持该前缀（写入校验同一路径）。
+    店名取 platform_tokens.seller_name），单店也列出——boss 可直接把 operator/告警订阅钉到
+    单店，无需先手建单店命名 scope（此前单店不追加，授权时下拉只剩「全部店铺」不直觉）。
+    expand_scope 已支持该前缀（写入校验同一路径）。
     """
     set_current_account(boss.account_id)
     items = [
@@ -238,7 +239,7 @@ async def list_admin_scopes(boss: UserPermission = Depends(require_boss)):
         for s in list_scopes(boss.account_id)
     ]
     shop_ids = sorted(tenant_visible_shop_ids(boss.account_id))
-    if len(shop_ids) > 1:
+    if shop_ids:
         names = get_shop_names(boss.account_id)
         items += [
             ScopeOptionOut(scope_key=f"shop:{sid}", scope_name=names.get(sid, sid))

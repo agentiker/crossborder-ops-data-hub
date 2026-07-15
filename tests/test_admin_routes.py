@@ -236,16 +236,21 @@ def test_boss_list_scopes(_db, monkeypatch):
     assert items[0]["scope_name"]  # 不为空
 
 
-def test_boss_list_scopes_single_shop_no_shop_entries(_db, monkeypatch):
-    """单店租户不追加 shop: 项（单店=全部,无意义）。"""
+def test_boss_list_scopes_single_shop_still_enumerates(_db, monkeypatch):
+    """单店租户也追加 shop: 项：固定「全部店铺」命名 scope + 逐店枚举更直觉
+    （此前单店不追加，授权 operator 时下拉只剩「全部店铺」，客户反馈不自然）。"""
     monkeypatch.setattr(admin_mod, "list_scopes", lambda account_id="ecom-app": [
         {"scope_key": "tts-id-all", "scope_name": "全部店铺"},
     ])
     monkeypatch.setattr(admin_mod, "tenant_visible_shop_ids",
                         lambda account_id="ecom-app": {"s1"})
+    monkeypatch.setattr(admin_mod, "get_shop_names",
+                        lambda account_id=None: {"s1": "店一"})
     _login(BOSS)
     items = TestClient(app).get("/api/admin/scopes").json()["items"]
-    assert {i["scope_key"] for i in items} == {"tts-id-all"}
+    assert {i["scope_key"] for i in items} == {"tts-id-all", "shop:s1"}
+    by_key = {i["scope_key"]: i["scope_name"] for i in items}
+    assert by_key["shop:s1"] == "店一"
 
 
 def test_operator_list_scopes_forbidden(_db):
