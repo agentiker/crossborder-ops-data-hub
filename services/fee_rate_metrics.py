@@ -184,8 +184,10 @@ def get_fee_rate_monitor(
     session = session or SessionLocal()
     try:
         today = business_today()
-        eval_end = today
-        eval_start = today - timedelta(days=settings.fee_rate_realtime_eval_days - 1)
+        # 当天(T)未结算预估费近乎为空(≈0%覆盖，要等次日 01:13 同步才有~90%，见 §7.1)：
+        # 单笔高费率会把评估窗口/趋势末点顶高(噪声)。故评估窗口与趋势都结束于昨天(T-1)，剔除当天。
+        eval_end = today - timedelta(days=1)
+        eval_start = eval_end - timedelta(days=settings.fee_rate_realtime_eval_days - 1)
         baseline_end = today - timedelta(days=settings.fee_rate_settle_lag_days)
         baseline_start = baseline_end - timedelta(days=settings.fee_rate_baseline_days - 1)
 
@@ -272,7 +274,8 @@ def get_fee_rate_monitor(
         # 避免老板把"当天未结算完的暂态高点"误读为平台涨佣。与广告 ROAS 结算滞后护栏同源。
         settle_complete_through = today - timedelta(days=settings.fee_rate_settle_lag_days)
         trend = []
-        for i in range(trend_days - 1, -1, -1):
+        # 结束于昨天(T-1)：当天(T)预估近乎为空，画进去会是单笔噪声尖峰。i 从 trend_days..1。
+        for i in range(trend_days, 0, -1):
             d = today - timedelta(days=i)
             day_by_ccy = get_unsettled_fee_rate(
                 start_date=d, end_date=d, session=session, **common_scope

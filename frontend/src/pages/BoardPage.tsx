@@ -745,7 +745,7 @@ function FeeRateMonitor({ data, loading }: { data: BoardData | null; loading: bo
                 <span>当前预估费率（{fr?.eval_window}）</span>
                 <InfoTooltip
                   align="start"
-                  content="这是 TikTok 官方给出的预估扣费算出来的：平台对当前还没结算的订单，按最新费率政策预先算好「大概要扣多少点」，我们用它 ÷ 对应 GMV 得到费率。好处是不用等结算，最新的调佣/涨点当下就能看到。"
+                  content="这是 TikTok 官方给出的预估扣费算出来的：平台对当前还没结算的订单，按最新费率政策预先算好「大概要扣多少点」，我们用它 ÷ 对应 GMV 得到费率。好处是不用等结算，最新的调佣/涨点当下就能看到。窗口截至昨天：当天订单的预估费要到次日才齐全，纳入会被零星样本带偏，故不计当天。"
                 >
                   <Info className="h-3.5 w-3.5" />
                 </InfoTooltip>

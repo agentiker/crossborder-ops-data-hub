@@ -145,3 +145,23 @@ def test_monitor_insufficient_below_gmv_guard(session):
 
     res = get_fee_rate_monitor(session=session, trend_days=3, **_scope())
     assert res["status"] == "insufficient"
+
+
+def test_monitor_excludes_current_day(session):
+    """当天(T)预估近乎为空、单笔高费率会顶高窗口 → 评估窗口与趋势都排除当天，只算到昨天(T-1)。"""
+    # 昨天(T-1=6/23)正常费率 20%（12M GMV）
+    _unsettled_order(session, "u1", gmv=6_000_000, fee=1_200_000, md=EVAL_MD)
+    _unsettled_order(session, "u2", gmv=6_000_000, fee=1_200_000, md=EVAL_MD)
+    # 当天(T=6/24)一笔 50% 极高费率噪声——应被排除，否则 current_rate 会被顶高
+    _unsettled_order(session, "u3", gmv=1_000_000, fee=500_000, md=TODAY)
+    # baseline 20%
+    _settled_order(session, "s1", gmv=6_000_000, fee=1_200_000)
+    _settled_order(session, "s2", gmv=6_000_000, fee=1_200_000)
+    session.commit()
+
+    res = get_fee_rate_monitor(session=session, trend_days=3, **_scope())
+    # 只反映 T-1 的 20%，不含当天 50% 噪声（含则会是 ~22.3%）
+    assert round(res["current_rate"], 4) == 0.20
+    # 趋势最后一点是昨天(T-1)，不是当天(T)
+    assert res["trend"][-1]["date"] == EVAL_MD.isoformat()
+    assert TODAY.isoformat() not in [p["date"] for p in res["trend"]]

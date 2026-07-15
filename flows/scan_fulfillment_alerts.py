@@ -394,12 +394,13 @@ def _scan_unsettled_fee_rate(session, *, account, open_id, scope, scope_id, dry_
 
     与 _scan_fee_rate（结算口径，有滞后）互补：unsettled 反映平台**最新费率政策**，平台一调佣
     预估费率立即变 → **结算前**即可告警（会议痛点'月底才发现突然多收两三个点'）。
-    去重：评估窗口结束日=今天，故每业务日最多报一次（独立 ALERT_TYPE_REALTIME 状态）。
+    去重：评估窗口结束日=昨天(T-1)，故每业务日最多报一次（独立 ALERT_TYPE_REALTIME 状态）。
     """
     today = business_today()
-    # 评估期：最近 N 天未结算预估（无结算滞后）
-    eval_end = today
-    eval_start = today - timedelta(days=settings.fee_rate_realtime_eval_days - 1)
+    # 评估期：最近 N 天未结算预估（无结算滞后）。**结束于昨天(T-1)**：当天(T)预估近乎为空
+    # (≈0%覆盖,次日 01:13 同步才~90%,见 §7.1)，纳入会被单笔高费率误顶高 → 剔除当天。
+    eval_end = today - timedelta(days=1)
+    eval_start = eval_end - timedelta(days=settings.fee_rate_realtime_eval_days - 1)
     # 基准：已结算历史费率（避开滞后段，作稳基准）
     baseline_end = today - timedelta(days=settings.fee_rate_settle_lag_days)
     baseline_start = baseline_end - timedelta(days=settings.fee_rate_baseline_days - 1)
