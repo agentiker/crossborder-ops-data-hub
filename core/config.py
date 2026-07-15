@@ -275,6 +275,14 @@ class Settings(BaseSettings):
     audit_anchor_enabled: bool = True
     audit_anchor_account: str = ""
     audit_anchor_open_id: str = ""
+    # replenishment_cc_*：补货采购单运维抄送——把数据源租户（source_account）的全量补货单，
+    #   用运维 app（cc_account）凭证投递给运维 open_id（cc_open_id）。三者全配才启用，缺一即静默跳过。
+    #   与 alert_recipients 解耦（该表被监控告警共用，直接加行会误把告警也发运维），独立 .env 配置。
+    #   关键约束：飞书 open_id 是 per-app 的——运维 app（main-app）的 open_id 必须用 main-app 凭证投递，
+    #   故投递凭证（cc_account）与取数租户（source_account，客户租户如 ecom-app-gtl）必须分离。
+    replenishment_cc_account: str = ""  # 投递凭证/坐标系，如 main-app
+    replenishment_cc_open_id: str = ""  # 运维飞书 open_id（运维 app 坐标系，如 ou_9be99…）
+    replenishment_cc_source_account: str = ""  # 补货数据来源租户，如 ecom-app-gtl
 
     class Config:
         env_file = ".env"
