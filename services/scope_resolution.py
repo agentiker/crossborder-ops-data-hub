@@ -18,6 +18,7 @@ from sqlalchemy import or_
 from core.db import SessionLocal
 from core.tenancy import DEFAULT_ACCOUNT
 from models.base_models import BusinessScope, PlatformToken
+from services.shop_directory import get_shop_names
 
 
 class ScopeError(ValueError):
@@ -114,12 +115,14 @@ def get_scope(scope_key: str, account_id: str = DEFAULT_ACCOUNT) -> Optional[Bus
 
 
 def expand_scope(scope_key: str, account_id: str = DEFAULT_ACCOUNT) -> ScopeFilters:
-    """把某租户名下一个命名 scope（或 `shop:<shop_id>` 单店伪 scope）展开为 shop_ids 集合。
+    """把某租户名下一个命名 scope（或 `shop:`/`platform:`/`country:` 伪 scope）展开为 shop_ids 集合。
 
-    `shop:` 伪 scope 与看板店铺下拉同一语义（见 web/routes/board._authorize_scope）：不落
-    business_scopes 表、按租户可见店集校验（不可见 → ScopeError，fail-closed）。这里是范围
-    解析唯一收口点，支持它之后 operator 授权(allowed_scope_key)/告警订阅(alert_recipients.
-    scope_key)/管理页校验(expand_scope)全部自动获得「按单店指定」能力。
+    伪 scope（不落 business_scopes 表、按租户可见店集校验，fail-closed）：
+      · `shop:<shop_id>`   → 单店
+      · `platform:<p>`     → 本租户该平台的所有可见店
+      · `country:<c>`      → 本租户该区域的所有可见店
+    这里是范围解析唯一收口点，支持它们之后 operator 授权(allowed_scope_key)/告警订阅
+    (alert_recipients.scope_key)/管理页校验/默认范围绑定全部自动获得「按店/平台/区域指定」能力。
     """
     if scope_key.startswith("shop:"):
         sid = scope_key[len("shop:"):].strip()
@@ -131,6 +134,29 @@ def expand_scope(scope_key: str, account_id: str = DEFAULT_ACCOUNT) -> ScopeFilt
             shop_ids=[sid],
             scope_key=scope_key,
             display_text=_display_text(platform=None, country=None, shop_ids=[sid]),
+        )
+    # `platform:<p>` / `country:<c>` 分组伪 scope（与 shop: 同语义，不落 business_scopes 表）：
+    # 展开为本租户可见店中该平台/区域的店集。空集 → fail-closed。供默认范围切换的自动分组 +
+    # 未来 operator 授权/告警订阅按平台或区域指定，全走此收口点。
+    if scope_key.startswith("platform:"):
+        p = scope_key[len("platform:"):].strip()
+        dims = tenant_shop_dimensions(account_id)
+        sids = sorted(s for s, d in dims.items() if d.get("platform") == p)
+        if not sids:
+            raise ScopeError(f"本租户在平台「{p or '(空)'}」下无可见店铺")
+        return ScopeFilters(
+            platform=p, country=None, shop_ids=sids, scope_key=scope_key,
+            display_text=_display_text(platform=p, country=None, shop_ids=sids),
+        )
+    if scope_key.startswith("country:"):
+        c = scope_key[len("country:"):].strip()
+        dims = tenant_shop_dimensions(account_id)
+        sids = sorted(s for s, d in dims.items() if d.get("country") == c)
+        if not sids:
+            raise ScopeError(f"本租户在区域「{c or '(空)'}」下无可见店铺")
+        return ScopeFilters(
+            platform=None, country=c, shop_ids=sids, scope_key=scope_key,
+            display_text=_display_text(platform=None, country=c, shop_ids=sids),
         )
     scope = get_scope(scope_key, account_id=account_id)
     if scope is None or not scope.is_active:
@@ -191,6 +217,97 @@ def tenant_visible_shop_ids(account_id: str = DEFAULT_ACCOUNT) -> set[str]:
         return owned | scoped
     finally:
         session.close()
+
+
+def tenant_shop_dimensions(account_id: str = DEFAULT_ACCOUNT) -> dict[str, dict]:
+    """本租户可见店 → {"platform", "country"}（取自 platform_tokens）。
+
+    用于默认范围选项的平台/区域自动分组与单店后缀。店铺的平台/区域是其固有属性，
+    按 shop_id 直接查（不按 account 过滤，借用的 scope 店也能取到维度）。无 token 行的店
+    （极少数只挂在 scope 里的）不出现在此映射里——分组时被忽略、不影响正确性。
+    """
+    visible = tenant_visible_shop_ids(account_id)
+    if not visible:
+        return {}
+    session = SessionLocal()
+    try:
+        out: dict[str, dict] = {}
+        for sid, platform, country in (
+            session.query(PlatformToken.shop_id, PlatformToken.platform, PlatformToken.country)
+            .filter(PlatformToken.shop_id.in_(visible))
+            .all()
+        ):
+            if sid and str(sid) not in out:
+                out[str(sid)] = {"platform": platform, "country": country}
+        return out
+    finally:
+        session.close()
+
+
+def list_scope_options(account_id: str = DEFAULT_ACCOUNT) -> list[dict]:
+    """默认范围切换 / 范围列举的规范选项（boss 视角，含平台/区域自动分组 + 逐店）。
+
+    返回 [{key, label, description, scope_type}]，key 即可直接绑定的 scope_key：
+      · 全部店铺（key=""）恒首项 = 本租户可见店并集（单平台/区域时 description 带「平台 区域」）。
+      · 平台组（key=platform:<p>）：本租户跨 ≥2 平台才出，每平台一项。
+      · 区域组（key=country:<c>）：跨 ≥2 区域才出，每区域一项。
+      · 单店（key=shop:<id>，label=店名）：跨多平台或多区域时后缀「· 平台/区域」，单一时只显店名。
+      · 真子集命名 scope（店数 < 全部）才追加；恰好=全部的（如 tts-id-all）跳过，避免与首项重复。
+    **不含「全量」**——它与「全部店铺」同义、纯冗余（历史上由 LLM 脑补加出）。
+    """
+    all_shops = sorted(tenant_visible_shop_ids(account_id))
+    dims = tenant_shop_dimensions(account_id)
+    names = get_shop_names(account_id)
+    platforms = sorted({d["platform"] for d in dims.values() if d.get("platform")})
+    countries = sorted({d["country"] for d in dims.values() if d.get("country")})
+    multi_dim = len(platforms) > 1 or len(countries) > 1
+
+    def _pl(p: Optional[str]) -> Optional[str]:
+        return _PLATFORM_DISPLAY.get(p, p) if p else None
+
+    def _cl(c: Optional[str]) -> Optional[str]:
+        return _COUNTRY_DISPLAY.get(c, c) if c else None
+
+    opts: list[dict] = []
+    # 全部店铺（恒首项）
+    head = " ".join(x for x in [
+        _pl(platforms[0]) if len(platforms) == 1 else None,
+        _cl(countries[0]) if len(countries) == 1 else None,
+    ] if x)
+    all_desc = (f"{head}，" if head else "") + f"{len(all_shops)} 个店铺"
+    opts.append({"key": "", "label": "全部店铺", "description": all_desc, "scope_type": "all"})
+
+    # 平台组 / 区域组（跨多个才出）
+    if len(platforms) > 1:
+        for p in platforms:
+            n = sum(1 for d in dims.values() if d.get("platform") == p)
+            opts.append({"key": f"platform:{p}", "label": f"全部 {_pl(p)}",
+                         "description": f"{n} 个店铺", "scope_type": "platform"})
+    if len(countries) > 1:
+        for c in countries:
+            n = sum(1 for d in dims.values() if d.get("country") == c)
+            opts.append({"key": f"country:{c}", "label": f"全部 {_cl(c)}",
+                         "description": f"{n} 个店铺", "scope_type": "country"})
+
+    # 逐店
+    for sid in all_shops:
+        label = names.get(sid, sid)
+        if multi_dim:
+            d = dims.get(sid, {})
+            tag = "/".join(x for x in [_pl(d.get("platform")), _cl(d.get("country"))] if x)
+            if tag:
+                label = f"{label} · {tag}"
+        opts.append({"key": f"shop:{sid}", "label": label,
+                     "description": None, "scope_type": "shop"})
+
+    # 真子集命名 scope
+    all_set = set(all_shops)
+    for s in list_scopes(account_id):
+        sset = set(s["shop_ids"] or [])
+        if sset and sset < all_set:
+            opts.append({"key": s["scope_key"], "label": s["scope_name"],
+                         "description": f"{len(sset)} 个店铺", "scope_type": "named"})
+    return opts
 
 
 def _validate_shops_authorized(shop_ids: list[str], account_id: str = DEFAULT_ACCOUNT) -> None:

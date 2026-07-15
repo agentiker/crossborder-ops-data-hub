@@ -22,7 +22,7 @@ from services.fulfillment_metrics import get_pending_fulfillments
 from services.order_metrics import get_gmv_summary, get_gmv_trend, get_top_skus
 from services.profit_summary import get_profit_card
 from services.scope_binding import get_binding, set_binding
-from services.scope_resolution import ScopeError, ScopeFilters, list_scopes, resolve_filters
+from services.scope_resolution import ScopeError, ScopeFilters, list_scope_options, resolve_filters
 from services.user_authz import (
     AuthzError,
     UserPermission,
@@ -323,7 +323,8 @@ class ProductResponse(BaseModel):
 class ScopeItem(BaseModel):
     scope_key: str
     scope_name: str
-    scope_type: str
+    scope_type: str  # all / platform / country / shop / named
+    description: Optional[str] = None  # 如 "TikTok Shop 印尼，2 个店铺"
     platform: Optional[str] = None
     country: Optional[str] = None
     shop_ids: list[str] = []
@@ -1002,11 +1003,23 @@ async def get_products(
 
 @router.get("/scopes", response_model=ScopeListResponse, operation_id="ops_scopes")
 async def get_scopes():
-    """列出本租户启用的业务范围（scope）。用于 agent 在用户问"有哪些范围"时回答。"""
-    scopes = list_scopes(current_account())
+    """列出本租户可切换的默认查询范围（供 agent 在"切换默认范围"/"有哪些范围"时呈现）。
+
+    返回规范化选项：全部店铺 + 平台/区域自动分组（跨多平台/区域时才出）+ 逐店（店名，多平台/
+    区域时带「· 平台/区域」后缀）+ 真子集命名范围。**请照此列表原样呈现给用户（label + description），
+    不要自造"全量"等未列出的选项——"全部店铺"已等同全量**。用户选定后用其 `scope_key` 调
+    `ops_set_scope_binding` 写入默认范围（空 `scope_key` = 全部店铺）。
+    """
+    opts = list_scope_options(current_account())
     return ScopeListResponse(
-        items=[ScopeItem(**s) for s in scopes],
-        total=len(scopes),
+        items=[
+            ScopeItem(
+                scope_key=o["key"], scope_name=o["label"],
+                scope_type=o["scope_type"], description=o.get("description"),
+            )
+            for o in opts
+        ],
+        total=len(opts),
     )
 
 
