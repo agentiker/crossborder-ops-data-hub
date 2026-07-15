@@ -13,7 +13,7 @@ set -uo pipefail
 
 UNIT="${1:-unknown.service}"
 ACCOUNT="${NOTIFY_ACCOUNT:-main-app}"
-TARGET_OPENID="${NOTIFY_OPENID:-ou_1f34f67729d2326f69005c1097e28cdb}"
+TARGET_OPENID="${NOTIFY_OPENID:-ou_9be99e1b5948d895c1775d27b9876d0e}"
 
 # openclaw 路径：环境优先，否则 PATH，否则探测 nvm（systemd PATH 不含 nvm）。
 OPENCLAW="${OPENCLAW_BIN:-}"
