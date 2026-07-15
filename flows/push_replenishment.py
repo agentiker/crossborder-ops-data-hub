@@ -1,14 +1,14 @@
-"""补货采购单定时推送 flow（飞书直投，0 经 LLM）。
+"""补货采购单定时推送 flow（飞书卡片直投，0 经 LLM）。
 
 与监控告警同构、复用同一收件人表与飞书直投：按 alert_recipients 逐收件人，按其租户/范围算
-补货建议（compute_replenishment），组装采购单文案（replenishment_report）直投飞书私聊。
-日级 digest，无去重游标（每次发当前快照）；无待补货 SKU 不发空单。
+补货建议（compute_replenishment），组装采购单卡片（replenishment_card_builder，与日报/告警
+同一套 CardKit 风格）直投飞书私聊；卡片投递失败回落 openclaw 文本（同告警 send_alert 链路，
+凭证缺失/JSON 错时不丢消息）。日级 digest，无去重游标（每次发当前快照）；无待补货 SKU 不发空单。
 
-触发：systemd user timer，每日凌晨一次（见 deploy/systemd/data-push-replenishment.*）。
-在途 MVP=0（马帮未接通），文案已提示。
+触发：systemd user timer，每日 09:30 一次（见 deploy/systemd/data-push-replenishment.*）。
+在途 MVP=0（马帮未接通），卡片已提示。
 """
 import logging
-from typing import Optional
 
 from core.config import settings
 
@@ -22,10 +22,34 @@ from services.replenishment_config import get_effective_config
 from services.replenishment_report import build_replenishment_message
 from services.scope_resolution import resolve_filters
 from core.db import SessionLocal
+from web.feishu_card_sender import send_interactive_card
+from web.replenishment_card_builder import build_replenishment_card
+
+
+def _deliver(*, account: str, open_id: str, card, text: str, dry_run: bool,
+             label: str, n: int) -> str:
+    """卡片优先投递；失败回落 openclaw 文本（同告警 send_alert 链路）。
+
+    卡片投递（send_interactive_card）失败原因：飞书 app 凭证未配（如运维 main-app 未进
+    FEISHU_OAUTH__APPS）/ 卡片 JSON 字段错 / 网络——任一失败回落文本，绝不丢消息。
+    """
+    if dry_run:
+        print(f"[replenish][dry-run] → {label} {account}/{open_id}:\n{text}")
+        return f"{label}: 待推送 {n} SKU（dry-run）"
+    if card:
+        try:
+            send_interactive_card(account, open_id, card)
+            return f"{label}: 已推送 {n} SKU（卡片）"
+        except Exception as exc:  # 卡片失败 → 回落文本
+            print(f"[replenish] 卡片投递失败，回落文本 ({account}): {exc}")
+    sent = send_feishu_message(account=account, open_id=open_id, text=text)
+    if sent:
+        return f"{label}: 已推送 {n} SKU（{'文本回落' if card else '文本'}）"
+    return f"{label}: 推送失败"
 
 
 def _push_one(recipient: dict, *, dry_run: bool) -> str:
-    """为一个收件人算补货并（必要时）投递采购单。返回一行状态。"""
+    """为一个收件人算补货并（必要时）投递采购单卡片。返回一行状态。"""
     account = recipient["account"]
     open_id = recipient["open_id"]
     scope_id = recipient.get("scope_id")
@@ -48,24 +72,18 @@ def _push_one(recipient: dict, *, dry_run: bool) -> str:
     finally:
         session.close()
 
-    message = build_replenishment_message(
-        rows,
+    common = dict(
         scope_display=scope.display_text,
         date_label=f"{today.month}/{today.day}",
         velocity_days=cfg.velocity_days,
         intransit_connected=False,
     )
-    if not message:
+    text = build_replenishment_message(rows, **common)
+    if not text:
         return f"{account}/补货: 无待补货 SKU，不推送"
-
-    if dry_run:
-        print(f"[replenish][dry-run] → {account}/{open_id}:\n{message}")
-        return f"{account}/补货: 待推送 {len(rows)} SKU（dry-run）"
-
-    sent = send_feishu_message(account=account, open_id=open_id, text=message)
-    if sent:
-        return f"{account}/补货: 已推送 {len(rows)} SKU"
-    return f"{account}/补货: 推送失败"
+    card = build_replenishment_card(rows, **common)
+    return _deliver(account=account, open_id=open_id, card=card, text=text,
+                    dry_run=dry_run, label=f"{account}/补货", n=len(rows))
 
 
 def _push_cc(*, dry_run: bool) -> str:
@@ -100,24 +118,18 @@ def _push_cc(*, dry_run: bool) -> str:
     finally:
         session.close()
 
-    message = build_replenishment_message(
-        rows,
+    common = dict(
         scope_display=scope.display_text,
         date_label=f"{today.month}/{today.day}",
         velocity_days=cfg.velocity_days,
         intransit_connected=False,
     )
-    if not message:
+    text = build_replenishment_message(rows, **common)
+    if not text:
         return f"运维抄送({cc_account}): 无待补货 SKU，不推送"
-
-    if dry_run:
-        print(f"[replenish][dry-run] → 抄送 {cc_account}/{cc_open_id}:\n{message}")
-        return f"运维抄送({cc_account}): 待推送 {len(rows)} SKU（dry-run）"
-
-    sent = send_feishu_message(account=cc_account, open_id=cc_open_id, text=message)
-    if sent:
-        return f"运维抄送({cc_account}): 已推送 {len(rows)} SKU"
-    return f"运维抄送({cc_account}): 推送失败"
+    card = build_replenishment_card(rows, **common)
+    return _deliver(account=cc_account, open_id=cc_open_id, card=card, text=text,
+                    dry_run=dry_run, label=f"运维抄送({cc_account})", n=len(rows))
 
 
 def push_replenishment_flow(dry_run: bool = False):

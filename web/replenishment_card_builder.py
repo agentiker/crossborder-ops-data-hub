@@ -1,0 +1,110 @@
+"""补货采购单 → 飞书 v2 CardKit 卡片 JSON（后端确定性拼装）。
+
+与日报 report_card_builder / 告警 alert_card_builder 同一套 CardKit 组件与方案A深色系
+风格——**复用 alert_card_builder 的通用组件**（_md/_hr/_table/_kpi_columns/_card），
+不重造轮子。补货是「建议采购」非告急/喜报，用 indigo 头；明细用 table 对齐
+销量/库存/补货量，超级爆品行首标 🔥。纯函数无副作用，便于单测。
+
+投递：push_replenishment 优先 send_interactive_card（卡片），失败回落 send_feishu_message
+（openclaw 文本）——与告警 send_alert 同链路、同回退策略，凭证缺失/卡片 JSON 错时仍能发文本不丢消息。
+"""
+from __future__ import annotations
+
+from typing import Optional
+
+# 复用告警卡片的通用 CardKit 组件（_前缀=模块私有，但同属卡片层，跨 builder 复用）。
+# 未来若再添卡片 builder，宜提取共享 card_kit 模块；当前仅补货一处复用，避免动 report/alert 引入回归。
+from web.alert_card_builder import (
+    TEMPLATE_WARNING,
+    _card,
+    _hr,
+    _kpi_columns,
+    _md,
+    _table,
+)
+
+_NAME_MAX = 24  # 同 replenishment_report：截商品名，色/码永远完整保留（采购单据此下单）
+_TOP_ITEMS = 15  # 卡片表格最多列几行，其余汇总（同文本版 _TOP_ITEMS）
+
+
+def _item_name(row: dict) -> str:
+    """商品行标签：'款号 / 颜色 / 尺码'，超长截名不截色码；超级爆品行首加 🔥。"""
+    name = row.get("product_name") or row.get("seller_sku") or row.get("sku_id") or "未知"
+    if len(name) > _NAME_MAX:
+        name = name[:_NAME_MAX] + "…"
+    parts = [name]
+    if row.get("color"):
+        parts.append(str(row["color"]))
+    if row.get("size"):
+        parts.append(str(row["size"]))
+    label = " / ".join(parts)
+    if row.get("is_super_hot"):
+        label = "🔥 " + label
+    return label
+
+
+def build_replenishment_card(
+    rows: list[dict],
+    *,
+    scope_display: str,
+    date_label: str,
+    velocity_days: int,
+    intransit_connected: bool = False,
+) -> Optional[dict]:
+    """补货采购单 → CardKit 卡片 JSON。无待补货 SKU 返回 None（调用方不发空单）。
+
+    rows = compute_replenishment 的输出行（已按补货量降序），每行含 product_name/color/
+    size/units/available/replenish_qty/is_super_hot。
+    """
+    if not rows:
+        return None
+    total_qty = sum(int(r.get("replenish_qty") or 0) for r in rows)
+    elements: list[dict] = [
+        _md(f"共 <font color='red'>**{len(rows)}**</font> 个 SKU 待补货，"
+            f"合计 <font color='red'>**{total_qty}**</font> 件"
+            f"<font color='grey'>（按近 {velocity_days} 天销量测算）</font>"),
+        _kpi_columns([("待补 SKU", f"{len(rows)}"), ("合计", f"{total_qty} 件"),
+                      ("测算窗口", f"{velocity_days} 天")]),
+    ]
+
+    show = rows[:_TOP_ITEMS]
+    if show:
+        elements.append(_hr())
+        table_rows = [
+            {
+                "name": _item_name(r),
+                "sold": str(int(r.get("units") or 0)),
+                "stock": str(int(r.get("available") or 0)),
+                "qty": str(int(r.get("replenish_qty") or 0)),
+            }
+            for r in show
+        ]
+        # 列宽：商品名占大头，销量/库存/补货量右对齐数字。options 列留作状态标，补货量用 text。
+        elements.append(_table(
+            [
+                {"name": "name", "display_name": "商品", "data_type": "text",
+                 "width": "46%", "horizontal_align": "left"},
+                {"name": "sold", "display_name": "销量", "data_type": "text",
+                 "width": "16%", "horizontal_align": "right"},
+                {"name": "stock", "display_name": "库存", "data_type": "text",
+                 "width": "16%", "horizontal_align": "right"},
+                {"name": "qty", "display_name": "补货", "data_type": "text",
+                 "width": "22%", "horizontal_align": "right"},
+            ],
+            table_rows,
+        ))
+        omitted = len(rows) - len(show)
+        if omitted > 0:
+            elements.append(_md(f"<font color='grey'>另有 {omitted} 个 SKU 未列出，回复运营看完整清单。</font>"))
+
+    elements.append(_hr())
+    if not intransit_connected:
+        elements.append(_md(
+            "<font color='orange'>⚠️ 在途按 0 估（采购在途数据未接通），"
+            "请结合实际在途量调整补货数。</font>"
+        ))
+    elements.append(_md(
+        f"<font color='grey'>🕐 {date_label} · 🔥=超级爆品（已用更高系数）"
+        "· 如需改数量/跳过/标爆品，回复运营</font>"
+    ))
+    return _card(TEMPLATE_WARNING, "📦 补货采购单", scope_display, elements)
