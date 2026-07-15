@@ -44,6 +44,12 @@ def _pack(row) -> dict:
         "order_count": int(row.order_count or 0),
         "units_sold": int(row.units_sold or 0),
         "profit_margin": round(gross / gmv * 100, 1) if gmv else None,
+        "commission_fee_source": "official",
+        "commission_fee_source_label": "TikTok官方费用",
+        "commission_fee_rate": None,
+        "commission_fee_coverage_order_count": None,
+        "commission_fee_coverage_order_ratio": None,
+        "commission_fee_baseline_window": None,
     }
 
 
@@ -58,6 +64,12 @@ def _empty_pack() -> dict:
         "order_count": 0,
         "units_sold": 0,
         "profit_margin": None,
+        "commission_fee_source": None,
+        "commission_fee_source_label": None,
+        "commission_fee_rate": None,
+        "commission_fee_coverage_order_count": None,
+        "commission_fee_coverage_order_ratio": None,
+        "commission_fee_baseline_window": None,
     }
 
 
@@ -72,16 +84,55 @@ def _pack_record(record: ProfitRecordInput) -> dict:
         "order_count": int(record.order_count or 0),
         "units_sold": int(record.units_sold or 0),
         "profit_margin": None,
+        "commission_fee_source": record.commission_fee_source,
+        "commission_fee_source_label": record.commission_fee_source_label,
+        "commission_fee_rate": (
+            float(record.commission_fee_rate)
+            if record.commission_fee_rate is not None else None
+        ),
+        "commission_fee_coverage_order_count": record.commission_fee_coverage_order_count,
+        "commission_fee_coverage_order_ratio": (
+            float(record.commission_fee_coverage_order_ratio)
+            if record.commission_fee_coverage_order_ratio is not None else None
+        ),
+        "commission_fee_baseline_window": record.commission_fee_baseline_window,
     }
 
 
 def _add_pack(left: Optional[dict], right: dict) -> dict:
     result = dict(left or _empty_pack())
+    left_source = result.get("commission_fee_source")
     for key in _SUM_COLUMNS:
         result[key] = result.get(key, 0) + right.get(key, 0)
     gmv = result["gmv"]
     gross = result["gross_profit"]
     result["profit_margin"] = round(gross / gmv * 100, 1) if gmv else None
+    source = right.get("commission_fee_source")
+    if source == "historical_settled_rate_estimate":
+        result["commission_fee_source"] = source
+        result["commission_fee_source_label"] = right.get("commission_fee_source_label")
+        result["commission_fee_rate"] = right.get("commission_fee_rate")
+        result["commission_fee_baseline_window"] = right.get("commission_fee_baseline_window")
+        if left_source != "historical_settled_rate_estimate":
+            result["commission_fee_coverage_order_count"] = right.get(
+                "commission_fee_coverage_order_count"
+            )
+            result["commission_fee_coverage_order_ratio"] = right.get(
+                "commission_fee_coverage_order_ratio"
+            )
+            return result
+    elif result.get("commission_fee_source") is None and source:
+        result["commission_fee_source"] = source
+        result["commission_fee_source_label"] = right.get("commission_fee_source_label")
+    if right.get("commission_fee_coverage_order_count") is not None:
+        result["commission_fee_coverage_order_count"] = (
+            (result.get("commission_fee_coverage_order_count") or 0)
+            + right["commission_fee_coverage_order_count"]
+        )
+    if result.get("order_count"):
+        covered = result.get("commission_fee_coverage_order_count")
+        if covered is not None:
+            result["commission_fee_coverage_order_ratio"] = covered / result["order_count"]
     return result
 
 

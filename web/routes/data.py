@@ -195,6 +195,12 @@ class ProfitSummary(BaseModel):
     gmv: float = 0.0
     gross_profit: float = 0.0
     commission_fee: float = 0.0
+    commission_fee_source: Optional[str] = None
+    commission_fee_source_label: Optional[str] = None
+    commission_fee_rate: Optional[float] = None
+    commission_fee_coverage_order_count: Optional[int] = None
+    commission_fee_coverage_order_ratio: Optional[float] = None
+    commission_fee_baseline_window: Optional[str] = None
     ad_cost: float = 0.0
     product_cost: float = 0.0
     refund_amount: float = 0.0
@@ -615,6 +621,12 @@ async def get_profit(
         gmv=est.get("gmv", 0.0),
         gross_profit=est.get("gross_profit", 0.0),
         commission_fee=est.get("commission_fee", 0.0),
+        commission_fee_source=est.get("commission_fee_source"),
+        commission_fee_source_label=est.get("commission_fee_source_label"),
+        commission_fee_rate=est.get("commission_fee_rate"),
+        commission_fee_coverage_order_count=est.get("commission_fee_coverage_order_count"),
+        commission_fee_coverage_order_ratio=est.get("commission_fee_coverage_order_ratio"),
+        commission_fee_baseline_window=est.get("commission_fee_baseline_window"),
         ad_cost=est.get("ad_cost", 0.0),
         product_cost=est.get("product_cost", 0.0),
         refund_amount=est.get("refund_amount", 0.0),

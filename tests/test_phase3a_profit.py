@@ -218,6 +218,55 @@ def test_compute_daily_profit(session, monkeypatch):
     assert rec.order_count == 3 and rec.units_sold == 5
 
 
+def test_compute_daily_profit_today_estimates_commission_when_official_fee_lags(session, monkeypatch):
+    """当天官方扣点覆盖不足时，用历史已结算非广告扣点率估算扣点。"""
+    import services.profit_aggregation as PA
+
+    monkeypatch.setattr(PA, "business_today", lambda: D)
+    monkeypatch.setattr(PA, "convert_idr_to_rmb",
+                        lambda amt, on_date=None: (Decimal("0") if amt is None
+                                                   else Decimal(str(amt)) * Decimal("0.00045")))
+    monkeypatch.setattr(PA.order_metrics, "get_gmv_summary",
+                        lambda **k: {"gmv": 10_000_000, "order_count": 100, "units_sold": 100})
+    monkeypatch.setattr(PA.order_metrics, "get_units_by_seller_sku", lambda **k: {})
+
+    # 历史已结算窗口内：20M GMV，非广告扣点 4M → 历史扣点率 20%。
+    for i in range(2):
+        oid = f"H{i}"
+        session.add(OrderHeader(
+            platform="tiktok_shop", country="GLOBAL", shop_id="S1", account_id=ACC,
+            order_id=oid, idempotency_key=f"hist-{oid}", currency="IDR",
+            total_amount=Decimal("10000000"), paid_time=datetime(2026, 6, 1, 5, 0),
+        ))
+        session.add(FactFinanceTransaction(
+            platform="tiktok_shop", country="GLOBAL", shop_id="S1", account_id=ACC,
+            scope_key=f"hist-fee-{oid}", transaction_id=f"hist-fee-{oid}", order_id=oid,
+            metric_date=date(2026, 6, 1), currency="IDR",
+            fee_tax_amount=Decimal("2100000"), gmv_max_fee=Decimal("100000"),
+        ))
+
+    # 当天官方费用只覆盖 1/100 单，不能直接把 1 单扣点当全天扣点。
+    dim = dict(platform="tiktok_shop", country="GLOBAL", shop_id="S1",
+               seller_id=None, account_id=ACC, metric_date=D)
+    session.add(FactUnsettledFee(
+        scope_key="today-u-1", transaction_id="today-u-1", order_id="T1",
+        estimated_fee_amount=Decimal("999"), **dim,
+    ))
+    session.commit()
+
+    rec = PA.compute_daily_profit(
+        metric_date=D, platform="tiktok_shop", country="GLOBAL",
+        shop_id="S1", seller_id=None, account_id=ACC, session=session,
+    )
+    # 扣点(IDR) = 当天 GMV 10,000,000 × 历史非广告扣点率 20%。
+    assert rec.commission_fee == Decimal("2000000") * Decimal("0.00045")
+    assert rec.commission_fee_source == "historical_settled_rate_estimate"
+    assert rec.commission_fee_rate == Decimal("0.2")
+    assert rec.commission_fee_coverage_order_count == 1
+    assert rec.commission_fee_coverage_order_ratio == Decimal("0.01")
+    assert rec.commission_fee_baseline_window
+
+
 # ── 6b. 下单口径 GMV（COD：扣点-GMV 同队列）──────────────────────────────────
 def test_gmv_summary_by_create_includes_cod_excludes_cancelled(session, monkeypatch):
     """下单口径(by_create)含未付款 COD 在途单、排除 CANCELLED；付款口径仅计已付款。"""

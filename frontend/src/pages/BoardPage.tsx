@@ -888,6 +888,32 @@ function ProfitCard({
     },
   ];
   const marginPct = est?.profit_margin ?? pctOf(est?.gross_profit);
+  const commissionEstimated = est?.commission_fee_source === "historical_settled_rate_estimate";
+  const commissionRatePct =
+    est?.commission_fee_rate != null ? `${(est.commission_fee_rate * 100).toFixed(1)}%` : null;
+  const commissionCoveragePct =
+    est?.commission_fee_coverage_order_ratio != null
+      ? `${(est.commission_fee_coverage_order_ratio * 100).toFixed(0)}%`
+      : null;
+  const commissionInfo = commissionEstimated ? (
+    <InfoTooltip
+      align="start"
+      content={`TikTok 官方当天扣点通常次日凌晨才基本同步完整。当前官方费用覆盖不足${
+        commissionCoveragePct ? `（约 ${commissionCoveragePct} 订单）` : ""
+      }，本行用历史已结算扣点率${commissionRatePct ? `（${commissionRatePct}）` : ""}估算${
+        est?.commission_fee_baseline_window ? `，基准窗口 ${est.commission_fee_baseline_window}` : ""
+      }。次日聚合后会切回官方费用。`}
+    >
+      <Info className="h-3.5 w-3.5" />
+    </InfoTooltip>
+  ) : (
+    <InfoTooltip
+      align="start"
+      content="扣点取自 TikTok 官方费用数据：未结算预估费用 + 已结算真实费用，并剔除广告费避免重复扣减。"
+    >
+      <Info className="h-3.5 w-3.5" />
+    </InfoTooltip>
+  );
 
   // 一行分项：淡比例条铺底 + 名称 + 金额 + 占比%。tone 决定底色/字色（base 基数 / cost 扣减 / profit 利润）。
   // onClick 可选：传入则整行可点击（hover 变色 + 光标 + 尾部箭头提示），用于下钻到相关卡片（如扣点→费率监控）。
@@ -970,6 +996,12 @@ function ProfitCard({
 
   // 提示区：统一成低权重图标行（暖色只落在小图标、文字用深前景色，避免暖白底浅色文字 washed-out）。
   const notes: { icon: ReactNode; text: ReactNode }[] = [];
+  if (commissionEstimated) {
+    notes.push({
+      icon: <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-info" />,
+      text: "今日官方扣点尚未完整同步，扣点暂按历史已结算费率估算。",
+    });
+  }
   if (coverageIncomplete) {
     const missing = (p?.expected_days ?? 0) - (p?.covered_days ?? 0);
     notes.push({
@@ -1071,7 +1103,7 @@ function ProfitCard({
                 value={d.value}
                 pct={pctOf(d.value)}
                 tone="cost"
-                info={"info" in d ? d.info : undefined}
+                info={d.label === "扣点" ? commissionInfo : "info" in d ? d.info : undefined}
                 onClick={"onClick" in d ? d.onClick : undefined}
               />
             ))}

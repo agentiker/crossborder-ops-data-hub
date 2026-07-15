@@ -337,6 +337,12 @@ export interface ProfitBreakdown {
   gmv: number;
   gross_profit: number;
   commission_fee: number;
+  commission_fee_source?: string | null;
+  commission_fee_source_label?: string | null;
+  commission_fee_rate?: number | null;
+  commission_fee_coverage_order_count?: number | null;
+  commission_fee_coverage_order_ratio?: number | null;
+  commission_fee_baseline_window?: string | null;
   ad_cost: number;
   product_cost: number;
   refund_amount: number;

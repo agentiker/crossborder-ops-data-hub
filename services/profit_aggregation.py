@@ -18,21 +18,24 @@ estimated_fee_amount 同此口径。沙箱无数据，符号/字段命名以 hp 
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import func
 
 from analytics.profit_alerts import ProfitRecordInput
+from core.config import settings
 from core.db import SessionLocal
-from models.base_models import FactFinanceTransaction, FactUnsettledFee
+from core.timezone import business_today, paid_window_utc
+from models.base_models import FactFinanceTransaction, FactUnsettledFee, OrderHeader
 from services import order_metrics, product_cost_store, refund_metrics, return_rate
 from services.fx_rate import convert_idr_to_rmb
 
 logger = logging.getLogger(__name__)
 
 _AD_COLS = ("gmv_max_fee", "tap_commission", "affiliate_commission")
+_TODAY_OFFICIAL_FEE_MIN_ORDER_COVERAGE = Decimal("0.50")
 
 
 def _D(value) -> Decimal:
@@ -99,6 +102,101 @@ def _settled_fees(session, metric_date, exclude_order_ids, *, platform, country,
     fee_total = _D(row[0])
     ads_total = sum((_D(v) for v in row[1:]), Decimal("0"))
     return fee_total - ads_total, ads_total
+
+
+def _settled_fee_order_ids(
+    session, metric_date, exclude_order_ids, *, platform, country, shop_id, seller_id, account_id
+) -> set[str]:
+    q = session.query(FactFinanceTransaction.order_id).filter(
+        FactFinanceTransaction.platform == platform,
+        FactFinanceTransaction.metric_date == metric_date,
+    )
+    q = _scope(q, FactFinanceTransaction, platform=platform, country=country,
+               shop_id=shop_id, seller_id=seller_id, account_id=account_id)
+    if exclude_order_ids:
+        q = q.filter(
+            (FactFinanceTransaction.order_id.is_(None))
+            | (FactFinanceTransaction.order_id.notin_(exclude_order_ids))
+        )
+    return {oid for (oid,) in q.all() if oid}
+
+
+def _historical_settled_commission_rate(
+    session,
+    *,
+    as_of: date,
+    platform: str,
+    country: str,
+    shop_id: Optional[str],
+    seller_id: Optional[str],
+    account_id: Optional[str],
+) -> Optional[dict]:
+    """用已结算历史订单估算非广告扣点率（扣点，不含广告费）。
+
+    当天 TikTok 未结算费用通常要次日凌晨才基本同步完整。若当天只有少量官方费用行，
+    利润卡用它会把扣点压到接近 0；此时用结算完整窗口的历史扣点率作为当天占位估算。
+    """
+    baseline_end = as_of - timedelta(days=settings.fee_rate_settle_lag_days)
+    baseline_start = baseline_end - timedelta(days=settings.fee_rate_baseline_days - 1)
+    start_dt, end_dt = paid_window_utc(baseline_start, baseline_end)
+
+    order_q = session.query(
+        OrderHeader.order_id,
+        OrderHeader.currency,
+        OrderHeader.total_amount,
+    ).filter(
+        OrderHeader.paid_time.isnot(None),
+        OrderHeader.paid_time >= start_dt,
+        OrderHeader.paid_time <= end_dt,
+    )
+    order_q = _scope(order_q, OrderHeader, platform=platform, country=country,
+                     shop_id=shop_id, seller_id=seller_id, account_id=account_id)
+    orders = order_q.all()
+    if not orders:
+        return None
+    gmv_by_order = {oid: (ccy, _D(amt)) for oid, ccy, amt in orders if oid}
+    if not gmv_by_order:
+        return None
+
+    fee_q = session.query(
+        FactFinanceTransaction.order_id,
+        func.sum(
+            func.coalesce(FactFinanceTransaction.fee_tax_amount, 0)
+            - func.coalesce(FactFinanceTransaction.gmv_max_fee, 0)
+            - func.coalesce(FactFinanceTransaction.tap_commission, 0)
+            - func.coalesce(FactFinanceTransaction.affiliate_commission, 0)
+        ).label("commission_fee"),
+    ).filter(FactFinanceTransaction.order_id.in_(list(gmv_by_order)))
+    fee_q = _scope(fee_q, FactFinanceTransaction, platform=platform, country=country,
+                   shop_id=shop_id, seller_id=seller_id, account_id=account_id)
+    fee_q = fee_q.group_by(FactFinanceTransaction.order_id)
+
+    buckets: dict[str, dict] = {}
+    for oid, fee in fee_q.all():
+        ccy, gmv = gmv_by_order.get(oid, (None, Decimal("0")))
+        if not ccy or gmv <= 0:
+            continue
+        agg = buckets.setdefault(
+            ccy, {"gmv": Decimal("0"), "commission_fee": Decimal("0"), "order_count": 0}
+        )
+        agg["gmv"] += gmv
+        agg["commission_fee"] += _D(fee)
+        agg["order_count"] += 1
+    if not buckets:
+        return None
+
+    currency, agg = max(buckets.items(), key=lambda kv: kv[1]["gmv"])
+    if agg["gmv"] < Decimal(str(settings.fee_rate_min_gmv)):
+        return None
+    if agg["commission_fee"] <= 0:
+        return None
+    return {
+        "currency": currency,
+        "rate": agg["commission_fee"] / agg["gmv"],
+        "gmv": agg["gmv"],
+        "order_count": agg["order_count"],
+        "window": f"{baseline_start.isoformat()}~{baseline_end.isoformat()}",
+    }
 
 
 def unsettled_open_count(session, metric_date, *, platform, country, shop_id, seller_id, account_id) -> int:
@@ -168,6 +266,40 @@ def compute_daily_profit(
             )
             commission_idr = un_fee + st_fee
             ad_idr = un_ads + st_ads
+            official_fee_order_ids = un_orders | _settled_fee_order_ids(
+                session, metric_date, un_orders, platform=platform, country=country,
+                shop_id=shop_id, seller_id=seller_id, account_id=account_id,
+            )
+            commission_fee_source = "official"
+            commission_fee_source_label = "TikTok官方费用"
+            commission_fee_rate = None
+            commission_fee_baseline_window = None
+            coverage_order_count = len(official_fee_order_ids)
+            coverage_ratio = (
+                Decimal(coverage_order_count) / Decimal(order_count)
+                if order_count > 0 else None
+            )
+            if (
+                metric_date == business_today()
+                and order_count > 0
+                and coverage_ratio is not None
+                and coverage_ratio < _TODAY_OFFICIAL_FEE_MIN_ORDER_COVERAGE
+            ):
+                historical = _historical_settled_commission_rate(
+                    session,
+                    as_of=metric_date,
+                    platform=platform,
+                    country=country,
+                    shop_id=shop_id,
+                    seller_id=seller_id,
+                    account_id=account_id,
+                )
+                if historical:
+                    commission_idr = gmv_idr * historical["rate"]
+                    commission_fee_source = "historical_settled_rate_estimate"
+                    commission_fee_source_label = "历史已结算扣点率估算"
+                    commission_fee_rate = historical["rate"]
+                    commission_fee_baseline_window = historical["window"]
 
         # 产品成本（RMB，不折）：按 seller_sku 销量 × 单位成本
         units_by_sku = order_metrics.get_units_by_seller_sku(
@@ -227,6 +359,23 @@ def compute_daily_profit(
             refund_amount=convert_idr_to_rmb(refund_idr, metric_date),
             currency="CNY",
             profit_kind=kind,
+            commission_fee_source=(
+                "official" if kind == "settled" else commission_fee_source
+            ),
+            commission_fee_source_label=(
+                "TikTok官方费用" if kind == "settled" else commission_fee_source_label
+            ),
+            commission_fee_rate=(None if kind == "settled" else commission_fee_rate),
+            commission_fee_coverage_order_count=(
+                order_count if kind == "settled" else coverage_order_count
+            ),
+            commission_fee_coverage_order_ratio=(
+                Decimal("1") if kind == "settled" and order_count > 0 else
+                (None if kind == "settled" else coverage_ratio)
+            ),
+            commission_fee_baseline_window=(
+                None if kind == "settled" else commission_fee_baseline_window
+            ),
         )
     finally:
         if own:

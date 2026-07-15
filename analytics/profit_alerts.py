@@ -62,6 +62,14 @@ class ProfitRecordInput:
     # profit_kind 纳入 scope_key，使同日同店的预估行与真实回填行（3b）并存、互不覆盖。
     currency: str = "CNY"
     profit_kind: str = "estimated"
+    # 展示/解释元信息：不参与 scope_key 或落库公式。用于当天官方费用尚未覆盖时，
+    # 告知前端扣点是否来自历史已结算费率估算。
+    commission_fee_source: str = "official"
+    commission_fee_source_label: str = "TikTok官方费用"
+    commission_fee_rate: Optional[Decimal] = None
+    commission_fee_coverage_order_count: int = 0
+    commission_fee_coverage_order_ratio: Optional[Decimal] = None
+    commission_fee_baseline_window: Optional[str] = None
 
 
 def calculate_profit_metrics(inputs: ProfitInputs) -> ProfitMetrics:
