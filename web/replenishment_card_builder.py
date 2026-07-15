@@ -103,8 +103,5 @@ def build_replenishment_card(
             "<font color='orange'>⚠️ 在途按 0 估（采购在途数据未接通），"
             "请结合实际在途量调整补货数。</font>"
         ))
-    elements.append(_md(
-        f"<font color='grey'>🕐 {date_label} · 🔥=超级爆品（已用更高系数）"
-        "· 如需改数量/跳过/标爆品，回复运营</font>"
-    ))
+    elements.append(_md(f"<font color='grey'>🕐 {date_label}</font>"))
     return _card(TEMPLATE_WARNING, "📦 补货采购单", scope_display, elements)
