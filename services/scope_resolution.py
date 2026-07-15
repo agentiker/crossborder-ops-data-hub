@@ -398,10 +398,10 @@ def resolve_filters(
         country=country,
         shop_ids=visible,
         scope_key=None,
-        # platform/country 仍透传过滤；display 在有维度词时显示维度，否则「全部范围」。
+        # platform/country 仍透传过滤；display 在有维度词时显示维度，否则「全部店铺」。
         display_text=(
             _display_text(platform=platform, country=country, shop_ids=[])
             if (platform or country)
-            else "全部范围"
+            else "全部店铺"
         ),
     )

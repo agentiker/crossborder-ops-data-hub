@@ -24,7 +24,6 @@ from web.alert_card_builder import (
 )
 
 _NAME_MAX = 24  # 同 replenishment_report：截商品名，色/码永远完整保留（采购单据此下单）
-_TOP_ITEMS = 15  # 卡片表格最多列几行，其余汇总（同文本版 _TOP_ITEMS）
 
 
 def _item_name(row: dict) -> str:
@@ -67,8 +66,7 @@ def build_replenishment_card(
                       ("测算窗口", f"{velocity_days} 天")]),
     ]
 
-    show = rows[:_TOP_ITEMS]
-    if show:
+    if rows:
         elements.append(_hr())
         table_rows = [
             {
@@ -77,7 +75,7 @@ def build_replenishment_card(
                 "stock": str(int(r.get("available") or 0)),
                 "qty": str(int(r.get("replenish_qty") or 0)),
             }
-            for r in show
+            for r in rows
         ]
         # 列宽：商品名占大头，销量/库存/补货量右对齐数字。options 列留作状态标，补货量用 text。
         elements.append(_table(
@@ -93,9 +91,6 @@ def build_replenishment_card(
             ],
             table_rows,
         ))
-        omitted = len(rows) - len(show)
-        if omitted > 0:
-            elements.append(_md(f"<font color='grey'>另有 {omitted} 个 SKU 未列出，回复运营看完整清单。</font>"))
 
     elements.append(_hr())
     if not intransit_connected:
