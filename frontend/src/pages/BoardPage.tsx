@@ -238,7 +238,18 @@ export function BoardPage() {
             onChange={setPlatform}
             options={PLATFORMS}
           />
-          {canSwitch && (
+          {/* 店铺筛选先占位：/board/scopes 异步返回前渲染禁用占位（避免按钮"迟到"蹦出、挤动日期选择器），
+              返回后原地替换为真下拉（boss 可切换）或收起（operator 不可切换）。 */}
+          {scopeOpts === null ? (
+            <FilterSelect
+              icon={<Store size={12} />}
+              label="店铺"
+              value=""
+              onChange={() => {}}
+              options={[{ value: "", label: "全部店铺" }]}
+              disabled
+            />
+          ) : canSwitch ? (
             <FilterSelect
               icon={<Store size={12} />}
               label="店铺"
@@ -246,7 +257,7 @@ export function BoardPage() {
               onChange={setScope}
               options={scopes.map((s) => ({ value: s.key || "", label: s.label }))}
             />
-          )}
+          ) : null}
           <DateRangePicker value={range} onChange={setRange} />
           {data?.scope && (
             <div className="ml-auto hidden self-center text-xs text-foreground-secondary sm:block">
@@ -495,12 +506,14 @@ function FilterSelect({
   value,
   onChange,
   options,
+  disabled = false,
 }: {
   icon: ReactNode;
   label: string;
   value: string;
   onChange: (v: string) => void;
   options: { value: string; label: string }[];
+  disabled?: boolean;
 }) {
   return (
     <div className="relative">
@@ -513,7 +526,8 @@ function FilterSelect({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           aria-label={label}
-          className="h-8 cursor-pointer appearance-none rounded-lg border border-border bg-card pl-3 pr-8 text-sm text-foreground transition-colors hover:border-border-deep focus:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11"
+          disabled={disabled}
+          className="h-8 cursor-pointer appearance-none rounded-lg border border-border bg-card pl-3 pr-8 text-sm text-foreground transition-colors hover:border-border-deep focus:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-60 [@media(pointer:coarse)]:h-11"
         >
           {options.map((o) => (
             <option key={o.value || "__all__"} value={o.value}>
