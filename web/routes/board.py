@@ -31,6 +31,7 @@ from services.order_metrics import (
     get_top_products,
 )
 from services.product_channel_metrics import get_product_channel_breakdown
+from services.product_cost_store import list_product_costs
 from services.profit_summary import get_profit_card
 from services.refund_metrics import (
     get_refund_summary,
@@ -510,3 +511,21 @@ async def board_fx_series(
     if days not in _FX_ALLOWED_DAYS:
         days = 90
     return JSONResponse(get_fx_series(currency, days))
+
+
+# 马帮成本（/costs 页面）：product_costs 当前快照（RMB 含运费）+ 关联商品图。
+# 成本按 account_id 隔离（set_current_account + 显式 account_id 过滤）；商品图按 platform
+# 分派取源（马帮无图，取自平台商品主数据，见 product_cost_store._resolve_sku_images）。
+@router.get("/board/costs", include_in_schema=False)
+async def board_costs(
+    perm: UserPermission = Depends(require_web_user),
+    platform: str = Query("tiktok_shop", description="平台，如 tiktok_shop / shopee"),
+):
+    """马帮成本页数据：某租户某平台全部 SKU 单位成本 + 关联商品图/款号。
+
+    与汇率页同为「基础数据」——所有登录用户可见，不做 scope 夹紧（成本是租户级主数据，
+    非按店铺分割）。筛选/排序在前端做（数据量小，约数百行）。
+    """
+    set_current_account(perm.account_id)
+    items = list_product_costs(account_id=perm.account_id, platform=platform)
+    return JSONResponse({"items": items, "platform": platform})

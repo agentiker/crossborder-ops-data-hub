@@ -13,7 +13,7 @@ from typing import Optional
 
 from core.db import SessionLocal
 from core.timezone import business_today
-from models.base_models import ProductCost, ProductCostHistory
+from models.base_models import Product, ProductCost, ProductCostHistory, SkuVariant
 
 
 def upsert_product_cost(
@@ -234,6 +234,91 @@ def get_cost_map_asof(
             if sku and sku not in result:
                 result[sku] = Decimal(str(cost))
         return result
+    finally:
+        if own:
+            session.close()
+
+
+def _resolve_sku_images(session, *, account_id, platform) -> dict[str, dict]:
+    """按 platform 分派，返回 {seller_sku: {image_url, product_title, product_id}}。
+
+    成本本身平台无关（马帮统一 RMB 成本价，马帮 ERP 无商品图），商品图只能从
+    「该成本行所属平台」的商品主数据取。tiktok_shop：seller_sku→sku_variants 取
+    product_id/款号，再由 product_id→products.main_image_url 取主图。后续接虾皮等新
+    平台时，在此加对应分支（读该平台自己的商品主数据）即可，成本链与本函数调用方不动。
+    """
+    if platform != "tiktok_shop":
+        return {}  # 其它平台（如 shopee）待接入其商品主数据后在此扩展
+    variants = (
+        session.query(
+            SkuVariant.seller_sku,
+            SkuVariant.product_id,
+            SkuVariant.product_name,
+        )
+        .filter_by(account_id=account_id, platform=platform)
+        .all()
+    )
+    prods = (
+        session.query(Product.product_id, Product.main_image_url)
+        .filter_by(account_id=account_id, platform=platform)
+        .all()
+    )
+    img_by_pid = {pid: url for pid, url in prods if pid}
+    out: dict[str, dict] = {}
+    for sku, pid, name in variants:
+        if not sku or sku in out:
+            continue
+        out[sku] = {
+            "product_id": pid,
+            "product_title": name,
+            "image_url": img_by_pid.get(pid),
+        }
+    return out
+
+
+def list_product_costs(
+    *,
+    account_id: Optional[str],
+    platform: str = "tiktok_shop",
+    session=None,
+) -> list[dict]:
+    """列出某租户某平台全部 SKU 成本（当前快照）+ 关联商品图/款号，供 WebUI 成本页展示。
+
+    按 account_id 隔离；默认按 updated_at 倒序（最近变动在前，无更新时间排后）。
+    商品图来源见 _resolve_sku_images（按 platform 分派，马帮不提供图）。
+    """
+    own = session is None
+    session = session or SessionLocal()
+    try:
+        rows = (
+            session.query(
+                ProductCost.seller_sku,
+                ProductCost.unit_cost_rmb,
+                ProductCost.note,
+                ProductCost.updated_at,
+            )
+            .filter_by(account_id=account_id, platform=platform)
+            .all()
+        )
+        img_map = _resolve_sku_images(
+            session, account_id=account_id, platform=platform
+        )
+        out: list[dict] = []
+        for sku, cost, note, updated_at in rows:
+            meta = img_map.get(sku) or {}
+            out.append(
+                {
+                    "seller_sku": sku,
+                    "unit_cost_rmb": float(cost) if cost is not None else 0.0,
+                    "note": note,
+                    "updated_at": updated_at.isoformat() if updated_at else None,
+                    "image_url": meta.get("image_url"),
+                    "product_title": meta.get("product_title"),
+                    "product_id": meta.get("product_id"),
+                }
+            )
+        out.sort(key=lambda r: r["updated_at"] or "", reverse=True)
+        return out
     finally:
         if own:
             session.close()

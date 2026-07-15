@@ -3,6 +3,8 @@ import {
   ArrowRightLeft,
   Calendar,
   ChevronDown,
+  Coins,
+  Database,
   LayoutDashboard,
   LogOut,
   MessagesSquare,
@@ -40,23 +42,38 @@ interface NavItem {
   badge?: string; // 角标，如「待开发」
 }
 
-// 顶级导航（平铺）。管理类页面不在此，见 ADMIN_GROUP（可展开父组）。
+// 顶级导航（平铺）。可展开父组（基础数据 / 管理）见下方 GROUP 定义。
 const NAV: NavItem[] = [
   { to: "/", label: "新建对话", icon: Plus, end: true },
   { to: "/scheduled", label: "定时任务", icon: Calendar, badge: "待开发" },
   { to: "/skills", label: "技能", icon: Zap, badge: "待开发" },
   { to: "/board", label: "看板", icon: LayoutDashboard },
-  { to: "/fx", label: "汇率", icon: ArrowRightLeft },
 ];
 
-// 「管理」父组（boss-only）：用户管理 + 阈值配置降为子项。父项本身不导航，只做展开开关。
-const ADMIN_GROUP = {
+interface NavGroup {
+  label: string;
+  icon: typeof Plus;
+  children: NavItem[];
+}
+
+// 「基础数据」父组（所有登录用户可见）：利润折算的底层参考数据——汇率牌价 + 马帮成本。
+const BASE_DATA_GROUP: NavGroup = {
+  label: "基础数据",
+  icon: Database,
+  children: [
+    { to: "/fx", label: "汇率", icon: ArrowRightLeft },
+    { to: "/costs", label: "马帮成本", icon: Coins },
+  ],
+};
+
+// 「管理」父组（boss-only）：用户管理 + 阈值配置。父项本身不导航，只做展开开关。
+const ADMIN_GROUP: NavGroup = {
   label: "管理",
   icon: ShieldCheck,
   children: [
     { to: "/admin", label: "用户管理", icon: Users },
     { to: "/settings", label: "阈值配置", icon: SlidersHorizontal },
-  ] satisfies NavItem[],
+  ],
 };
 
 interface Props {
@@ -66,6 +83,82 @@ interface Props {
   onNavigate?: () => void; // 移动端点击后关抽屉
   collapsed?: boolean; // 桌面收起态：仅留图标
   onToggleCollapse?: () => void; // 顶部 toggle（仅桌面渲染）
+}
+
+// 可展开父组（基础数据 / 管理）通用渲染：展开态为「父项开关 + 缩进子项」，收起态无文字空间
+// → 子项直接平铺成图标（各自 title 提示）。含当前路径的子项时默认展开。各组自持 open 状态。
+function NavGroupBlock({
+  group,
+  collapsed,
+  pathname,
+  onNavigate,
+  navCls,
+}: {
+  group: NavGroup;
+  collapsed: boolean;
+  pathname: string;
+  onNavigate?: () => void;
+  navCls: (p: { isActive: boolean }) => string;
+}) {
+  const active = group.children.some((c) => pathname.startsWith(c.to));
+  const [open, setOpen] = useState(active);
+
+  if (collapsed) {
+    return (
+      <>
+        {group.children.map(({ to, label, icon: Icon }) => (
+          <NavLink key={to} to={to} className={navCls} onClick={onNavigate} title={label}>
+            <Icon className="size-[18px] shrink-0" />
+          </NavLink>
+        ))}
+      </>
+    );
+  }
+
+  return (
+    <>
+      {/* 父项：点击展开/收起，本身不导航；子项激活时高亮 */}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className={cn(
+          "flex h-9 items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors",
+          active
+            ? "font-medium text-foreground"
+            : "text-foreground-secondary hover:bg-fill hover:text-foreground",
+        )}
+      >
+        <group.icon className="size-[18px] shrink-0" />
+        <span className="truncate">{group.label}</span>
+        <ChevronDown
+          className={cn(
+            "ml-auto size-4 shrink-0 text-foreground-tertiary transition-transform",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+      {open &&
+        group.children.map(({ to, label, icon: Icon }) => (
+          <NavLink
+            key={to}
+            to={to}
+            onClick={onNavigate}
+            className={({ isActive }) =>
+              cn(
+                "ml-3 flex h-9 items-center gap-2.5 rounded-md border-l border-border-shallow pl-3.5 pr-2.5 text-sm transition-colors",
+                isActive
+                  ? "bg-fill font-medium text-foreground"
+                  : "text-foreground-secondary hover:bg-fill hover:text-foreground",
+              )
+            }
+          >
+            <Icon className="size-4 shrink-0" />
+            <span className="truncate">{label}</span>
+          </NavLink>
+        ))}
+    </>
+  );
 }
 
 // StoreClaw 式左固定侧栏：wordmark + 导航 + 最近对话 + 底部账户。
@@ -85,10 +178,8 @@ export function SidebarContent({
   const activeConvId = id ? Number(id) : null;
 
   const items = NAV.filter((n) => !n.bossOnly || me?.is_boss);
-  // 「管理」父组仅 boss 可见；含当前路径的子项时默认展开。
+  // 「管理」父组仅 boss 可见；「基础数据」父组所有登录用户可见。展开态由 NavGroupBlock 各自管理。
   const showAdmin = !!me?.is_boss;
-  const adminActive = ADMIN_GROUP.children.some((c) => pathname.startsWith(c.to));
-  const [adminOpen, setAdminOpen] = useState(adminActive);
 
   async function onDelete(cid: number) {
     if (!confirm("删除该会话？")) return;
@@ -152,59 +243,24 @@ export function SidebarContent({
           </NavLink>
         ))}
 
-        {/* 「管理」父组（boss-only）：用户管理 + 阈值配置子项 */}
+        {/* 「基础数据」父组（所有登录用户可见）：汇率 + 马帮成本 */}
+        <NavGroupBlock
+          group={BASE_DATA_GROUP}
+          collapsed={collapsed}
+          pathname={pathname}
+          onNavigate={onNavigate}
+          navCls={navCls}
+        />
+
+        {/* 「管理」父组（boss-only）：用户管理 + 阈值配置 */}
         {showAdmin && (
-          collapsed ? (
-            // 收起态无文字空间，展开无意义 → 子项直接平铺成图标（各自 title 提示）
-            ADMIN_GROUP.children.map(({ to, label, icon: Icon }) => (
-              <NavLink key={to} to={to} className={navCls} onClick={onNavigate} title={label}>
-                <Icon className="size-[18px] shrink-0" />
-              </NavLink>
-            ))
-          ) : (
-            <>
-              {/* 父项：点击展开/收起，本身不导航；子项激活时高亮 */}
-              <button
-                type="button"
-                onClick={() => setAdminOpen((v) => !v)}
-                aria-expanded={adminOpen}
-                className={cn(
-                  "flex h-9 items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors",
-                  adminActive
-                    ? "font-medium text-foreground"
-                    : "text-foreground-secondary hover:bg-fill hover:text-foreground",
-                )}
-              >
-                <ADMIN_GROUP.icon className="size-[18px] shrink-0" />
-                <span className="truncate">{ADMIN_GROUP.label}</span>
-                <ChevronDown
-                  className={cn(
-                    "ml-auto size-4 shrink-0 text-foreground-tertiary transition-transform",
-                    adminOpen && "rotate-180",
-                  )}
-                />
-              </button>
-              {adminOpen &&
-                ADMIN_GROUP.children.map(({ to, label, icon: Icon }) => (
-                  <NavLink
-                    key={to}
-                    to={to}
-                    onClick={onNavigate}
-                    className={({ isActive }) =>
-                      cn(
-                        "ml-3 flex h-9 items-center gap-2.5 rounded-md border-l border-border-shallow pl-3.5 pr-2.5 text-sm transition-colors",
-                        isActive
-                          ? "bg-fill font-medium text-foreground"
-                          : "text-foreground-secondary hover:bg-fill hover:text-foreground",
-                      )
-                    }
-                  >
-                    <Icon className="size-4 shrink-0" />
-                    <span className="truncate">{label}</span>
-                  </NavLink>
-                ))}
-            </>
-          )
+          <NavGroupBlock
+            group={ADMIN_GROUP}
+            collapsed={collapsed}
+            pathname={pathname}
+            onNavigate={onNavigate}
+            navCls={navCls}
+          />
         )}
       </nav>
 

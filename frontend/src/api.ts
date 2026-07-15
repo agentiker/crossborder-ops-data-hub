@@ -403,6 +403,18 @@ export interface FxSeries {
   change_pct: number | null;
 }
 
+// 马帮成本行（/costs 页）：product_costs 当前快照（RMB 含运费）+ 关联商品图/款号。
+// image_url/product_title 可能为 null（该 SKU 未在平台商品主数据里匹配到，或马帮无图）。
+export interface ProductCostRow {
+  seller_sku: string;
+  unit_cost_rmb: number;
+  note: string | null;
+  updated_at: string | null;
+  image_url: string | null;
+  product_title: string | null;
+  product_id: string | null;
+}
+
 // 看板筛选参数：start/end 显式日期（覆盖 period）；platform/country 平台/区域；scope 店铺。
 // 空值不拼进 querystring（让后端走默认/全部）。period 作无显式日期时的回退。
 export interface BoardQuery {
@@ -465,6 +477,11 @@ export const api = {
   fxCurrencies: () => getJSON<{ items: FxCurrency[] }>("/board/fx/currencies"),
   fxSeries: (currency: string, days: number) =>
     getJSON<FxSeries>(`/board/fx/series?currency=${encodeURIComponent(currency)}&days=${days}`),
+  // 马帮成本（/costs 页）：某租户某平台全部 SKU 成本 + 关联商品图。筛选/排序前端做，无需传参。
+  costList: (platform = "tiktok_shop") =>
+    getJSON<{ items: ProductCostRow[]; platform: string }>(
+      `/board/costs?platform=${encodeURIComponent(platform)}`,
+    ),
   conversations: () => getJSON<{ items: ConversationItem[] }>("/api/conversations"),
   conversation: (id: number) =>
     getJSON<{ id: number; title: string; messages: Message[] }>(
