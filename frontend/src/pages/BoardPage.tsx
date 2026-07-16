@@ -2442,6 +2442,10 @@ const LOW_BADGE: Record<string, { label: string; cls: string }> = {
   idle: { label: "无销量", cls: "bg-fill-default text-foreground-secondary" },
 };
 
+// 明细列表只列「卖得动」的 SKU：日均销量 < 此值（含近期无销量的死货）整行隐藏，
+// 避免极低销速让「可售天数 = 库存 ÷ 日均」失真、污染列表。汇总卡片的计数不受影响。
+const MIN_DETAIL_VELOCITY = 1;
+
 type SortField = "days_of_cover" | "available_stock" | "name";
 
 function InventoryHealth({ data, loading }: { data: BoardData | null; loading: boolean }) {
@@ -2559,6 +2563,7 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
   const filtered = useMemo(() => {
     const q = query.toLowerCase();
     return items
+      .filter((it) => it.daily_velocity >= MIN_DETAIL_VELOCITY) // 日均销量过低整行不显示
       .filter((it) => {
         const matchesQ =
           !q ||
@@ -2683,7 +2688,6 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
               <option value="critical">告急</option>
               <option value="warning">偏低</option>
               <option value="ok">充足</option>
-              <option value="idle">无销量</option>
             </select>
           </div>
 
@@ -2700,7 +2704,17 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
                     <tr className="bg-fill-shallow">
                       <SortableTh label="商品 / SKU" active={sortField === "name"} dir={sortDir} onClick={() => handleSort("name")} />
                       <SortableTh label="库存" numeric active={sortField === "available_stock"} dir={sortDir} onClick={() => handleSort("available_stock")} />
-                      <th className="px-3 py-2 text-right font-medium text-foreground-secondary">日均销量</th>
+                      <th className="px-3 py-2 text-right font-medium text-foreground-secondary">
+                        <span className="inline-flex items-center justify-end gap-1">
+                          日均销量
+                          <InfoTooltip
+                            align="end"
+                            content={`日均销量 < ${MIN_DETAIL_VELOCITY} 件/天的 SKU（含近期无销量的死货）整行不在此列表显示，避免极低销速让「可售天数」失真、污染明细。汇总卡片的计数不受影响。`}
+                          >
+                            <Info className="h-3 w-3 text-foreground-tertiary" />
+                          </InfoTooltip>
+                        </span>
+                      </th>
                       <SortableTh label="可售天数" numeric active={sortField === "days_of_cover"} dir={sortDir} onClick={() => handleSort("days_of_cover")} />
                       <th className="px-3 py-2 text-center font-medium text-foreground-secondary">状态</th>
                     </tr>
@@ -2779,6 +2793,11 @@ function InventoryHealth({ data, loading }: { data: BoardData | null; loading: b
                   );
                 })}
               </div>
+
+              {/* 口径注：日均销量过低的 SKU 已整行隐藏（详见"日均销量"表头说明）。移动端无表头，故在此再标一句。 */}
+              <p className="mt-2 text-xs text-foreground-tertiary">
+                已隐藏日均销量 &lt; {MIN_DETAIL_VELOCITY} 件/天的 SKU（含无销量死货）。
+              </p>
 
               {/* 分页：> 一页才显示 */}
               {pageCount > 1 && (
