@@ -82,17 +82,18 @@ def build_replenishment_card(
             }
             for r in rows
         ]
-        # 列宽：Seller SKU 占大头，日均/库存/补货量右对齐数字。日均 = 窗口销量 ÷ velocity_days。
+        # 列宽：Seller SKU 占大头（够显 12 字符编码如 809-KKHM-2XL），日均/库存/补货右对齐数字。
+        # CardKit v2 表格不支持按内容自适应，须手动配百分比（和=100%）。
         elements.append(_table(
             [
                 {"name": "name", "display_name": "Seller SKU", "data_type": "text",
-                 "width": "34%", "horizontal_align": "left"},
+                 "width": "46%", "horizontal_align": "left"},
                 {"name": "daily", "display_name": "日均", "data_type": "text",
-                 "width": "18%", "horizontal_align": "right"},
+                 "width": "14%", "horizontal_align": "right"},
                 {"name": "stock", "display_name": "库存", "data_type": "text",
                  "width": "18%", "horizontal_align": "right"},
                 {"name": "qty", "display_name": "补货", "data_type": "text",
-                 "width": "30%", "horizontal_align": "right"},
+                 "width": "22%", "horizontal_align": "right"},
             ],
             table_rows,
         ))
