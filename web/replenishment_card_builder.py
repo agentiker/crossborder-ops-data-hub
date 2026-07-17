@@ -87,9 +87,9 @@ def build_replenishment_card(
         elements.append(_table(
             [
                 {"name": "name", "display_name": "Seller SKU", "data_type": "text",
-                 "width": "46%", "horizontal_align": "left"},
+                 "width": "42%", "horizontal_align": "left"},
                 {"name": "daily", "display_name": "日均", "data_type": "text",
-                 "width": "14%", "horizontal_align": "right"},
+                 "width": "18%", "horizontal_align": "right"},
                 {"name": "stock", "display_name": "库存", "data_type": "text",
                  "width": "18%", "horizontal_align": "right"},
                 {"name": "qty", "display_name": "补货", "data_type": "text",
