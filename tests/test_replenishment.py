@@ -67,6 +67,7 @@ def test_basic_formula_and_sort(session):
     assert r["replenish_qty"] == 35
     assert r["color"] == "Red" and r["size"] == "M"  # 变体回填
     assert r["seller_sku"] == "SS-s1"
+    assert r["daily_velocity"] == 1.0  # 30 件 / 30 天
     assert r["is_super_hot"] is False
 
 
@@ -116,3 +117,25 @@ def test_missing_variant_still_replenishes(session):
     assert rows[0]["sku_id"] == "sX"
     assert rows[0]["color"] is None and rows[0]["product_name"] is None
     assert rows[0]["replenish_qty"] == 45
+
+
+def test_low_velocity_filtered_by_min(session):
+    """日均销速 < min_daily_velocity 的 SKU 不进采购单（慢销/滞销排除，与看板库存明细同口径）。
+
+    默认 min=0.0 = 纯计算器不过滤（保单测语义）；推送 flow 传 1.0 才滤。
+    """
+    # slow: 5 件/30 天 → 日均 0.17 < 1；库存 0 本会补 ceil(5×1.5)=8 件
+    _sell(session, "slow", "pSlow", 5); _stock(session, "slow", "pSlow", 0)
+    _variant(session, "slow", "pSlow")
+    # fast: 40 件/30 天 → 日均 1.33 ≥ 1，保留
+    _sell(session, "fast", "pFast", 40); _stock(session, "fast", "pFast", 0)
+    _variant(session, "fast", "pFast")
+    session.commit()
+
+    rows_all = compute_replenishment(account_id="ecom-app", session=session, **_SCOPE)
+    assert {r["sku_id"] for r in rows_all} == {"slow", "fast"}  # 默认不过滤
+
+    rows_push = compute_replenishment(
+        account_id="ecom-app", session=session, min_daily_velocity=1.0, **_SCOPE
+    )
+    assert [r["sku_id"] for r in rows_push] == ["fast"]  # 慢销被滤、仅留 fast

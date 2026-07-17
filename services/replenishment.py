@@ -60,13 +60,17 @@ def compute_replenishment(
     shop_id: Optional[str] = None,
     shop_ids: Optional[list[str]] = None,
     intransit_by_sku: Optional[dict[str, int]] = None,
+    min_daily_velocity: float = 0.0,
     session=None,
 ) -> list[dict]:
     """计算补货建议，返回按补货量降序的行列表。
 
-    每行：sku_id/product_id/product_name/color/size/seller_sku/units/available/intransit/
-    multiplier/is_super_hot/target/replenish_qty。
+    每行：sku_id/product_id/product_name/color/size/seller_sku/units/daily_velocity/
+    available/intransit/multiplier/is_super_hot/target/replenish_qty。
     intransit_by_sku：在途数量（MVP 传 None=全 0；马帮接通后注入 availableStock/shippingQuantity）。
+    min_daily_velocity：日均销速（= units / velocity_days）低于此值的 SKU 不进结果——慢销/滞销
+        不纳入采购单。推送 flow 传 1.0（与看板库存明细「日均<1 件/天」同口径）；默认 0=不过滤，
+        保留纯公式计算器语义供单测。
     """
     intransit_by_sku = intransit_by_sku or {}
     own_session = session is None
@@ -103,6 +107,10 @@ def compute_replenishment(
             is_super_hot = bool(product_id and product_id in super_hot)
             multiplier = cfg.superhot_multiplier if is_super_hot else cfg.normal_multiplier
 
+            daily_velocity = units / cfg.velocity_days
+            if daily_velocity < min_daily_velocity:
+                continue  # 日均销速过低（慢销/滞销）不进采购单
+
             target = math.ceil(units * multiplier)
             avail = available.get(sku_id, 0)
             intransit = int(intransit_by_sku.get(sku_id, 0))
@@ -118,6 +126,7 @@ def compute_replenishment(
                 "size": variant.size if variant else None,
                 "seller_sku": variant.seller_sku if variant else None,
                 "units": units,
+                "daily_velocity": round(daily_velocity, 2),
                 "available": avail,
                 "intransit": intransit,
                 "multiplier": multiplier,

@@ -25,6 +25,10 @@ from core.db import SessionLocal
 from web.feishu_card_sender import send_interactive_card
 from web.replenishment_card_builder import build_replenishment_card
 
+# 日均销速低于此值的 SKU 不进采购单（慢销/滞销），与看板库存明细「日均<1 件/天」同口径。
+# 注意补货窗口默认 30 天，故此门槛 ≈ 月销 < 30 件，比库存视图（7 天窗口 <7 件）激进。
+_MIN_DAILY_VELOCITY = 1.0
+
 
 def _deliver(*, account: str, open_id: str, card, text: str, dry_run: bool,
              label: str, n: int) -> str:
@@ -67,6 +71,7 @@ def _push_one(recipient: dict, *, dry_run: bool) -> str:
             platform=scope.platform,
             country=scope.country,
             shop_ids=scope.shop_ids or None,
+            min_daily_velocity=_MIN_DAILY_VELOCITY,
             session=session,
         )
     finally:
@@ -113,6 +118,7 @@ def _push_cc(*, dry_run: bool) -> str:
             platform=scope.platform,
             country=scope.country,
             shop_ids=scope.shop_ids or None,
+            min_daily_velocity=_MIN_DAILY_VELOCITY,
             session=session,
         )
     finally:
