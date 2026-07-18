@@ -1,5 +1,5 @@
 """clearance_signals 单测：聚焦纯判定逻辑 _verdict（阈值组合）+ 边界。
-查询正确性（折扣趋势/死亡率/销量脉冲的 SQL）靠 prod 真实数据验证，不在此重复造数据。"""
+查询正确性（折扣趋势/无销率/销量脉冲的 SQL）靠 prod 真实数据验证，不在此重复造数据。"""
 from __future__ import annotations
 
 from services.clearance_signals import (
@@ -30,7 +30,7 @@ def test_no_signals_not_suspect():
 
 
 def test_deepening_alone_is_suspect():
-    """折扣加深是主信号，单独命中即定罪（即便死亡率低/无突刺）。"""
+    """折扣加深是主信号，单独命中即定罪（即便无销率低/无突刺）。"""
     suspect, reason = _verdict(_disc(deepening=True, delta_pp=10, early=50, recent=60),
                                _spike(), _mort())
     assert suspect is True
@@ -39,21 +39,21 @@ def test_deepening_alone_is_suspect():
 
 
 def test_spike_plus_mortality_is_suspect():
-    """突刺 + 高死亡率（清尾货型）双满足才定罪。"""
+    """突刺 + 高无销率（清尾货型）双满足才定罪。"""
     suspect, reason = _verdict(_disc(), _spike(spiking=True, recent=6, prior=1),
                                _mort(high=True, dead=0.9, total=20, selling=2))
     assert suspect is True
-    assert "销量突刺" in reason and "变体死亡率90%" in reason
+    assert "销量突刺" in reason and "无销量" in reason
 
 
 def test_spike_alone_not_suspect():
-    """单纯突刺（无高死亡率）不定罪——避免把有机增长误判成清仓。"""
+    """单纯突刺（无高无销率）不定罪——避免把有机增长误判成清仓。"""
     suspect, _ = _verdict(_disc(), _spike(spiking=True, recent=6, prior=1), _mort())
     assert suspect is False
 
 
 def test_mortality_alone_not_suspect():
-    """单纯高死亡率（正常长尾款）不定罪。"""
+    """单纯高无销率（正常长尾款）不定罪。"""
     suspect, _ = _verdict(_disc(), _spike(), _mort(high=True, dead=0.85, total=20, selling=3))
     assert suspect is False
 

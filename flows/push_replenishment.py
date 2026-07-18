@@ -5,7 +5,7 @@
 同一套 CardKit 风格）直投飞书私聊；卡片投递失败回落 openclaw 文本（同告警 send_alert 链路，
 凭证缺失/JSON 错时不丢消息）。日级 digest，无去重游标（每次发当前快照）；无待补货 SKU 不发空单。
 
-清仓嫌疑（_clearance_advice）：对补货列表里的款算折扣加深/销量突刺/变体死亡率信号，命中嫌疑
+清仓嫌疑（_clearance_advice）：对补货列表里的款算折扣加深/销量突刺/SKU 无销率信号，命中嫌疑
 的款用 LLM 合成「补货前请与采购确认」提醒（强约束防编造），插入卡片表格后。LLM 未配置/超时/
 返回空 → 降级确定性 reason 列表；信号计算异常 → 跳过分析块。任一降级都不阻断补货推送。
 
@@ -58,7 +58,7 @@ def _clearance_advice(rows, *, scope, session) -> Optional[str]:
     except Exception as exc:  # DB/SQL 异常——清仓是增强项，不阻断补货推送
         logger.warning("清仓信号计算失败，跳过分析块：%s", exc)
         return None
-    # product_id → 该款在补货列表里的 seller_sku（采购能认的短码；一款多变体都在补则全列）
+    # product_id → 该款在补货列表里的 seller_sku（采购能认的短码；一款多 SKU 都在补则全列）
     pid_skus: dict[str, list[str]] = {}
     for r in rows:
         pid = r.get("product_id")
@@ -101,7 +101,7 @@ def _llm_clearance_text(suspects: list[dict]) -> str:
         "下面是补货列表中疑似「清仓甩卖」的商品及其判别信号（已由系统从订单数据判定，"
         "括号内数字均为真实计算结果，不是示例）。请改写成一句自然、克制的运营提醒：\n"
         "- 用「1. 2.」逐款编号，每款一句话点明主要信号即可，不要在每款结尾重复「补货前与采购确认」（该建议已在标题给出）。\n"
-        "- 只能使用下面给出的款号和信号；严禁新增任何其它 SKU、数字、库存、GMV、日期、原因。\n"
+        "- 只能使用下面给出的款号和信号，可直接引用信号里的数字（日均/百分比/个数等）；严禁新增任何未给出的 SKU、数字、库存、GMV、日期。\n"
         "- 语气克制，禁止「严重/暴跌/崩盘」等夸张措辞；总长不超过 120 字。\n\n"
         f"{facts}"
     )

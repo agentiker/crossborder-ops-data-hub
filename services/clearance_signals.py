@@ -1,7 +1,7 @@
 """清仓嫌疑信号（补货"该不该补"的二次判断）。
 
 补货列表按「卖得快 + 库存低」算，但卖得快 ≠ 该补——也可能商家在清仓甩卖。本模块从现有
-订单/变体数据算几个判别信号（无需新授权），组合出「清仓嫌疑」verdict + reason，供 LLM/卡片
+订单/SKU数据算几个判别信号（无需新授权），组合出「清仓嫌疑」verdict + reason，供 LLM/卡片
 决定要不要在采购单里提醒「补货前与采购确认」。
 
 信号（按判别力）：
@@ -10,10 +10,10 @@
     （/promotion/202309/activities/search，2026-07-18 已验证授权）只返后台登记的正式活动，
     且 list 不返折扣数值（要逐个 GetActivity）。promotion=运营意图，订单折扣=实际效果。
   - 销量脉冲突刺（辅）：近期日均 vs 早期日均，突刺 → 活动驱动而非有机增长。
-  - 变体死亡率（辅）：同款其它变体无销、仅个别在清 → 清尾货指纹（但对「热门款整体清仓」
-    无效——那种所有变体都在快销、死亡率低，故只作辅助，不单独定罪）。
+  - SKU无销率（辅）：同款其它SKU无销、仅个别在清 → 清尾货指纹（但对「热门款整体清仓」
+    无效——那种所有SKU都在快销、无销率低，故只作辅助，不单独定罪）。
 
-阈值均为模块常量，可按真实数据观感调。verdict 保守：只在折扣加深（或「突刺+高死亡率」
+阈值均为模块常量，可按真实数据观感调。verdict 保守：只在折扣加深（或「突刺+高无销率」
 双满足）时判嫌疑，避免把正常长尾款/常规促销误判成清仓。
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ from services.order_metrics import _paid_window, _scope_filters
 # ── 阈值（可调）───────────────────────────────────────────────────────────
 DEEPENING_PP = 8.0       # 折扣加深 ≥8pp 判「加深」（近期中位折扣 − 早期中位折扣）
 SPIKE_RATIO = 3.0        # 近期日均 / 早期日均 ≥3 判「突刺」
-MORTALITY_HIGH = 0.8     # 死变体占比 ≥80% 判「高」（辅助，不单独定罪）
+MORTALITY_HIGH = 0.8     # 无销 SKU 占比 ≥80% 判「高」（辅助，不单独定罪）
 RECENT_DAYS = 30         # 「近期」窗口天数（与补货 velocity 窗口对齐）
 LOOKBACK_DAYS = 60       # 回看总长；早期 = [lookback, recent) 天前
 
@@ -143,7 +143,7 @@ def _sales_spike(session, pid, prior_start, prior_end, recent_start, recent_end,
 
 
 def _mortality(session, pid, recent_start, recent_end, sc) -> dict:
-    """该款变体死亡率：窗口内有销量的变体占比的补集。"""
+    """该款SKU无销率：窗口内有销量的SKU占比的补集。"""
     sku_ids = [r[0] for r in session.query(SkuVariant.sku_id).filter(SkuVariant.product_id == pid).all()]
     total = len(sku_ids)
     if total == 0:
@@ -163,14 +163,14 @@ def _mortality(session, pid, recent_start, recent_end, sc) -> dict:
 
 
 def _verdict(disc: dict, spike: dict, mort: dict) -> tuple[bool, str]:
-    """综合判：折扣加深（主）或「突刺+高死亡率」（清尾货型）→ 嫌疑。reason 汇总命中项。"""
+    """综合判：折扣加深（主）或「突刺+高无销率」（清尾货型）→ 嫌疑。reason 汇总命中项。"""
     parts = []
     if disc["deepening"]:
         parts.append(f"折扣加深 {disc['delta_pp']:+.0f}pp（{disc['early_pct']:.0f}%→{disc['recent_pct']:.0f}%）")
     if spike.get("spiking"):
         parts.append(f"销量突刺（近期日均{spike['recent_daily']} vs 早期{spike['prior_daily']}）")
     if mort.get("high") and mort.get("dead_rate") is not None:
-        parts.append(f"变体死亡率{mort['dead_rate']*100:.0f}%（{mort['total']}个变体仅{mort['selling']}个在销）")
+        parts.append(f"{mort['total']}个SKU仅{mort['selling']}个在销（{mort['dead_rate']*100:.0f}%无销量）")
     suspect = bool(disc["deepening"]) or (bool(spike.get("spiking")) and bool(mort.get("high")))
     return suspect, "；".join(parts)
 
