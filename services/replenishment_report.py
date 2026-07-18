@@ -41,6 +41,7 @@ def build_replenishment_message(
     date_label: str,
     velocity_days: int,
     intransit_connected: bool = False,
+    clearance_hint: Optional[str] = None,
 ) -> Optional[str]:
     """组装补货采购单文案。无待补货 SKU 返回 None（调用方不推空单）。"""
     if not rows:
@@ -56,6 +57,9 @@ def build_replenishment_message(
         lines.append(f"  • {_fmt_item(r)}")
     if len(rows) > _TOP_ITEMS:
         lines.append(f"  …等共 {len(rows)} 个")
+    if clearance_hint:
+        # 卡片→文本回落路径也要带清仓提醒，否则回落丢关键信息（与卡片同源文本）
+        lines.append(clearance_hint)
     if not intransit_connected:
         lines.append("⚠️ 在途按 0 估（采购在途数据未接通），请结合实际在途量调整。")
     return "\n".join(lines)

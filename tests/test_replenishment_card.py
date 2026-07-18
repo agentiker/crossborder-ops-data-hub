@@ -57,3 +57,13 @@ def test_fallback_to_product_name_when_no_seller_sku():
 def test_super_hot_flagged():
     s = _dump([_row("s1", seller_sku="SS-1", daily=8.1, qty=81, is_super_hot=True)])
     assert "🔥" in s
+
+
+def test_clearance_hint_rendered():
+    """清仓嫌疑分析块插入卡片（表格后、在途提示前）；无 hint 时不含。"""
+    rows = [_row("s1", seller_sku="SS-1", daily=3.2, qty=40, avail=5)]
+    assert "疑似清仓" not in _dump(rows)  # 默认无分析块
+    hint = "⚠️ 疑似清仓，补货前请与采购确认：\n• SS-1：折扣加深 +12pp"
+    card = build_replenishment_card(rows, clearance_hint=hint, **_KW)
+    s = json.dumps(card, ensure_ascii=False)
+    assert "疑似清仓" in s and "折扣加深 +12pp" in s

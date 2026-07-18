@@ -28,6 +28,7 @@ __all__ = [
     "TurnComplete",
     "LLMError",
     "get_provider",
+    "complete_text",
 ]
 
 
@@ -50,3 +51,17 @@ def get_provider(cfg: LLMConfig | None = None) -> LLMProvider:
     if provider in ("openai", "openai_compat", "openai-compatible"):
         return OpenAICompatProvider(**common)
     raise LLMError(f"未知 LLM provider：{cfg.provider}（支持 openai / anthropic）")
+
+
+def complete_text(provider: LLMProvider, messages: list[ChatMessage]) -> str:
+    """同步消费一次 stream()，返回 TurnComplete 的完整文本（无工具调用场景）。
+
+    供「一次性取文本」的调用方使用（如卡片定性文案合成）。provider.stream 可能抛
+    LLMError（网络/鉴权/非 200/响应不可解析）——由调用方 try/except 决定降级策略，
+    本函数不做吞错（让异常向上冒泡到能决策降级的地方）。
+    """
+    text = ""
+    for ev in provider.stream(messages, tools=[]):
+        if isinstance(ev, TurnComplete):
+            text = ev.text or ""
+    return text

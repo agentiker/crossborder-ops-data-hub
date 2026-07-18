@@ -74,3 +74,12 @@ def test_fallback_label_when_no_name():
         [_row("s1", 5, name=None, color=None, size=None, seller_sku="SS-1")], **_KW
     )
     assert "SS-1：补 5 件" in msg
+
+
+def test_clearance_hint_in_message():
+    """卡片→文本回落路径也带清仓提醒（回落不丢关键信息）；默认无。"""
+    rows = [_row("s1", 35)]
+    assert "疑似清仓" not in build_replenishment_message(rows, **_KW)
+    hint = "⚠️ 疑似清仓，补货前请与采购确认：\n• s1：折扣加深 +12pp"
+    msg = build_replenishment_message(rows, clearance_hint=hint, **_KW)
+    assert "疑似清仓" in msg and "折扣加深 +12pp" in msg

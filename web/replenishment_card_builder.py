@@ -54,6 +54,7 @@ def build_replenishment_card(
     date_label: str,
     velocity_days: int,
     intransit_connected: bool = False,
+    clearance_hint: Optional[str] = None,
 ) -> Optional[dict]:
     """补货采购单 → CardKit 卡片 JSON。无待补货 SKU 返回 None（调用方不发空单）。
 
@@ -99,6 +100,10 @@ def build_replenishment_card(
         ))
 
     elements.append(_hr())
+    if clearance_hint:
+        # 清仓嫌疑分析块（LLM 合成、失败降级为确定性 reason），紧跟表格——「这些 SKU 里
+        # 哪些疑似清仓」是对明细的二次判断，逻辑顺；在途提示是通用注意事项放其后。
+        elements.append(_md(clearance_hint))
     if not intransit_connected:
         elements.append(_md(
             "<font color='orange'>⚠️ 在途按 0 估（采购在途数据未接通），"
