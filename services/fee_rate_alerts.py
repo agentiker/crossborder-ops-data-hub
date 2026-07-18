@@ -69,6 +69,7 @@ class FeeRateDecision:
     baseline_gmv: float = 0.0
     message: Optional[str] = None
     skip_reason: Optional[str] = None
+    evidence: Optional[dict] = None
 
 
 def _dominant_currency(eval_by_ccy: dict[str, dict]) -> Optional[str]:
@@ -145,7 +146,17 @@ def build_decision(
         baseline_window_label=baseline_window_label,
         realtime=realtime,
     )
-    return FeeRateDecision(should_alert=True, message=message, **common)
+    evidence = build_fee_rate_evidence(
+        currency=currency,
+        eval_components=ev.get("components", {}),
+        eval_gmv=eval_gmv,
+        baseline_components=base.get("components", {}),
+        baseline_gmv=baseline_gmv,
+        eval_window_label=eval_window_label,
+        baseline_window_label=baseline_window_label,
+        realtime=realtime,
+    )
+    return FeeRateDecision(should_alert=True, message=message, evidence=evidence, **common)
 
 
 def _pct(value: float) -> str:
@@ -191,6 +202,133 @@ def _attributions(
     return out
 
 
+def _attribution_rows(
+    eval_components: dict, eval_gmv: float, baseline_components: dict, baseline_gmv: float, limit: int = 3
+) -> list[dict]:
+    """结构化分项归因，供飞书卡片/证据模块使用。"""
+    if not eval_components or not baseline_components or eval_gmv <= 0 or baseline_gmv <= 0:
+        return []
+    rows = []
+    for key in set(eval_components) & set(baseline_components):
+        ev_share = eval_components[key] / eval_gmv
+        base_share = baseline_components[key] / baseline_gmv
+        diff = ev_share - base_share
+        if diff >= _COMPONENT_ATTRIBUTION_MIN_PCT:
+            rows.append((diff, key, base_share, ev_share))
+    rows.sort(reverse=True)
+    return [
+        {
+            "key": key,
+            "name": component_label(key),
+            "from": base_share,
+            "to": ev_share,
+            "delta": diff,
+            "source_field": f"fee_tax_breakdown.fee.{key}",
+            "basis": "attribution",
+        }
+        for diff, key, base_share, ev_share in rows[:limit]
+    ]
+
+
+def build_fee_rate_evidence(
+    *,
+    currency: str,
+    eval_components: dict,
+    eval_gmv: float,
+    baseline_components: dict,
+    baseline_gmv: float,
+    eval_window_label: str,
+    baseline_window_label: str,
+    realtime: bool,
+) -> dict:
+    """构造“内部官方费用证据”：只描述已授权 Finance API 费用事实，不解释政策原因。"""
+    items = _attribution_rows(eval_components, eval_gmv, baseline_components, baseline_gmv)
+    mode = "attribution"
+    if not items:
+        mode = "current_components"
+        top = sorted(eval_components.items(), key=lambda kv: kv[1], reverse=True)[:3]
+        items = [
+            {
+                "key": key,
+                "name": component_label(key),
+                "from": None,
+                "to": (amt / eval_gmv) if eval_gmv > 0 else 0.0,
+                "delta": None,
+                "source_field": f"fee_tax_breakdown.fee.{key}",
+                "basis": "current_component",
+            }
+            for key, amt in top
+            if amt > 0
+        ]
+    return {
+        "source": "tiktok_finance_api",
+        "confidence": "high",
+        "mode": mode,
+        "currency": currency,
+        "eval_window": eval_window_label,
+        "baseline_window": baseline_window_label,
+        "realtime": realtime,
+        "fee_items": items,
+    }
+
+
+def evidence_fee_keys(evidence: Optional[dict]) -> list[str]:
+    """从内部证据提取费项 key，供官方公开资料检索匹配。"""
+    if not evidence:
+        return []
+    out = []
+    for item in evidence.get("fee_items") or []:
+        key = item.get("key")
+        if key:
+            out.append(str(key))
+    return out
+
+
+def format_evidence_lines(evidence: Optional[dict], *, limit: int = 2) -> list[str]:
+    """飞书文本 fallback 的内部证据行。"""
+    if not evidence:
+        return []
+    items = list(evidence.get("fee_items") or [])[:limit]
+    if not items:
+        return []
+    lines = ["🔎 检测依据（TikTok 官方费用字段）："]
+    for item in items:
+        name = item.get("name") or item.get("key") or "费用项"
+        if item.get("delta") is not None and item.get("from") is not None:
+            lines.append(
+                f"  • {name}：+{_pct(float(item['delta']))}"
+                f"（{_pct(float(item['from']))}→{_pct(float(item['to']))}）"
+            )
+        else:
+            lines.append(f"  • {name}：当前占 GMV {_pct(float(item.get('to') or 0.0))}")
+    return lines
+
+
+def format_policy_reference_lines(policy_references: Optional[list[dict]], *, limit: int = 2) -> list[str]:
+    """飞书文本 fallback 的官方公开参考资料行。"""
+    refs = list(policy_references or [])[:limit]
+    if not refs:
+        return []
+    lines = ["📚 官方参考资料："]
+    for ref in refs:
+        title = ref.get("title") or ref.get("url") or "TikTok 官方资料"
+        url = ref.get("url") or ""
+        source = ref.get("source") or "TikTok"
+        lines.append(f"  • {source}：{title} {url}".rstrip())
+    return lines
+
+
+def enrich_message_with_evidence(
+    message: str, *, evidence: Optional[dict] = None, policy_references: Optional[list[dict]] = None
+) -> str:
+    """给纯文本告警追加证据；卡片失败 fallback 时仍保留关键信息。"""
+    lines = [message]
+    extra = format_evidence_lines(evidence) + format_policy_reference_lines(policy_references)
+    if extra:
+        lines.extend(extra)
+    return "\n".join(lines)
+
+
 def _format_message(
     *,
     scope_display: str,
@@ -226,6 +364,21 @@ def _format_message(
     if comps:
         lines.append("当前主要扣费构成：")
         lines.extend(comps)
+    evidence_lines = format_evidence_lines(
+        build_fee_rate_evidence(
+            currency=currency,
+            eval_components=eval_components,
+            eval_gmv=eval_gmv,
+            baseline_components=baseline_components,
+            baseline_gmv=baseline_gmv,
+            eval_window_label=eval_window_label,
+            baseline_window_label=baseline_window_label,
+            realtime=realtime,
+        ),
+        limit=2,
+    )
+    if evidence_lines:
+        lines.extend(evidence_lines)
     lines.append("👉 请核对是否平台调佣 / 新增费项 / 活动费用，必要时复盘定价。")
     if realtime:
         lines.append("（注：基于未结算订单 TikTok 官方预估费率，反映最新费率政策；结算前即可发现调佣）")

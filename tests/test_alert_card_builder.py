@@ -100,6 +100,36 @@ def test_fee_rate_card_realtime_vs_settled():
     assert "52.0M" in _dump(rt)
 
 
+def test_fee_rate_card_shows_evidence_and_policy_refs():
+    card = build_fee_rate_card(
+        scope_display="s", currency="IDR", eval_rate=0.28, baseline_rate=0.20,
+        abs_change=0.08, eval_gmv=52_000_000.0,
+        eval_window_label="7/8~7/10", baseline_window_label="6/10~7/7",
+        realtime=True, board_url="",
+        evidence={
+            "fee_items": [{
+                "key": "dynamic_commission_amount",
+                "name": "动态佣金",
+                "from": 0.10,
+                "to": 0.14,
+                "delta": 0.04,
+                "source_field": "fee_tax_breakdown.fee.dynamic_commission_amount",
+            }],
+        },
+        policy_references=[{
+            "title": "TikTok Shop 佣金政策",
+            "url": "https://seller-id.tiktok.com/university/policy",
+            "source": "TikTok Shop Academy",
+        }],
+    )
+    s = _dump(card)
+    assert "检测依据" in s
+    assert "动态佣金" in s
+    assert "fee_tax_breakdown.fee.dynamic_commission_amount" not in s
+    assert "官方参考资料" in s
+    assert "https://seller-id.tiktok.com/university/policy" in s
+
+
 def test_hotsell_card_structure_and_cap():
     prods = [
         {"product_id": str(i), "units": 50 + i, "name": f"商品{i}", "is_new": i == 0}

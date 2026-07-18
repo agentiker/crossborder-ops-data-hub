@@ -231,7 +231,8 @@ def build_fee_rate_card(
     *, scope_display: str, realtime: bool, currency: str,
     eval_rate: float, baseline_rate: float, abs_change: float,
     eval_gmv: float, eval_window_label: str, baseline_window_label: str,
-    board_url: str = "",
+    board_url: str = "", evidence: Optional[dict] = None,
+    policy_references: Optional[list[dict]] = None,
 ) -> dict:
     kind = "及时费率（未结算预估）" if realtime else "平台扣点率（已结算）"
     lead = (f"{kind}异常升高：<font color='red'>**{eval_rate:.2%}**</font>"
@@ -248,6 +249,36 @@ def build_fee_rate_card(
         _md(f"<font color='grey'>窗口 GMV {currency} {_abbr(eval_gmv)} · 基准窗口 {baseline_window_label}</font>"),
         _hr(),
     ]
+    evidence_items = list((evidence or {}).get("fee_items") or [])[:3]
+    if evidence_items:
+        lines = ["**检测依据**"]
+        for item in evidence_items:
+            name = item.get("name") or item.get("key") or "费用项"
+            if item.get("delta") is not None and item.get("from") is not None:
+                lines.append(
+                    f"• {name} +{float(item['delta']):.2%}"
+                    f"（{float(item['from']):.2%}→{float(item['to']):.2%}）"
+                )
+            else:
+                lines.append(f"• {name} 当前占 GMV {float(item.get('to') or 0):.2%}")
+        elements.append(_md("\n".join(lines)))
+        elements.append(_hr())
+
+    refs = list(policy_references or [])[:2]
+    if refs:
+        lines = ["**官方参考资料**"]
+        for ref in refs:
+            title = ref.get("title") or "TikTok 官方资料"
+            url = ref.get("url") or ""
+            source = ref.get("source") or "TikTok"
+            if url:
+                lines.append(f"• [{title}]({url})")
+            else:
+                lines.append(f"• {title}")
+            lines.append(f"<font color='grey'>  来源：{source}</font>")
+        elements.append(_md("\n".join(lines)))
+        elements.append(_hr())
+
     btn = _board_button(board_url, "看费率监控")
     if btn:
         elements.append(btn)

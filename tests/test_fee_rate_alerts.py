@@ -126,6 +126,28 @@ def test_decision_alerts_on_rise_over_thresholds():
     assert d.currency == "IDR"
     assert d.message and "扣点率异常升高" in d.message
     assert abs(d.abs_change - 0.08) < 1e-9
+    assert d.evidence
+    assert d.evidence["source"] == "tiktok_finance_api"
+    assert d.evidence["mode"] == "current_components"
+    assert d.evidence["fee_items"][0]["source_field"] == "fee_tax_breakdown.fee.platform_commission_amount"
+    assert "检测依据" in d.message
+    assert "fee_tax_breakdown" not in d.message
+
+
+def test_decision_evidence_uses_attribution_when_components_overlap():
+    """两侧有同名费项且涨幅过归因阈值 → evidence 标注具体升幅来源。"""
+    d = fee_rate_alerts.build_decision(
+        eval_by_ccy=_ccy(0.28, 50000, components={"platform_commission_amount": 14000.0}),
+        baseline_by_ccy=_ccy(0.20, 50000, components={"platform_commission_amount": 10000.0}),
+        **_KW,
+    )
+    assert d.should_alert is True
+    item = d.evidence["fee_items"][0]
+    assert d.evidence["mode"] == "attribution"
+    assert item["key"] == "platform_commission_amount"
+    assert round(item["from"], 4) == 0.2
+    assert round(item["to"], 4) == 0.28
+    assert round(item["delta"], 4) == 0.08
 
 
 def test_decision_no_alert_on_drop():

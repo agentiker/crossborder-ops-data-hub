@@ -358,8 +358,20 @@ def _scan_fee_rate(session, *, account, open_id, scope, scope_id, dry_run: bool)
     if prev is not None and prev.last_window_end is not None and prev.last_window_end >= eval_end:
         return f"{account}/扣点率: 不推送（窗口 {eval_end} 已报过）"
 
+    from services.tiktok_policy_evidence import get_policy_references
+
+    policy_refs = get_policy_references(
+        country=scope.country,
+        fee_keys=fee_rate_alerts.evidence_fee_keys(decision.evidence),
+        alert_date=eval_end,
+    )
+    text = fee_rate_alerts.enrich_message_with_evidence(
+        decision.message or "",
+        policy_references=policy_refs,
+    )
+
     if dry_run:
-        print(f"[alert][dry-run] 扣点率 → {account}/{open_id}:\n{decision.message}")
+        print(f"[alert][dry-run] 扣点率 → {account}/{open_id}:\n{text}")
         return f"{account}/扣点率: 待推送 升至 {decision.eval_rate:.2%}（dry-run）"
 
     from web.alert_card_builder import build_fee_rate_card
@@ -372,8 +384,10 @@ def _scan_fee_rate(session, *, account, open_id, scope, scope_id, dry_run: bool)
         eval_window_label=_fmt_window(eval_start, eval_end),
         baseline_window_label=_fmt_window(baseline_start, baseline_end),
         board_url=_board_url(account),
+        evidence=decision.evidence,
+        policy_references=policy_refs,
     )
-    sent = send_alert(account=account, open_id=open_id, text=decision.message, card=card)
+    sent = send_alert(account=account, open_id=open_id, text=text, card=card)
     if sent:
         upsert_fee_rate_alert_state(
             session,
@@ -437,8 +451,20 @@ def _scan_unsettled_fee_rate(session, *, account, open_id, scope, scope_id, dry_
     if prev is not None and prev.last_window_end is not None and prev.last_window_end >= eval_end:
         return f"{account}/及时费率: 不推送（窗口 {eval_end} 已报过）"
 
+    from services.tiktok_policy_evidence import get_policy_references
+
+    policy_refs = get_policy_references(
+        country=scope.country,
+        fee_keys=fee_rate_alerts.evidence_fee_keys(decision.evidence),
+        alert_date=eval_end,
+    )
+    text = fee_rate_alerts.enrich_message_with_evidence(
+        decision.message or "",
+        policy_references=policy_refs,
+    )
+
     if dry_run:
-        print(f"[alert][dry-run] 及时费率 → {account}/{open_id}:\n{decision.message}")
+        print(f"[alert][dry-run] 及时费率 → {account}/{open_id}:\n{text}")
         return f"{account}/及时费率: 待推送 预估升至 {decision.eval_rate:.2%}（dry-run）"
 
     from web.alert_card_builder import build_fee_rate_card
@@ -451,8 +477,10 @@ def _scan_unsettled_fee_rate(session, *, account, open_id, scope, scope_id, dry_
         eval_window_label=_fmt_window(eval_start, eval_end),
         baseline_window_label=_fmt_window(baseline_start, baseline_end),
         board_url=_board_url(account),
+        evidence=decision.evidence,
+        policy_references=policy_refs,
     )
-    sent = send_alert(account=account, open_id=open_id, text=decision.message, card=card)
+    sent = send_alert(account=account, open_id=open_id, text=text, card=card)
     if sent:
         upsert_fee_rate_alert_state(
             session,
