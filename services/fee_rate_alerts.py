@@ -306,6 +306,8 @@ def format_evidence_lines(evidence: Optional[dict], *, limit: int = 2) -> list[s
 
 def format_policy_reference_lines(policy_references: Optional[list[dict]], *, limit: int = 2) -> list[str]:
     """飞书文本 fallback 的官方公开参考资料行。"""
+    if policy_references is not None and not policy_references:
+        return ["📚 官方参考资料：未匹配到近期高相关 TikTok 官方公开资料。"]
     refs = list(policy_references or [])[:limit]
     if not refs:
         return []

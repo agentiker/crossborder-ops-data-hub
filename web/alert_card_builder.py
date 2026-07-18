@@ -265,17 +265,20 @@ def build_fee_rate_card(
         elements.append(_hr())
 
     refs = list(policy_references or [])[:2]
-    if refs:
+    if policy_references is not None:
         lines = ["**官方参考资料**"]
-        for ref in refs:
-            title = ref.get("title") or "TikTok 官方资料"
-            url = ref.get("url") or ""
-            source = ref.get("source") or "TikTok"
-            if url:
-                lines.append(f"• [{title}]({url})")
-            else:
-                lines.append(f"• {title}")
-            lines.append(f"<font color='grey'>  来源：{source}</font>")
+        if refs:
+            for ref in refs:
+                title = ref.get("title") or "TikTok 官方资料"
+                url = ref.get("url") or ""
+                source = ref.get("source") or "TikTok"
+                if url:
+                    lines.append(f"• [{title}]({url})")
+                else:
+                    lines.append(f"• {title}")
+                lines.append(f"<font color='grey'>  来源：{source}</font>")
+        else:
+            lines.append("<font color='grey'>未匹配到近期高相关 TikTok 官方公开资料。</font>")
         elements.append(_md("\n".join(lines)))
         elements.append(_hr())
 

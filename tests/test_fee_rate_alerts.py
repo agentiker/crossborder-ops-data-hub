@@ -150,6 +150,11 @@ def test_decision_evidence_uses_attribution_when_components_overlap():
     assert round(item["delta"], 4) == 0.08
 
 
+def test_enrich_message_shows_empty_policy_ref_state():
+    text = fee_rate_alerts.enrich_message_with_evidence("告警", policy_references=[])
+    assert "未匹配到近期高相关" in text
+
+
 def test_decision_no_alert_on_drop():
     """费率下降不报（对卖家是好事）。"""
     d = fee_rate_alerts.build_decision(

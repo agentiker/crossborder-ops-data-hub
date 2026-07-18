@@ -130,6 +130,18 @@ def test_fee_rate_card_shows_evidence_and_policy_refs():
     assert "https://seller-id.tiktok.com/university/policy" in s
 
 
+def test_fee_rate_card_shows_empty_policy_ref_state():
+    card = build_fee_rate_card(
+        scope_display="s", currency="IDR", eval_rate=0.28, baseline_rate=0.20,
+        abs_change=0.08, eval_gmv=52_000_000.0,
+        eval_window_label="7/8~7/10", baseline_window_label="6/10~7/7",
+        realtime=True, board_url="", evidence=None, policy_references=[],
+    )
+    s = _dump(card)
+    assert "官方参考资料" in s
+    assert "未匹配到近期高相关" in s
+
+
 def test_hotsell_card_structure_and_cap():
     prods = [
         {"product_id": str(i), "units": 50 + i, "name": f"商品{i}", "is_new": i == 0}
