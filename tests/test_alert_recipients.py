@@ -65,7 +65,7 @@ def test_scan_one_resolves_scope_per_recipient_account(session, monkeypatch):
 
     captured = {}
 
-    def fake_rule(sess, *, account, open_id, scope, scope_id, dry_run):
+    def fake_rule(sess, *, account, open_id, scope, scope_id, dry_run, send_account=None):
         captured[account] = list(scope.shop_ids)
         return "ok"
 
@@ -104,8 +104,10 @@ def _patch_all(session, monkeypatch):
 
 
 def _patch_rules(monkeypatch, captured):
-    def fake_rule(sess, *, account, open_id, scope, scope_id, dry_run):
+    def fake_rule(sess, *, account, open_id, scope, scope_id, dry_run, send_account=None):
         captured["shops"] = sorted(scope.shop_ids)
+        captured["send_account"] = send_account or account
+        captured["scope_id"] = scope_id
         return "ok"
 
     for r in ("_scan_fulfillment", "_scan_stock", "_scan_fee_rate",
@@ -188,3 +190,50 @@ def test_subscription_beyond_permission_is_clamped(session, monkeypatch):
     out = scan._scan_one({"account": "ecom-app", "open_id": "ou_op2", "scope_id": "only-s2"},
                          dry_run=True)
     assert len(out) == 1 and "跳过" in out[0]
+
+
+def test_ops_cc_uses_source_account_scope_and_send_account(session, monkeypatch):
+    """运维抄送：客户租户解析全店范围，飞书投递账号切到 main-app，游标独立。"""
+    from models.base_models import PlatformToken
+    from services import scope_resolution, user_authz
+
+    _use(session, monkeypatch)
+    monkeypatch.setattr(scope_resolution, "SessionLocal", lambda: session)
+    monkeypatch.setattr(user_authz, "SessionLocal", lambda: session)
+    session.add(PlatformToken(
+        platform="tiktok_shop", country="ID", shop_id="s_gtl",
+        account_id="ecom-app-gtl", scope_key="tk",
+    ))
+    session.commit()
+
+    captured = {}
+
+    def fake_rule(sess, *, account, open_id, scope, scope_id, dry_run, send_account=None):
+        captured["account"] = account
+        captured["open_id"] = open_id
+        captured["shops"] = sorted(scope.shop_ids)
+        captured["scope_id"] = scope_id
+        captured["send_account"] = send_account
+        return "ok"
+
+    for r in ("_scan_fulfillment", "_scan_stock", "_scan_fee_rate",
+              "_scan_unsettled_fee_rate", "_scan_hotsell"):
+        monkeypatch.setattr(scan, r, fake_rule)
+
+    out = scan._scan_one({
+        "account": "ecom-app-gtl",
+        "open_id": "ou_ops",
+        "scope_id": None,
+        "send_account": "main-app",
+        "bypass_user_authz": True,
+        "scope_state_id": "ops-cc:main-app:all",
+    }, dry_run=True)
+
+    assert out == ["ok", "ok", "ok", "ok", "ok"]
+    assert captured == {
+        "account": "ecom-app-gtl",
+        "open_id": "ou_ops",
+        "shops": ["s_gtl"],
+        "scope_id": "ops-cc:main-app:all",
+        "send_account": "main-app",
+    }

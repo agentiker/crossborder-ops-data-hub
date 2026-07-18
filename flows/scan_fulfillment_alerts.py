@@ -48,7 +48,7 @@ from services.metrics_store import (
     upsert_stock_alert_state,
 )
 from services.stock_metrics import get_stock_risk
-from services.scope_resolution import ScopeError
+from services.scope_resolution import ScopeError, resolve_filters
 
 # 收件人**真相源 = alert_recipients 表**（plan/09 Phase 6 迁 DB）。下面常量仅作
 # **空表回落**：表未建/未 seed 时退回它，保证迁移过渡期告警不静默中断（会打日志提示）。
@@ -182,7 +182,9 @@ def _board_url(account: str) -> str:
         return ""
 
 
-def _scan_fulfillment(session, *, account, open_id, scope, scope_id, dry_run: bool) -> str:
+def _scan_fulfillment(
+    session, *, account, open_id, scope, scope_id, dry_run: bool, send_account: Optional[str] = None
+) -> str:
     """待发货超时规则：评估并（必要时）投递。返回一行状态。"""
     metrics = get_pending_fulfillments(
         platform=scope.platform,
@@ -217,7 +219,7 @@ def _scan_fulfillment(session, *, account, open_id, scope, scope_id, dry_run: bo
             board_url=_board_url(account),
         )
         sent = send_alert(
-            account=account, open_id=open_id, text=decision.message, card=card
+            account=send_account or account, open_id=open_id, text=decision.message, card=card
         )
         if sent:
             upsert_fulfillment_alert_state(
@@ -246,7 +248,9 @@ def _scan_fulfillment(session, *, account, open_id, scope, scope_id, dry_run: bo
     return f"{account}/待发货: 不推送 overdue={decision.overdue}"
 
 
-def _scan_stock(session, *, account, open_id, scope, scope_id, dry_run: bool) -> str:
+def _scan_stock(
+    session, *, account, open_id, scope, scope_id, dry_run: bool, send_account: Optional[str] = None
+) -> str:
     """低库存/断货规则：评估并（必要时）投递。返回一行状态。"""
     risk = get_stock_risk(
         platform=scope.platform,
@@ -281,7 +285,7 @@ def _scan_stock(session, *, account, open_id, scope, scope_id, dry_run: bool) ->
             critical_days=get_config_int("stock_cover_critical_days", account_id=account),
         )
         sent = send_alert(
-            account=account, open_id=open_id, text=decision.message, card=card
+            account=send_account or account, open_id=open_id, text=decision.message, card=card
         )
         if sent:
             upsert_stock_alert_state(
@@ -314,7 +318,9 @@ def _fmt_window(start, end) -> str:
     return f"{start.month}/{start.day}~{end.month}/{end.day}"
 
 
-def _scan_fee_rate(session, *, account, open_id, scope, scope_id, dry_run: bool) -> str:
+def _scan_fee_rate(
+    session, *, account, open_id, scope, scope_id, dry_run: bool, send_account: Optional[str] = None
+) -> str:
     """扣点率异常规则：评估窗口费率 vs 基准均值，异常升高则（必要时）投递。返回一行状态。
 
     结算滞后口径：评估窗口取「今天 − settle_lag」回看一段已结算完的天；基准取其前若干天。
@@ -387,7 +393,7 @@ def _scan_fee_rate(session, *, account, open_id, scope, scope_id, dry_run: bool)
         evidence=decision.evidence,
         policy_references=policy_refs,
     )
-    sent = send_alert(account=account, open_id=open_id, text=text, card=card)
+    sent = send_alert(account=send_account or account, open_id=open_id, text=text, card=card)
     if sent:
         upsert_fee_rate_alert_state(
             session,
@@ -403,7 +409,9 @@ def _scan_fee_rate(session, *, account, open_id, scope, scope_id, dry_run: bool)
     return f"{account}/扣点率: 推送失败（游标不更新，下轮重试）"
 
 
-def _scan_unsettled_fee_rate(session, *, account, open_id, scope, scope_id, dry_run: bool) -> str:
+def _scan_unsettled_fee_rate(
+    session, *, account, open_id, scope, scope_id, dry_run: bool, send_account: Optional[str] = None
+) -> str:
     """及时费率告警（预估口径）：最近 N 天 unsettled 预估费率 vs 历史已结算费率基准。
 
     与 _scan_fee_rate（结算口径，有滞后）互补：unsettled 反映平台**最新费率政策**，平台一调佣
@@ -480,7 +488,7 @@ def _scan_unsettled_fee_rate(session, *, account, open_id, scope, scope_id, dry_
         evidence=decision.evidence,
         policy_references=policy_refs,
     )
-    sent = send_alert(account=account, open_id=open_id, text=text, card=card)
+    sent = send_alert(account=send_account or account, open_id=open_id, text=text, card=card)
     if sent:
         upsert_fee_rate_alert_state(
             session,
@@ -496,7 +504,9 @@ def _scan_unsettled_fee_rate(session, *, account, open_id, scope, scope_id, dry_
     return f"{account}/及时费率: 推送失败（游标不更新，下轮重试）"
 
 
-def _scan_hotsell(session, *, account, open_id, scope, scope_id, dry_run: bool) -> str:
+def _scan_hotsell(
+    session, *, account, open_id, scope, scope_id, dry_run: bool, send_account: Optional[str] = None
+) -> str:
     """爆单规则：某商品当日已付款销量破阈值即提醒。当日去重。返回一行状态。"""
     today = business_today()
     units_by_product = get_units_by_product(
@@ -541,7 +551,7 @@ def _scan_hotsell(session, *, account, open_id, scope, scope_id, dry_run: bool) 
             ],
             board_url=_board_url(account),
         )
-        sent = send_alert(account=account, open_id=open_id, text=decision.message, card=card)
+        sent = send_alert(account=send_account or account, open_id=open_id, text=decision.message, card=card)
         if sent:
             upsert_hotsell_alert_state(
                 session,
@@ -598,21 +608,52 @@ def _resolve_recipient_scope(account: str, open_id: str, subscription_scope_key)
     return scope, None
 
 
+def _ops_cc_recipient() -> Optional[dict]:
+    """运维抄送收件人：用客户租户取数，用运维 app 投递。
+
+    配置沿用补货抄送三元组；缺一即关闭。scope_state_id 单独命名，避免被客户正式收件人的
+    同窗口去重游标挡掉。
+    """
+    cc_account = settings.replenishment_cc_account
+    cc_open_id = settings.replenishment_cc_open_id
+    source_account = settings.replenishment_cc_source_account
+    if not (cc_account and cc_open_id and source_account):
+        return None
+    return {
+        "account": source_account,
+        "open_id": cc_open_id,
+        "scope_id": None,
+        "send_account": cc_account,
+        "bypass_user_authz": True,
+        "scope_state_id": f"ops-cc:{cc_account}:all",
+    }
+
+
 def _scan_one(recipient: dict, *, dry_run: bool) -> list[str]:
     """评估一个收件人的全部告警规则（待发货 + 库存 + 扣点率 + 及时费率 + 爆单）。返回各规则状态行列表。"""
     from core.tenancy import set_current_account
 
     account = recipient["account"]
     open_id = recipient["open_id"]
+    send_account = recipient.get("send_account") or account
     scope_id = recipient.get("scope_id")
+    state_scope_id = recipient.get("scope_state_id", scope_id)
     set_current_account(account)  # ORM 自动过滤按本收件人租户隔离
 
-    # 范围 = 用户授权(user_roles，与看板同源) ∩ 订阅(scope_id，可选收窄)；解析失败 fail-closed。
-    scope, skip_reason = _resolve_recipient_scope(account, open_id, scope_id)
-    if scope is None:
-        msg = f"{account}/{open_id[-6:]}: 跳过（{skip_reason}）"
-        print(f"[alert] {msg}")
-        return [msg]
+    if recipient.get("bypass_user_authz"):
+        try:
+            scope = resolve_filters(scope_key=scope_id, account_id=account)
+        except ScopeError as exc:
+            msg = f"{account}->{send_account}/{open_id[-6:]}: 跳过（运维抄送范围解析失败：{exc}）"
+            print(f"[alert] {msg}")
+            return [msg]
+    else:
+        # 范围 = 用户授权(user_roles，与看板同源) ∩ 订阅(scope_id，可选收窄)；解析失败 fail-closed。
+        scope, skip_reason = _resolve_recipient_scope(account, open_id, scope_id)
+        if scope is None:
+            msg = f"{account}/{open_id[-6:]}: 跳过（{skip_reason}）"
+            print(f"[alert] {msg}")
+            return [msg]
     session = SessionLocal()
     try:
         lines = []
@@ -626,8 +667,9 @@ def _scan_one(recipient: dict, *, dry_run: bool) -> list[str]:
                         account=account,
                         open_id=open_id,
                         scope=scope,
-                        scope_id=scope_id,
+                        scope_id=state_scope_id,
                         dry_run=dry_run,
+                        send_account=send_account,
                     )
                 )
             except Exception as exc:  # 单条规则失败不影响其他规则
@@ -646,7 +688,12 @@ def scan_fulfillment_alerts_flow(dry_run: bool = False):
         return []
 
     results = []
-    for recipient in load_recipients():
+    recipients = load_recipients()
+    ops_cc = _ops_cc_recipient()
+    if ops_cc is not None:
+        recipients.append(ops_cc)
+
+    for recipient in recipients:
         try:
             results.extend(_scan_one(recipient, dry_run=dry_run))
         except Exception as exc:  # 单个收件人失败不影响其他人
