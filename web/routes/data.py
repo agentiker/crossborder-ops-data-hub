@@ -148,7 +148,7 @@ ORDERS_CALIBER = (
     "展示口径（create_time 归日、印尼当地时间 UTC+7）；"
     "GMV=订单 sub_total（商品小计，不含运费/税/优惠）、含所有订单状态含已取消、含 COD 在途单，与 TikTok 后台 GMV 精确一致；"
     "订单数同口径含取消（对齐后台订单管理列表）；"
-    "销量（件）=已付款口径 line_item 条数（排除已取消/未付款），对齐 TikTok 后台 Analytics 的 Items sold，故销量与订单数口径刻意不同；"
+    "销量=已付款口径成交 SKU 条数（line_item 条数，排除已取消/未付款），对齐 TikTok 后台 Analytics 的 Items sold；组合 SKU（多件套装）按 1 个 SKU 计、不拆成分件，物理件数需乘成分件数，故销量与订单数口径刻意不同；"
     "客单价=GMV/订单数；来源 TikTok /order/202309/orders/search"
 )
 TOP_SKUS_CALIBER = (
@@ -726,7 +726,7 @@ async def get_orders_summary(
     """订单 GMV/订单量/销量/客单价汇总，默认最近7天（展示口径，create_time 归日，印尼当地时间 UTC+7）。
 
     相对时间（今天/本周/近7天…）传 `period` 参数，服务端按印尼时区+周一起算，**不要自己算日期**。
-    口径见响应 `caliber` 字段（ORDERS_CALIBER）：GMV/订单数含取消对齐后台，销量（件）为已付款口径
+    口径见响应 `caliber` 字段（ORDERS_CALIBER）：GMV/订单数含取消对齐后台，销量为已付款口径（成交 SKU 条数，组合 SKU 按 1 计）
     排除取消/未付款对齐后台 Items sold。
     """
     scope = _resolve_scope(

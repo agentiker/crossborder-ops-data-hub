@@ -1494,7 +1494,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
       tooltip: { trigger: "axis" as const, ...tip },
       // 图例置顶（原 bottom:0 会和 X 轴标签重叠压字）：与 X 轴彻底分离。
       legend: {
-        data: ["订单数", "销量（件）"],
+        data: ["订单数", "销量（SKU）"],
         top: 0,
         left: "center",
         textStyle: { color: t.sub, fontSize: 11 },
@@ -1515,7 +1515,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           itemStyle: { color: t.positive },
         },
         {
-          name: "销量（件）",
+          name: "销量（SKU）",
           type: "bar",
           data: barData((p) => p.units_sold),
           itemStyle: { color: t.warning, borderRadius: [4, 4, 0, 0] },
@@ -1528,7 +1528,7 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
 
   const tabs: { id: OverviewTab; label: string }[] = [
     { id: "sales", label: "销售趋势" },
-    { id: "orders", label: "订单 / 销量（件）" },
+    { id: "orders", label: "订单 / 销量（SKU）" },
   ];
 
   // 窗口含今日：当期含半天今天,环比已在后端按 intraday 公平比较（不再假暴跌），此处再显眼
@@ -1592,14 +1592,14 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
           className="lg:col-span-2"
           loading={loading}
           change={ch?.units_sold}
-          title="销量（件）"
+          title="销量（SKU）"
           value={fmtInt(o?.units_sold)}
           subtitle="不含已取消和未付款"
           icon={<Package size={14} />}
           info={
             <InfoTooltip
               align="start"
-              content="实际售出的商品件数（买 3 件同款算 3），按已付款口径统计、排除已取消/未付款单，与后台「数据罗盘 / Analytics」的 Items sold 口径一致。一单可含多件，故与订单数不成简单倍数关系。"
+              content="按已付款口径统计、排除已取消/未付款单，与后台「数据罗盘 / Analytics」的 Items sold 口径一致。按成交 SKU 计数：组合 SKU（多件套装，如 4 件组合）按 1 个 SKU 计、不拆成分件——若需物理件数，乘以组合的成分件数。一单可含多件，故与订单数不成简单倍数关系。"
             >
               <Info className="h-3.5 w-3.5" />
             </InfoTooltip>
