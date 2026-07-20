@@ -1,5 +1,5 @@
 import { lazy } from "react";
-import { Routes, Route } from "react-router-dom";
+import { Navigate, Routes, Route } from "react-router-dom";
 import { AppShell } from "@/components/shell/AppShell";
 import { ChatPage } from "@/pages/ChatPage";
 import { ImageViewerProvider } from "@/components/ImageViewer";
@@ -15,6 +15,9 @@ const SkillsPage = lazy(() => import("@/pages/SkillsPage").then((m) => ({ defaul
 const ScheduledPage = lazy(() =>
   import("@/pages/ScheduledPage").then((m) => ({ default: m.ScheduledPage })),
 );
+const SystemScheduledPage = lazy(() =>
+  import("@/pages/SystemScheduledPage").then((m) => ({ default: m.SystemScheduledPage })),
+);
 const FxPage = lazy(() => import("@/pages/FxPage").then((m) => ({ default: m.FxPage })));
 const CostPage = lazy(() => import("@/pages/CostPage").then((m) => ({ default: m.CostPage })));
 
@@ -28,7 +31,9 @@ export function App() {
           <Route index element={<ChatPage />} />
           <Route path="c/:id" element={<ChatPage />} />
           <Route path="skills" element={<SkillsPage />} />
-          <Route path="scheduled" element={<ScheduledPage />} />
+          <Route path="scheduled" element={<Navigate to="/scheduled/system" replace />} />
+          <Route path="scheduled/system" element={<SystemScheduledPage />} />
+          <Route path="scheduled/custom" element={<ScheduledPage />} />
           <Route path="board" element={<BoardPage />} />
           <Route path="fx" element={<FxPage />} />
           <Route path="costs" element={<CostPage />} />

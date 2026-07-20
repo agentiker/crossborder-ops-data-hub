@@ -85,11 +85,15 @@ class _SPAStaticFiles(StaticFiles):
 
     async def get_response(self, path, scope):
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
         except StarletteHTTPException as exc:
-            if exc.status_code == 404:
-                return await super().get_response("index.html", scope)
-            raise
+            if exc.status_code == 404 and not path.startswith(("assets/", "fonts/")):
+                response = await super().get_response("index.html", scope)
+            else:
+                raise
+        if response.headers.get("content-type", "").startswith("text/html"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
 
 
 _SPA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")

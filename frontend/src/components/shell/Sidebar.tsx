@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   ArrowRightLeft,
   Calendar,
+  CalendarClock,
   ChevronDown,
   Coins,
   Database,
@@ -13,6 +14,7 @@ import {
   Plus,
   ShieldCheck,
   SlidersHorizontal,
+  Timer,
   Trash2,
   UserRound,
   Users,
@@ -45,7 +47,6 @@ interface NavItem {
 // 顶级导航（平铺）。可展开父组（基础数据 / 管理）见下方 GROUP 定义。
 const NAV: NavItem[] = [
   { to: "/", label: "新建对话", icon: Plus, end: true },
-  { to: "/scheduled", label: "定时任务", icon: Calendar, badge: "待开发" },
   { to: "/skills", label: "技能", icon: Zap, badge: "待开发" },
   { to: "/board", label: "看板", icon: LayoutDashboard },
 ];
@@ -63,6 +64,16 @@ const BASE_DATA_GROUP: NavGroup = {
   children: [
     { to: "/fx", label: "汇率", icon: ArrowRightLeft },
     { to: "/costs", label: "马帮成本", icon: Coins },
+  ],
+};
+
+// 「定时任务」父组：系统托管任务台账 + 用户自定义任务分开，避免生产自动化和自由 prompt 混淆。
+const SCHEDULED_GROUP: NavGroup = {
+  label: "定时任务",
+  icon: Calendar,
+  children: [
+    { to: "/scheduled/system", label: "系统任务", icon: CalendarClock },
+    { to: "/scheduled/custom", label: "我的任务", icon: Timer, badge: "待开发" },
   ],
 };
 
@@ -139,7 +150,7 @@ function NavGroupBlock({
         />
       </button>
       {open &&
-        group.children.map(({ to, label, icon: Icon }) => (
+        group.children.map(({ to, label, icon: Icon, badge }) => (
           <NavLink
             key={to}
             to={to}
@@ -155,6 +166,11 @@ function NavGroupBlock({
           >
             <Icon className="size-4 shrink-0" />
             <span className="truncate">{label}</span>
+            {badge && (
+              <span className="ml-auto shrink-0 rounded-full bg-caution/15 px-1.5 py-0.5 text-[10px] font-medium text-caution">
+                {badge}
+              </span>
+            )}
           </NavLink>
         ))}
     </>
@@ -242,6 +258,14 @@ export function SidebarContent({
             )}
           </NavLink>
         ))}
+
+        <NavGroupBlock
+          group={SCHEDULED_GROUP}
+          collapsed={collapsed}
+          pathname={pathname}
+          onNavigate={onNavigate}
+          navCls={navCls}
+        />
 
         {/* 「基础数据」父组（所有登录用户可见）：汇率 + 马帮成本 */}
         <NavGroupBlock

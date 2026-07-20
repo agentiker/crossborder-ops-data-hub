@@ -112,6 +112,69 @@ def test_unregistered_forbidden(_db, path, method, body):
     assert r.status_code == 403
 
 
+def test_system_tasks_requires_auth():
+    assert TestClient(app).get("/api/admin/scheduled/system-tasks").status_code == 401
+
+
+def test_system_tasks_operator_readonly(_db, monkeypatch):
+    calls = []
+
+    def fake_snapshot(*, account_id, role):
+        calls.append((account_id, role))
+        return {
+            "generated_at": "2026-07-19T01:00:00+00:00",
+            "account_id": account_id,
+            "role": role,
+            "summary": {
+                "total": 1,
+                "enabled": 1,
+                "failed": 0,
+                "customer_touching": 0,
+                "next_run": "Sun 2026-07-19 09:10:00 CST",
+            },
+            "capabilities": [{
+                "id": "core-sync",
+                "name": "核心数据同步",
+                "group": "数据同步",
+                "touches_customer": False,
+                "enabled": True,
+                "status": "ok",
+                "summary": "1/1 个底层任务启用",
+                "task_ids": ["sync-orders"],
+            }],
+            "runs": [{
+                "id": "sync-orders",
+                "name": "订单同步",
+                "group": "数据同步",
+                "kind": "systemd",
+                "source": "systemd",
+                "unit": None,
+                "description": "每 15 分钟同步 TikTok 订单",
+                "capability_id": "订单数据",
+                "touches_customer": False,
+                "business_visible": True,
+                "schedule": None,
+                "enabled": True,
+                "active": True,
+                "status": "ok",
+                "last_run": "Sun 2026-07-19 08:53:00 CST",
+                "next_run": "Sun 2026-07-19 09:10:00 CST",
+                "last_result": "success",
+                "log_excerpt": "",
+                "error": None,
+            }],
+        }
+
+    monkeypatch.setattr(admin_mod, "get_system_task_snapshot", fake_snapshot)
+    _login(OPER)
+    r = TestClient(app).get("/api/admin/scheduled/system-tasks")
+    assert r.status_code == 200
+    assert calls == [("ecom-app", "operator")]
+    body = r.json()
+    assert body["summary"]["enabled"] == 1
+    assert body["runs"][0]["unit"] is None
+
+
 # ── boss 正常流程 ──────────────────────────────────────────────────────────────
 
 

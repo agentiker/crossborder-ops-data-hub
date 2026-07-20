@@ -41,6 +41,7 @@ from services.scope_resolution import (
 )
 from services.shop_directory import get_shop_names
 from services.user_authz import UserPermission, get_user_permission
+from services.system_tasks import get_system_task_snapshot
 from web.web_security import require_web_user_api
 
 router = APIRouter(prefix="/api/admin", tags=["管理"])
@@ -114,6 +115,59 @@ class ScopeOptionOut(BaseModel):
 
 class ScopeListOut(BaseModel):
     items: list[ScopeOptionOut]
+
+
+class SystemTaskOut(BaseModel):
+    id: str
+    name: str
+    group: str
+    kind: str
+    source: str
+    unit: Optional[str] = None
+    description: str
+    capability_id: Optional[str] = None
+    touches_customer: bool
+    business_visible: bool
+    schedule: Optional[str] = None
+    enabled: bool
+    active: bool
+    status: str
+    last_run: Optional[str] = None
+    next_run: Optional[str] = None
+    last_result: str
+    log_excerpt: str = ""
+    error: Optional[str] = None
+    recipient_summary: Optional[dict] = None
+
+
+class SystemCapabilityOut(BaseModel):
+    id: str
+    name: str
+    group: str
+    touches_customer: bool
+    enabled: bool
+    status: str
+    summary: str
+    task_ids: list[str]
+
+
+class SystemTaskSummaryOut(BaseModel):
+    total: int
+    enabled: int
+    failed: int
+    customer_touching: int
+    next_run: Optional[str] = None
+    next_run_task_id: Optional[str] = None
+    next_run_task_name: Optional[str] = None
+
+
+class SystemTaskSnapshotOut(BaseModel):
+    generated_at: str
+    account_id: str
+    role: str
+    summary: SystemTaskSummaryOut
+    capabilities: list[SystemCapabilityOut]
+    runs: list[SystemTaskOut]
 
 
 # ── 路由 ───────────────────────────────────────────────────────────────────────
@@ -246,6 +300,22 @@ async def list_admin_scopes(boss: UserPermission = Depends(require_boss)):
             for sid in shop_ids
         ]
     return ScopeListOut(items=items)
+
+
+@router.get(
+    "/scheduled/system-tasks",
+    response_model=SystemTaskSnapshotOut,
+    include_in_schema=False,
+)
+async def scheduled_system_tasks(
+    perm: UserPermission = Depends(require_web_user_api),
+):
+    """只读系统任务快照。
+
+    boss 可见完整任务与日志摘要；operator 仅见业务相关任务，日志和底层 unit 名由 service 层隐藏。
+    """
+    set_current_account(perm.account_id)
+    return get_system_task_snapshot(account_id=perm.account_id, role=perm.role)
 
 
 @router.post("/roles/deactivate", response_model=RoleOut, include_in_schema=False)

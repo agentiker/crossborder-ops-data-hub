@@ -394,6 +394,58 @@ export interface BizConfigRow {
   is_overridden: boolean;
 }
 
+// ── 系统任务（只读）：systemd timer + openclaw cron 状态快照 ──
+export interface SystemTaskRun {
+  id: string;
+  name: string;
+  group: string;
+  kind: string;
+  source: "systemd" | "openclaw" | string;
+  unit: string | null;
+  description: string;
+  capability_id: string | null;
+  touches_customer: boolean;
+  business_visible: boolean;
+  schedule: string | null;
+  enabled: boolean;
+  active: boolean;
+  status: "ok" | "failed" | "disabled" | "missing" | "degraded" | "unknown" | string;
+  last_run: string | null;
+  next_run: string | null;
+  last_result: string;
+  log_excerpt: string;
+  error: string | null;
+  recipient_summary?: { active_recipients?: number | null; recipient_names?: string[] } | null;
+}
+
+export interface SystemTaskCapability {
+  id: string;
+  name: string;
+  group: string;
+  touches_customer: boolean;
+  enabled: boolean;
+  status: string;
+  summary: string;
+  task_ids: string[];
+}
+
+export interface SystemTaskSnapshot {
+  generated_at: string;
+  account_id: string;
+  role: string;
+  summary: {
+    total: number;
+    enabled: number;
+    failed: number;
+    customer_touching: number;
+    next_run: string | null;
+    next_run_task_id?: string | null;
+    next_run_task_name?: string | null;
+  };
+  capabilities: SystemTaskCapability[];
+  runs: SystemTaskRun[];
+}
+
 // 汇率走势：币种下拉项 + 日序列。rate = 1 外币→CNY（中行折算价当日均值，口径同利润折算）。
 export interface FxCurrency {
   code: string;
@@ -475,6 +527,7 @@ export const api = {
   adminDeactivateRole: (open_id: string, account_id = "ecom-app", channel = "feishu") =>
     postJSON<RoleRow>("/api/admin/roles/deactivate", { open_id, account_id, channel }),
   bizConfigs: () => getJSON<{ items: BizConfigRow[] }>("/api/admin/biz-configs"),
+  systemTasks: () => getJSON<SystemTaskSnapshot>("/api/admin/scheduled/system-tasks"),
   bizConfigUpsert: (config_key: string, value: number) =>
     postJSON<BizConfigRow>("/api/admin/biz-configs", { config_key, value }),
   bizConfigReset: (config_key: string) =>
