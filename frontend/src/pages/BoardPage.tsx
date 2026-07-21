@@ -1649,9 +1649,9 @@ function BusinessOverview({ data, loading }: { data: BoardData | null; loading: 
   );
 }
 
-/* ── 爆款商品（商品级：小图 + 标题 + 款号 + 单量，点击行弹出商品详情弹窗）────────
+/* ── 爆款商品（商品级：小图 + 标题 + 款号 + 销售组数，点击行弹出商品详情弹窗）────────
    客户诉求落地：① 小图(image_url，缺图→序号色块) ② 标题(长名 2 行截断) ③ 款号(seller_sku，
-   次要灰字；多规格显「N 个规格」) ④ 单量/GMV ⑤ 点击行弹出轻量弹窗：大图 + 完整商品名 +
+   次要灰字；多规格显「N 个规格」) ④ 销售组数/GMV ⑤ 点击行弹出轻量弹窗：大图 + 完整商品名 +
    各 SKU 销量占比 + 渠道 4 分饼(达人/自营素材/商品卡/店铺页)，懒加载 /board/product-detail。
    弹窗整合所有详情(空间大、移动端体验好)，不再行内展开。 */
 
@@ -1901,7 +1901,7 @@ function ProductDetailDialog({
             <div className="text-sm font-semibold leading-snug text-foreground">{productLabel(product)}</div>
             <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-foreground-secondary">
               {code && <span>{code}</span>}
-              <span className="tabnum">{fmtInt(product.units_sold)} 件</span>
+              <span className="tabnum">{fmtInt(product.units_sold)} 组</span>
               <span className="tabnum">{fmtMoney(product.gmv)}</span>
             </div>
           </div>
@@ -1993,7 +1993,7 @@ function ProductDetailDialog({
                               )}
                             </span>
                             <span className="flex shrink-0 items-baseline gap-2.5">
-                              <span className="tabnum text-sm text-foreground">{fmtInt(k.units_sold)} 件</span>
+                              <span className="tabnum text-sm text-foreground">{fmtInt(k.units_sold)} 组</span>
                               <span className="tabnum w-9 text-right text-xs text-foreground-tertiary">
                                 {pct.toFixed(0)}%
                               </span>
@@ -2060,7 +2060,7 @@ function HotProducts({
             爆款商品
             <InfoTooltip
               align="start"
-              content="按商品售价统计、已排除取消单，与上方「GMV」总额口径不同（GMV 含取消、按商品小计）；此处只展示销量最高的部分商品，非全店汇总。"
+              content="销量指销售 SKU 组数：按订单明细行计数，组合 SKU/套装按 1 组计，不展开为基础件数；已排除取消单，与上方「GMV」总额口径不同（GMV 含取消、按商品小计）。此处只展示销量最高的部分商品，非全店汇总。"
             >
               <Info className="h-3.5 w-3.5 text-foreground-secondary" />
             </InfoTooltip>
@@ -2111,10 +2111,10 @@ function HotProducts({
                 </div>
                 <div className="shrink-0 text-right">
                   <div className="tabnum text-sm font-semibold text-foreground">
-                    {rankBy === "gmv" ? fmtMoney(p.gmv) : `${fmtInt(p.units_sold)} 件`}
+                    {rankBy === "gmv" ? fmtMoney(p.gmv) : `${fmtInt(p.units_sold)} 组`}
                   </div>
                   <div className="tabnum text-xs text-foreground-secondary">
-                    {rankBy === "gmv" ? `${fmtInt(p.units_sold)} 件` : fmtMoney(p.gmv)}
+                    {rankBy === "gmv" ? `${fmtInt(p.units_sold)} 组` : fmtMoney(p.gmv)}
                   </div>
                 </div>
                 {canOpen && (
